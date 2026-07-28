@@ -17,9 +17,11 @@ import json
 import os
 import struct
 import hashlib
-from typing import Any, Collection, Sequence
+from contextlib import contextmanager
+from typing import Any, Collection, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from palinode.core.config import config
+from palinode.core import aliases
 from palinode.core import parser as _parser
 # The hybrid-search scoring pipeline + its pure decay/predicate helpers live in
 # ranker.py. Re-exported here so `store.effective_importance`,
@@ -81,6 +83,46 @@ INJECTION_PATTERNS = [
 def _utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
     return datetime.now(UTC)
+
+
+def utc_now_z() -> str:
+    """UTC now as an ISO-8601 string with a ``Z`` suffix (``entities.last_seen``)."""
+    return _utc_now().isoformat().replace("+00:00", "Z")
+
+
+def meta_hash(metadata: dict[str, Any]) -> str:
+    """Deterministic hash of a file's frontmatter, stored in ``chunks.meta_hash``.
+
+    Gates the metadata-refresh the body ``content_hash`` cannot see (#698): a
+    frontmatter-only edit moves this and leaves the body hash unchanged.
+    ``sort_keys`` makes it order-independent; ``default=str`` tolerates dates.
+    The one definition both the reconcile path and ``upsert_chunks`` hash with,
+    so the two can never disagree about whether metadata changed.
+    """
+    return hashlib.sha256(
+        json.dumps(metadata or {}, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """One connection, one commit — the single writer's transaction boundary.
+
+    Commits on clean exit, rolls back and re-raises on any exception, always
+    closes. The reconcile path uses this so a file's chunks, vectors, FTS
+    tokens, metadata and entity rows move together or not at all — replacing
+    the several independent ``get_db()``/``commit()`` cycles the write path
+    used to run per file.
+    """
+    db = get_db()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def scan_memory_content(content: str) -> tuple[bool, str]:
@@ -234,6 +276,14 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # meta_hash gates the frontmatter-only refresh the body content_hash cannot
+    # see. NULL on pre-upgrade rows, which makes the first reconcile of each
+    # file a one-time metadata-only write to populate it — no re-embed.
+    try:
+        db.execute("ALTER TABLE chunks ADD COLUMN meta_hash TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     try:
         db.execute("ALTER TABLE chunks ADD COLUMN importance FLOAT DEFAULT 0.5")
         db.execute("ALTER TABLE chunks ADD COLUMN last_recalled TEXT")
@@ -357,6 +407,202 @@ def fts5_delete_chunk(cursor: sqlite3.Cursor, chunk_id: str) -> None:
     )
 
 
+def write_chunk_row(
+    cur: sqlite3.Cursor,
+    *,
+    chunk_id: str,
+    file_path: str,
+    section_id: str,
+    category: str,
+    content: str,
+    metadata_json: str,
+    content_hash: str,
+    meta_hash: str,
+    created_at: str | None,
+    last_updated: str | None,
+    embedding: list[float],
+) -> tuple[bool, bool]:
+    """Write one chunk's ``chunks`` + ``chunks_vec`` + ``chunks_fts`` rows.
+
+    Cursor-taking so a caller owns the transaction (the reconcile path writes a
+    whole file's chunks under one ``transaction()``). Returns ``(vec_ok,
+    fts_ok)`` for per-index health. An empty ``embedding`` is the deliberate
+    FTS-only path (deferred/keyword-only) and does not clear ``vec_ok``.
+    """
+    vec_ok = True
+    fts_ok = True
+
+    # H2: INSERT OR REPLACE would revert the recall columns (importance,
+    # recall_count, last_recalled) — not in this column list — to defaults on
+    # every re-index, wiping the ADR-007 reinforcement signal. ON CONFLICT DO
+    # UPDATE refreshes only the content columns; a new row still gets defaults.
+    cur.execute(
+        """
+        INSERT INTO chunks
+        (id, file_path, section_id, category, content, metadata,
+         created_at, last_updated, content_hash, meta_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            file_path = excluded.file_path,
+            section_id = excluded.section_id,
+            category = excluded.category,
+            content = excluded.content,
+            metadata = excluded.metadata,
+            created_at = excluded.created_at,
+            last_updated = excluded.last_updated,
+            content_hash = excluded.content_hash,
+            meta_hash = excluded.meta_hash
+        """,
+        (
+            chunk_id, file_path, section_id, category, content, metadata_json,
+            created_at, last_updated, content_hash, meta_hash,
+        ),
+    )
+
+    # --- vec0 index -----------------------------------------------------------
+    if not embedding:
+        # Deferred/keyword-only row: no vector yet. The absent chunks_vec row
+        # is the exact signal reconcile.plan re-indexes on, so the row
+        # converges once the embedder is reachable. Deliberate skip, not a
+        # failure: vec_ok untouched.
+        _store_logger.debug(
+            "palinode.store: empty embedding for %r — chunks+FTS only, "
+            "vec write deferred", chunk_id,
+        )
+    else:
+        emb_json = json.dumps(embedding)
+        try:
+            cur.execute("DELETE FROM chunks_vec WHERE id = ?", (chunk_id,))
+        except Exception as _del_exc:
+            _store_logger.debug(
+                "palinode.store: chunks_vec pre-INSERT DELETE skipped for %r: %s",
+                chunk_id, _del_exc,
+            )
+        try:
+            cur.execute(
+                "INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)",
+                (chunk_id, emb_json),
+            )
+        except Exception as _ins_exc:
+            _store_logger.debug(
+                "palinode.store: chunks_vec INSERT collided for %r — forcing replace: %s",
+                chunk_id, _ins_exc,
+            )
+            try:
+                cur.execute("DELETE FROM chunks_vec WHERE id = ?", (chunk_id,))
+                cur.execute(
+                    "INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)",
+                    (chunk_id, emb_json),
+                )
+            except Exception as _retry_exc:
+                _store_logger.error(
+                    "palinode.store: chunks_vec write failed for %r "
+                    "(file=%r, content_hash=%s) — chunk absent from vector index: %s",
+                    chunk_id, file_path, content_hash[:12], _retry_exc,
+                    exc_info=True,
+                )
+                vec_ok = False
+
+    # --- FTS5 index -----------------------------------------------------------
+    # Always INSERT first. On UNIQUE (rowid already synced), fall back to
+    # DELETE + re-INSERT. Never DELETE-first on a fresh row: against an empty
+    # FTS5 table with sqlite-vec loaded that raises "database disk image is
+    # malformed".
+    try:
+        cur.execute(
+            """
+            INSERT INTO chunks_fts(rowid, content, file_path, category)
+            SELECT rowid, content, file_path, category
+            FROM chunks WHERE id = ?
+            """,
+            (chunk_id,),
+        )
+    except Exception:
+        try:
+            fts5_delete_chunk(cur, chunk_id)
+            cur.execute(
+                """
+                INSERT INTO chunks_fts(rowid, content, file_path, category)
+                SELECT rowid, content, file_path, category
+                FROM chunks WHERE id = ?
+                """,
+                (chunk_id,),
+            )
+        except Exception as _fts_retry_exc:
+            _store_logger.warning(
+                "palinode.store: FTS5 sync failed for %r (file=%r) — "
+                "periodic rebuild will recover: %s",
+                chunk_id, file_path, _fts_retry_exc,
+            )
+            fts_ok = False
+
+    return vec_ok, fts_ok
+
+
+def write_chunk_meta(
+    cur: sqlite3.Cursor, chunk_id: str, metadata_json: str, meta_hash: str,
+) -> None:
+    """Refresh a chunk's cached frontmatter without re-embedding (#698).
+
+    The body is unchanged, so ``chunks_fts`` (indexed on the body) needs no
+    touch and the vector stays valid; only the metadata JSON and its hash move.
+    """
+    cur.execute(
+        "UPDATE chunks SET metadata = ?, meta_hash = ? WHERE id = ?",
+        (metadata_json, meta_hash, chunk_id),
+    )
+
+
+def prune_chunk_ids(cur: sqlite3.Cursor, ids: Sequence[str]) -> None:
+    """Delete the given chunk rows and their vec/FTS entries.
+
+    FTS5 removal runs first, while the source ``chunks`` rows still exist — the
+    sanctioned ``'delete'`` reads column values off them to re-derive tokens.
+    """
+    if not ids:
+        return
+    for chunk_id in ids:
+        try:
+            fts5_delete_chunk(cur, chunk_id)
+        except Exception:
+            pass  # FTS5 may be out of sync — periodic rebuild is the backstop.
+    placeholders, params = _parameterize_in_clause(ids)
+    # B608: placeholders is "?,?,..." from _parameterize_in_clause; values bound.
+    cur.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", params)  # nosec B608
+    try:
+        cur.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", params)  # nosec B608
+    except Exception as e:
+        # A failed vec0 prune leaves orphan vectors no rebuild reclaims.
+        _store_logger.debug(
+            "chunks_vec prune failed; vectors may be orphaned "
+            "ids_count=%d error=%r", len(params), str(e),
+        )
+
+
+def replace_entities(
+    cur: sqlite3.Cursor,
+    file_path: str,
+    entities: list[str],
+    category: str,
+    now: str,
+) -> None:
+    """Replace a file's entity rows — DELETE then INSERT, not accumulate.
+
+    ``upsert_entities`` only ever inserted, so a changed ref added a row and
+    orphaned the old one, and removing every ref deleted nothing (#699). The
+    leading DELETE is what makes a correction a correction.
+    """
+    cur.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
+    for entity_ref in entities:
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO entities (entity_ref, file_path, category, last_seen)
+            VALUES (?, ?, ?, ?)
+            """,
+            (entity_ref, file_path, category, now),
+        )
+
+
 def upsert_chunks(
     chunks_data: list[dict[str, Any]], skip_unchanged: bool = True
 ) -> dict[str, Any]:
@@ -376,166 +622,49 @@ def upsert_chunks(
 
         Callers that need per-index health (e.g. ``index_file``) read
         ``vec_ok`` / ``fts_ok`` to surface failures in the API response (#385).
+
+    Thin wrapper over :func:`write_chunk_row` under one :func:`transaction`, so
+    the vec0/FTS5 write dance lives in exactly one place (the reconcile path
+    calls ``write_chunk_row`` directly). ``meta_hash`` is derived from each
+    chunk's ``metadata`` for back-compat with callers that don't supply it.
     """
-    db = get_db()
-    cursor = db.cursor()
     written = 0
     vec_ok = True
     fts_ok = True
 
-    for chunk in chunks_data:
-        content_hash = hashlib.sha256(chunk["content"].encode()).hexdigest()
+    with transaction() as db:
+        cursor = db.cursor()
+        for chunk in chunks_data:
+            content_hash = hashlib.sha256(chunk["content"].encode()).hexdigest()
 
-        if skip_unchanged:
-            # Check if this chunk already exists with the same content
-            cursor.execute(
-                "SELECT content_hash FROM chunks WHERE id = ?",
-                (chunk["id"],)
-            )
-            existing = cursor.fetchone()
-            if existing and existing["content_hash"] == content_hash:
-                # Content unchanged — skip expensive embedding + write
-                continue
-
-        # Write the canonical chunks row.
-        metadata_json = json.dumps(chunk.get("metadata", {}), default=str)
-        # H2: INSERT OR REPLACE deletes + re-inserts the row, reverting the
-        # recall columns (importance, recall_count, last_recalled) — which are
-        # NOT in this column list — to their schema defaults on every re-index
-        # (any content_hash change: consolidation UPDATE/MERGE, manual edit,
-        # sticky-frontmatter rewrite). That silently wiped the ADR-007
-        # reinforcement signal the ranker now reads from these columns.
-        # ON CONFLICT(id) DO UPDATE refreshes only the content columns and
-        # leaves the accumulated recall signal intact; a brand-new row still
-        # gets the schema defaults.
-        cursor.execute(
-            """
-            INSERT INTO chunks
-            (id, file_path, section_id, category, content, metadata,
-             created_at, last_updated, content_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                file_path = excluded.file_path,
-                section_id = excluded.section_id,
-                category = excluded.category,
-                content = excluded.content,
-                metadata = excluded.metadata,
-                created_at = excluded.created_at,
-                last_updated = excluded.last_updated,
-                content_hash = excluded.content_hash
-            """,
-            (
-                chunk["id"], chunk["file_path"], chunk["section_id"],
-                chunk.get("category", ""), chunk["content"], metadata_json,
-                chunk.get("created_at"), chunk.get("last_updated"), content_hash,
-            ),
-        )
-        
-        # --- vec0 index -------------------------------------------------------
-        if not chunk["embedding"]:
-            # Deferred/keyword-only row: no vector yet. Write chunks + FTS
-            # only — the absent chunks_vec row is the exact signal the
-            # index_file re-embed branch keys on, so the row converges to
-            # fully-embedded once the embedder is reachable. Deliberate skip,
-            # not a write failure: vec_ok is untouched.
-            _store_logger.debug(
-                "palinode.store: empty embedding for %r — chunks+FTS only, "
-                "vec write deferred", chunk["id"],
-            )
-        else:
-            # Pre-flight DELETE: remove the existing row if present before
-            # INSERT. Failure here is not an error — the row may simply not
-            # exist yet.
-            emb_json = json.dumps(chunk["embedding"])
-            try:
-                cursor.execute("DELETE FROM chunks_vec WHERE id = ?", (chunk["id"],))
-            except Exception as _del_exc:
-                _store_logger.debug(
-                    "palinode.store: chunks_vec pre-INSERT DELETE skipped for %r: %s",
-                    chunk["id"], _del_exc,
-                )
-
-            # Primary INSERT.  On UNIQUE collision (DELETE silently failed
-            # above), fall back to a forced DELETE + retry.  Log at error on
-            # total failure because a missing vec0 row means this chunk is
-            # invisible to vector search.
-            try:
-                cursor.execute(
-                    "INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)",
-                    (chunk["id"], emb_json),
-                )
-            except Exception as _ins_exc:
-                _store_logger.debug(
-                    "palinode.store: chunks_vec INSERT collided for %r — forcing replace: %s",
-                    chunk["id"], _ins_exc,
-                )
-                try:
-                    cursor.execute("DELETE FROM chunks_vec WHERE id = ?", (chunk["id"],))
-                    cursor.execute(
-                        "INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)",
-                        (chunk["id"], emb_json),
-                    )
-                except Exception as _retry_exc:
-                    _store_logger.error(
-                        "palinode.store: chunks_vec write failed for %r "
-                        "(file=%r, content_hash=%s) — chunk absent from vector index: %s",
-                        chunk["id"],
-                        chunk.get("file_path"),
-                        content_hash[:12],
-                        _retry_exc,
-                        exc_info=True,
-                    )
-                    vec_ok = False
-
-        # --- FTS5 index -------------------------------------------------------
-        # Best-effort: FTS5 external-content tables can get out of sync during
-        # bulk writes.  Log at warning (not error) because the periodic rebuild
-        # recovers FTS5; a vec0 miss is permanent until re-index.
-        #
-        # Pattern: always attempt INSERT directly.  If it fails with UNIQUE
-        # (rowid already present from a prior sync), fall back to DELETE +
-        # re-INSERT.  We never attempt DELETE first on a fresh row — doing so
-        # against an empty FTS5 table with sqlite-vec loaded raises
-        # "database disk image is malformed" (a vec extension side effect on
-        # zero-row FTS5 tables).
-        try:
-            cursor.execute(
-                """
-                INSERT INTO chunks_fts(rowid, content, file_path, category)
-                SELECT rowid, content, file_path, category
-                FROM chunks WHERE id = ?
-                """,
-                (chunk["id"],),
-            )
-        except Exception as _fts_exc:
-            # UNIQUE: a physical FTS5 row already exists — delete and retry.
-            # We only reach here after the INSERT collided, so the row provably
-            # exists — the "never DELETE-first on an empty FTS5 table" guard
-            # (see the comment above) is preserved.
-            try:
-                fts5_delete_chunk(cursor, chunk["id"])
-                cursor.execute(
-                    """
-                    INSERT INTO chunks_fts(rowid, content, file_path, category)
-                    SELECT rowid, content, file_path, category
-                    FROM chunks WHERE id = ?
-                    """,
+            if skip_unchanged:
+                existing = cursor.execute(
+                    "SELECT content_hash FROM chunks WHERE id = ?",
                     (chunk["id"],),
-                )
-            except Exception as _fts_retry_exc:
-                _store_logger.warning(
-                    "palinode.store: FTS5 sync failed for %r "
-                    "(file=%r) — periodic rebuild will recover: %s",
-                    chunk["id"],
-                    chunk.get("file_path"),
-                    _fts_retry_exc,
-                )
-                fts_ok = False
+                ).fetchone()
+                if existing and existing["content_hash"] == content_hash:
+                    # Content unchanged — skip expensive embedding + write.
+                    continue
 
-        written += 1
+            metadata = chunk.get("metadata", {})
+            row_vec_ok, row_fts_ok = write_chunk_row(
+                cursor,
+                chunk_id=chunk["id"],
+                file_path=chunk["file_path"],
+                section_id=chunk["section_id"],
+                category=chunk.get("category", ""),
+                content=chunk["content"],
+                metadata_json=json.dumps(metadata, default=str),
+                content_hash=content_hash,
+                meta_hash=meta_hash(metadata),
+                created_at=chunk.get("created_at"),
+                last_updated=chunk.get("last_updated"),
+                embedding=chunk["embedding"],
+            )
+            vec_ok = vec_ok and row_vec_ok
+            fts_ok = fts_ok and row_fts_ok
+            written += 1
 
-    db.commit()
-    db.close()
     return {"written": written, "vec_ok": vec_ok, "fts_ok": fts_ok}
 
 def delete_file_chunks(file_path: str) -> None:
@@ -1536,14 +1665,29 @@ _PRIORITY_RANK_WEIGHT = 0.025
 
 
 def get_entity_files(entity_ref: str) -> list[dict[str, Any]]:
-    """Get all files that reference a specific entity."""
+    """Get all files that reference a specific entity.
+
+    Widened by the human-curated alias map (`core.aliases`) so a subject written
+    several ways answers as one. With no mapping this is exact match, unchanged.
+    The files on disk keep their own refs — only the lookup widens.
+    """
+    refs = aliases.resolve(entity_ref)
+    if not refs:
+        return []
     db = get_db()
     cursor = db.cursor()
-    cursor.execute(
-        "SELECT file_path, category, last_seen FROM entities WHERE entity_ref = ? ORDER BY last_seen DESC",
-        (entity_ref,)
-    )
-    results = [{"file_path": row[0], "category": row[1], "last_seen": row[2]} for row in cursor.fetchall()]
+    placeholders, params = _parameterize_in_clause(refs)
+    # B608: placeholders is "?,?,..." from _parameterize_in_clause; values bound.
+    cursor.execute(f"SELECT file_path, category, last_seen FROM entities WHERE entity_ref IN ({placeholders}) ORDER BY last_seen DESC", params)  # nosec B608
+    seen: set[str] = set()
+    results = []
+    for row in cursor.fetchall():
+        # A file carrying two spellings of the same subject would otherwise appear
+        # twice once the group is unioned.
+        if row[0] in seen:
+            continue
+        seen.add(row[0])
+        results.append({"file_path": row[0], "category": row[1], "last_seen": row[2]})
     db.close()
     return results
 
@@ -1551,13 +1695,22 @@ def get_entity_graph(entity_ref: str, depth: int = 1) -> dict[str, list[str]]:
     """Get the entity graph — which entities appear together."""
     db = get_db()
     cursor = db.cursor()
-    cursor.execute("""
-        SELECT DISTINCT e2.entity_ref 
+    refs = aliases.resolve(entity_ref)
+    if not refs:
+        db.close()
+        return {entity_ref: []}
+    placeholders, params = _parameterize_in_clause(refs)
+    # B608: placeholders is "?,?,..." from _parameterize_in_clause; values bound.
+    cursor.execute(f"""
+        SELECT DISTINCT e2.entity_ref
         FROM entities e1
         JOIN entities e2 ON e1.file_path = e2.file_path
-        WHERE e1.entity_ref = ? AND e2.entity_ref != ?
-    """, (entity_ref, entity_ref))
-    
+        WHERE e1.entity_ref IN ({placeholders})
+          AND e2.entity_ref NOT IN ({placeholders})
+    """, (*params, *params))  # nosec B608
+
+    # Other spellings of the SUBJECT ITSELF are excluded above — they are the same
+    # node now, not neighbours of it.
     co_occurring = [row[0] for row in cursor.fetchall()]
     db.close()
     return {entity_ref: co_occurring}
@@ -1566,22 +1719,25 @@ def get_entity_graph(entity_ref: str, depth: int = 1) -> dict[str, list[str]]:
 def upsert_entities(file_path: str, metadata: dict[str, Any]) -> None:
     """Extract and index entities from file metadata."""
     entities = metadata.get("entities", [])
-    if not entities:
-        return
-        
     db = get_db()
-    cursor = db.cursor()
-    category = metadata.get("category", "")
-    now = _utc_now().isoformat().replace("+00:00", "Z")
-    
-    for entity_ref in entities:
-        cursor.execute("""
-            INSERT OR REPLACE INTO entities (entity_ref, file_path, category, last_seen)
-            VALUES (?, ?, ?, ?)
-        """, (entity_ref, file_path, category, now))
-    
-    db.commit()
-    db.close()
+    try:
+        cursor = db.cursor()
+        category = metadata.get("category", "")
+        now = _utc_now().isoformat().replace("+00:00", "Z")
+
+        cursor.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
+        for entity_ref in entities:
+            cursor.execute("""
+                INSERT OR REPLACE INTO entities (entity_ref, file_path, category, last_seen)
+                VALUES (?, ?, ?, ?)
+            """, (entity_ref, file_path, category, now))
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def detect_entities_in_text(text: str) -> list[str]:

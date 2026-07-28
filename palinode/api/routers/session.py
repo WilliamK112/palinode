@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from palinode.core import git_tools
 from palinode.core.config import config
+from palinode.core.envelope import envelope_complaint
 
 from palinode.api._util import _project_from_cwd, _utc_now
 from palinode.api.path_safety import _memory_base_dir
@@ -100,109 +101,34 @@ def _status_line(
 
 # ── Envelope-markup guard ────────────────────────────────────────────────────
 #
-# A session-end string parameter should never carry a *tool envelope*. Two
-# entry points put one there:
-#   1. a malformed model tool-call, whose tail is absorbed into the preceding
-#      string parameter — which also swallows the arrays that followed it;
-#   2. the SessionEnd hook's transcript extraction, which used to lift Claude
-#      Code harness markup straight out of the first user turn (fixed at source
-#      in examples/hooks/palinode-session-end.sh; this is the backstop).
-#
-# Detection deliberately is NOT a substring blacklist. Palinode is a memory
-# system for developers, and a note *about* tool-call syntax is legitimate
-# content — the investigation that produced this guard has to stay saveable. A
-# fragment from the vocabulary below is only a *candidate*; rejection needs one
-# of three corroborating signals, and anything inside a code fence or code span
-# is exempt outright.
+# The detector lives in palinode.core.envelope so the save surface can share
+# it. Session-end is the caller that *has* the co-occurrence signal:
+# `decisions`/`blockers` essentially always accompany a real /wrap summary, so
+# their absence alongside envelope markup is the mechanism-1 absorption
+# signature. Save has no parameter of that shape and says so at its call site.
 
-#: Tag names whose appearance in a session-end string is a candidate envelope
-#: leak. Three groups: model tool-call syntax, this tool's own parameter names
-#: (what mechanism-1 absorption leaves behind), and Claude Code harness markup.
-#: `project` is deliberately absent — `<project>` is the root element of real
-#: build files people write notes about, and it is not an absorption target for
-#: `summary`.
-_ENVELOPE_TAGS: tuple[str, ...] = (
-    "invoke", "parameter", "function_calls", "tool_call", "tool_use",
-    "summary", "decisions", "blockers",
-    "system-reminder", "command-message", "command-name", "command-args",
-    "local-command-stdout", "local-command-stderr", "user-prompt-submit-hook",
-    "bash-input", "bash-stdout", "bash-stderr",
-    "ide_selection", "ide_opened_file",
-)
-
-#: Matches `<tag>`, `</tag>`, `<tag …attrs>` and namespaced forms (`<invoke>`).
-#: Group 1 = "/" for a closing tag, group 2 = the bare tag name.
-_ENVELOPE_RE = re.compile(
-    r"<(/?)(?:[A-Za-z][\w.-]*:)?(" + "|".join(_ENVELOPE_TAGS) + r")(?:\s[^<>]*)?/?>",
-    re.IGNORECASE,
-)
-
-#: Fenced blocks and inline spans are the escape hatch: markup quoted as code is
-#: always content. Replaced with a space so surrounding offsets stay meaningful.
-_CODE_SPANS = (
-    re.compile(r"```.*?```", re.DOTALL),
-    re.compile(r"~~~.*?~~~", re.DOTALL),
-    re.compile(r"`[^`\n]+`"),
-)
-
-
-def _strip_code(text: str) -> str:
-    for pattern in _CODE_SPANS:
-        text = pattern.sub(" ", text)
-    return text
-
-
-def _envelope_complaint(text: str, field: str, *, arrays_present: bool) -> str | None:
-    """Return an actionable rejection message when ``text`` carries a tool
-    envelope rather than content, else ``None`` (#682).
-
-    ``arrays_present`` reports whether *this request* delivered any
-    ``decisions``/``blockers``; absent arrays alongside envelope markup is the
-    mechanism-1 signature and the highest-signal discriminator available.
-    """
-    scrubbed = _strip_code(text)
-    matches = list(_ENVELOPE_RE.finditer(scrubbed))
-    if not matches:
-        return None
-
-    openers = {m.group(2).lower() for m in matches if not m.group(1)}
-    unmatched = next(
-        (m for m in matches if m.group(1) and m.group(2).lower() not in openers), None
-    )
-    # Absorption lands the envelope at the very tail of the value.
-    tail_end = len(scrubbed.rstrip())
-    trailing = next((m for m in matches if m.end() == tail_end), None)
-
-    if not arrays_present:
-        offender, why = (unmatched or trailing or matches[-1]), (
-            "and no `decisions`/`blockers` arrays arrived with it — the signature "
-            "of a tool envelope absorbed into the string parameter"
-        )
-    elif unmatched is not None:
-        offender, why = unmatched, "as a closing tag with no matching opener"
-    elif trailing is not None:
-        offender, why = trailing, "at the very end of the value, where an absorbed envelope lands"
-    else:
-        return None
-
-    return (
-        f"Refusing to store `{field}`: it contains tool-envelope markup "
-        f"{why} — {offender.group(0)!r}. Palinode fails loud here rather than "
-        "indexing an envelope as if it were memory. Re-send with "
-        "`decisions`/`blockers` as real JSON arrays. If the markup really is part "
-        "of the note, put it in a fenced code block or backticks and it will pass."
-    )
+#: What session-end tells a rejected caller to do about it.
+_SESSION_REMEDIATION = "Re-send with `decisions`/`blockers` as real JSON arrays."
 
 
 def _first_envelope_complaint(req: SessionEndRequest) -> str | None:
     """First envelope complaint across ``summary`` and every array entry."""
     arrays_present = bool(req.decisions or req.blockers)
-    complaint = _envelope_complaint(req.summary, "summary", arrays_present=arrays_present)
+    complaint = envelope_complaint(
+        req.summary,
+        "summary",
+        missing_params=() if arrays_present else ("decisions", "blockers"),
+        remediation=_SESSION_REMEDIATION,
+    )
     if complaint:
         return complaint
     for label, items in (("decisions", req.decisions), ("blockers", req.blockers)):
         for i, item in enumerate(items or []):
-            complaint = _envelope_complaint(item, f"{label}[{i}]", arrays_present=True)
+            # An array entry is self-evidently not an absorbed tail — the arrays
+            # arrived. Signals 2 and 3 only.
+            complaint = envelope_complaint(
+                item, f"{label}[{i}]", remediation=_SESSION_REMEDIATION
+            )
             if complaint:
                 return complaint
     return None

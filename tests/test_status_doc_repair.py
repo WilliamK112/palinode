@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -31,6 +32,7 @@ from palinode.consolidation import fact_ids as fact_ids_mod
 from palinode.consolidation.executor import apply_operations
 from palinode.consolidation.status_doc import (
     FRONTMATTER_RE,
+    desired_frontmatter,
     fact_ids,
     repair_status_doc,
     split_frontmatter,
@@ -38,7 +40,12 @@ from palinode.consolidation.status_doc import (
 )
 from palinode.core.config import config
 
-CLEAN_DOC = (
+#: Undamaged, but *not* canonical: its frontmatter does not yet carry the
+#: derived ``memory_count`` / ``date_range``, so a repair legitimately adds
+#: them. Deliberately not named "clean" — a "leaves a clean document alone"
+#: test written against this fixture can never assert byte identity, which is
+#: how the always-dirty report went unnoticed.
+WELL_FORMED_DOC = (
     "---\n"
     "id: project-infra-status\n"
     "category: project\n"
@@ -48,6 +55,39 @@ CLEAN_DOC = (
     "# Infra Status\n\n"
     "- [2026-05-01] A genuine fact. <!-- fact:infra-a1b2c3 -->\n"
 )
+
+#: Genuinely clean: derived keys already describe the body, and the YAML is
+#: byte-for-byte what ``render`` emits. ``repair_status_doc`` must hand this
+#: back unchanged — including ``last_updated``.
+CANONICAL_DOC = (
+    "---\n"
+    "id: project-infra-status\n"
+    "category: project\n"
+    "entities:\n"
+    "- project/infrastructure\n"
+    "memory_count: 1\n"
+    "date_range: 2026-05-01 to 2026-05-01\n"
+    "last_updated: '2026-05-01T00:00:00+00:00'\n"
+    "---\n\n"
+    "# Infra Status\n\n"
+    "- [2026-05-01] A genuine fact. <!-- fact:infra-a1b2c3 -->\n"
+)
+
+#: The substantive repair counters, with the status flags removed.
+NO_REPAIRS = {
+    "frontmatter_markers_stripped": 0,
+    "entities_relocated": 0,
+    "log_lines_elided": 0,
+    "log_ids_unresolved": 0,
+}
+
+
+def _counters(report: dict) -> dict:
+    """*report* minus ``changed`` / ``noncanonical`` / ``unparseable``."""
+    return {
+        k: v for k, v in report.items()
+        if k not in ("changed", "noncanonical", "unparseable")
+    }
 
 # The reported corruption shape, reproduced: a frontmatter entity that was
 # fact-tagged and then rewritten by the executor with status prose.
@@ -84,7 +124,7 @@ def _strict_parse(text: str) -> dict:
 def test_fact_ids_never_tag_frontmatter(tmp_path, monkeypatch):
     monkeypatch.setattr(config.git, "auto_commit", False)
     path = tmp_path / "infra-status.md"
-    path.write_text(CLEAN_DOC, encoding="utf-8")
+    path.write_text(WELL_FORMED_DOC, encoding="utf-8")
 
     added = fact_ids_mod.add_fact_ids_to_file(str(path))
 
@@ -99,7 +139,7 @@ def test_fact_ids_never_tag_frontmatter(tmp_path, monkeypatch):
 def test_fact_ids_still_tag_body_items(tmp_path, monkeypatch):
     monkeypatch.setattr(config.git, "auto_commit", False)
     path = tmp_path / "infra-status.md"
-    path.write_text(CLEAN_DOC + "- [2026-05-02] An untagged fact.\n", encoding="utf-8")
+    path.write_text(WELL_FORMED_DOC + "- [2026-05-02] An untagged fact.\n", encoding="utf-8")
 
     added = fact_ids_mod.add_fact_ids_to_file(str(path))
 
@@ -131,7 +171,7 @@ def test_executor_never_rewrites_frontmatter(tmp_path, monkeypatch):
 def test_executor_still_mutates_body_facts(tmp_path, monkeypatch):
     monkeypatch.setattr(config.git, "auto_commit", False)
     path = tmp_path / "infra-status.md"
-    path.write_text(CLEAN_DOC, encoding="utf-8")
+    path.write_text(WELL_FORMED_DOC, encoding="utf-8")
 
     stats = apply_operations(str(path), [
         {"op": "UPDATE", "id": "infra-a1b2c3", "new_text": "[2026-05-01] Revised."},
@@ -199,17 +239,23 @@ def test_repair_reconciles_frontmatter_counts():
     assert meta["date_range"] == "2026-05-01 to 2026-06-01"
 
 
-def test_repair_is_idempotent():
-    once, _ = repair_status_doc(CORRUPTED_DOC)
+@pytest.mark.parametrize(
+    "doc", [CANONICAL_DOC, WELL_FORMED_DOC, CORRUPTED_DOC],
+    ids=["canonical", "well-formed", "corrupted"],
+)
+def test_repair_is_idempotent(doc):
+    """A second pass must be a true no-op — *including* ``last_updated``.
+
+    This assertion used to exempt the timestamp ("last_updated moves;
+    everything else must be stable"), which is exactly the behaviour #708
+    reports: the receipt moved on every pass, so `changed` was always true and
+    a clean store could never report zero.
+    """
+    once, _ = repair_status_doc(doc)
     twice, report = repair_status_doc(once)
-    # last_updated moves; everything else must be stable.
-    assert split_frontmatter(once)[1] == split_frontmatter(twice)[1]
-    assert report == {
-        "frontmatter_markers_stripped": 0,
-        "entities_relocated": 0,
-        "log_lines_elided": 0,
-        "log_ids_unresolved": 0,
-    }
+    assert twice == once  # byte-for-byte, timestamp included
+    assert report["changed"] is False
+    assert _counters(report) == NO_REPAIRS
 
 
 def test_repair_resolves_ids_from_the_history_sibling():
@@ -222,15 +268,47 @@ def test_repair_resolves_ids_from_the_history_sibling():
 
 
 def test_repair_leaves_a_clean_document_alone():
-    clean = CLEAN_DOC
-    repaired, report = repair_status_doc(clean)
-    assert split_frontmatter(repaired)[1] == split_frontmatter(clean)[1]
-    assert report == {
-        "frontmatter_markers_stripped": 0,
-        "entities_relocated": 0,
-        "log_lines_elided": 0,
-        "log_ids_unresolved": 0,
-    }
+    """The whole document, not just the body — that gap is what hid #708."""
+    repaired, report = repair_status_doc(CANONICAL_DOC)
+    assert repaired == CANONICAL_DOC
+    assert report["changed"] is False
+    assert report["noncanonical"] is False
+    assert _counters(report) == NO_REPAIRS
+
+
+def test_missing_derived_keys_is_reported_as_changed():
+    """Undamaged but not canonical: the derived keys are absent, so adding
+    them *is* a change and the report must say so rather than claim clean."""
+    repaired, report = repair_status_doc(WELL_FORMED_DOC)
+    assert report["changed"] is True
+    assert _counters(report) == NO_REPAIRS
+    meta = _strict_parse(repaired)
+    assert meta["memory_count"] == 1
+    assert meta["date_range"] == "2026-05-01 to 2026-05-01"
+
+
+def test_noncanonical_yaml_is_reported_without_claiming_damage():
+    """Semantically correct, non-canonical serialization: flagged separately so
+    the headline repair count keeps meaning "something is wrong"."""
+    doc = CANONICAL_DOC.replace(
+        "date_range: 2026-05-01 to 2026-05-01",
+        'date_range: "2026-05-01 to 2026-05-01"',  # same value, quoted
+    )
+    repaired, report = repair_status_doc(doc)
+    assert report["changed"] is False
+    assert report["noncanonical"] is True
+    assert repaired == CANONICAL_DOC  # normalized, receipt untouched
+    assert _strict_parse(repaired)["last_updated"] == "2026-05-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize("content", [
+    "no frontmatter at all\n",
+    "---\nkey: [unclosed\n---\n\nbody\n",
+    "---\n- just\n- a\n- list\n---\n\nbody\n",
+], ids=["absent", "unparseable", "not-a-mapping"])
+def test_desired_frontmatter_returns_none_when_it_cannot_decide(content):
+    """The never-destroy-a-file invariant, in the type rather than a docstring."""
+    assert desired_frontmatter(content) is None
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -307,7 +385,7 @@ def test_strip_frontmatter_fact_markers_is_idempotent_and_inert_when_clean():
     once, first = strip_frontmatter_fact_markers(TAGGED_PERSON)
     twice, second = strip_frontmatter_fact_markers(once)
     assert second == 0 and twice == once
-    assert strip_frontmatter_fact_markers(CLEAN_DOC) == (CLEAN_DOC, 0)
+    assert strip_frontmatter_fact_markers(WELL_FORMED_DOC) == (WELL_FORMED_DOC, 0)
 
 
 def test_strip_frontmatter_drops_a_list_entry_that_was_only_a_marker():
@@ -328,7 +406,7 @@ def _mixed_store(tmp_path: Path, monkeypatch) -> Path:
         CORRUPTED_DOC, encoding="utf-8")
     (tmp_path / "people" / "alice.md").write_text(TAGGED_PERSON, encoding="utf-8")
     (tmp_path / "decisions" / "d1.md").write_text(TAGGED_PERSON, encoding="utf-8")
-    (tmp_path / "insights" / "i1.md").write_text(CLEAN_DOC, encoding="utf-8")
+    (tmp_path / "insights" / "i1.md").write_text(WELL_FORMED_DOC, encoding="utf-8")
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     return tmp_path
 

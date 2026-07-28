@@ -40,6 +40,7 @@ import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 
+from palinode import __version__
 from palinode.core.audit import AuditLogger
 from palinode.core.config import ToolSurface, config, validate_tool_surface
 from palinode.core.defaults import (
@@ -65,8 +66,16 @@ _SERVER_INSTRUCTIONS = (
     "palinode_session_end before the session ends."
 )
 
+#: `version` is not optional in practice. The SDK's fallback when it is omitted
+#: is `pkg_version("mcp")` — the SDK's OWN version — which every client then
+#: renders as ours in the initialize handshake. Omitting it advertised
+#: "palinode v1.27.0" to Claude Code, Claude Desktop and every other client,
+#: and the number silently tracked whatever mcp release happened to be
+#: installed. The /status and /health surfaces were corrected separately; the
+#: handshake is the one users actually see.
 server = Server(
     "palinode",
+    version=__version__,
     instructions=_SERVER_INSTRUCTIONS if config.auto_inject.instructions_enabled else None,
 )
 _audit = AuditLogger(config.memory_dir, config.audit)
@@ -102,6 +111,14 @@ def _coerce_str_array(value: Any) -> Any:
     validation rejects those with "expected array, received string". This
     helper decodes the string form when it's clearly a JSON array; otherwise
     it returns ``value`` unchanged so native lists pass through.
+
+    Despite the name, element types are never inspected — any decoded JSON list
+    is returned as-is. That is why it applies equally to arrays of objects
+    (``sources``, ``claims``) and arrays of strings (``entities``,
+    ``contradicts``, ``backed_by``). Applied to EVERY array parameter on a
+    write-path tool: guarding only some produced a partial experience where one
+    array silently worked and the rest failed in three different shapes, which
+    is harder to diagnose than uniform failure.
     """
     if isinstance(value, str):
         try:
@@ -1562,20 +1579,20 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
             # validates each entry and computes/verifies quote_hash, 400ing on a
             # malformed or inconsistent anchor (surfaced as "Save failed").
             if arguments.get("sources") is not None:
-                body["sources"] = arguments["sources"]
+                body["sources"] = _coerce_str_array(arguments["sources"])
             # (G4): typed relationship links. Forwarded verbatim; the API
             # validates each ref and 400s on a malformed one (surfaced below as
             # the standard "Save failed" message).
             if arguments.get("contradicts") is not None:
-                body["contradicts"] = arguments["contradicts"]
+                body["contradicts"] = _coerce_str_array(arguments["contradicts"])
             if arguments.get("backed_by") is not None:
-                body["backed_by"] = arguments["backed_by"]
+                body["backed_by"] = _coerce_str_array(arguments["backed_by"])
             # claim-level source anchors. Forwarded verbatim; the API
             # validates each entry, derives/verifies claim_id + quote_hash, and
             # 400s on a malformed or inconsistent anchor (surfaced below as the
             # standard "Save failed" message).
             if arguments.get("claims") is not None:
-                body["claims"] = arguments["claims"]
+                body["claims"] = _coerce_str_array(arguments["claims"])
 
             resp = await _post("/save", json=body)
             if resp.status_code != 200:

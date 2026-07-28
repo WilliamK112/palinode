@@ -162,6 +162,43 @@ def lint(fmt, deep_contradictions, max_llm_calls, similarity_threshold):
     else:
         console.print("[green]✓ No open contradictions[/green]")
 
+    # Refs that look like aliases of one another. A split entity makes every
+    # lookup return a plausible, non-empty, INCOMPLETE result — under-recall that
+    # never announces itself. Reported as a question, never auto-merged: a short
+    # form and a longer one may be two different people, and a wrong join is
+    # unrecoverable while a split is merely invisible.
+    entity_aliases = data.get("entity_aliases", [])
+    if entity_aliases:
+        console.print(
+            f"[bold yellow]Possible Entity Aliases ({len(entity_aliases)})[/bold yellow]"
+        )
+        hi = [c for c in entity_aliases if c.get("confidence") != "low"]
+        lo = [c for c in entity_aliases if c.get("confidence") == "low"]
+
+        def _emit(cluster):
+            members = " | ".join(
+                f"{r['ref']} ({r['files']} files)" for r in cluster["refs"]
+            )
+            console.print(f"  - [{cluster['kind']}] {members}")
+            console.print(f"    [dim]{cluster['detail']}[/dim]")
+
+        for cluster in hi:
+            _emit(cluster)
+        if lo:
+            console.print(
+                f"  [dim]— {len(lo)} lower-confidence candidate(s): the longer ref is "
+                f"referenced under other categories too, so the store already treats it "
+                f"as its own subject —[/dim]"
+            )
+            for cluster in lo:
+                _emit(cluster)
+        console.print(
+            "  [dim]Review before acting — these are candidates, not confirmed "
+            "duplicates.[/dim]"
+        )
+    else:
+        console.print("[green]✓ No entity-alias candidates[/green]")
+
     console.print("")
 
     core_count = data.get("core_count", 0)

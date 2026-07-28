@@ -1,7 +1,72 @@
 import pytest
 from unittest.mock import patch, MagicMock
+import sqlite3
 from palinode.core import store
 from palinode.core.config import config
+
+
+@pytest.fixture
+def tmp_store_db(tmp_path, monkeypatch):
+    db_path = tmp_path / ".palinode.db"
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    monkeypatch.setattr(config, "db_path", str(db_path))
+    store._db_checked = False
+    store.init_db()
+    yield
+    store._db_checked = False
+
+
+def _entity_refs_for_path(file_path: str) -> list[str]:
+    db = store.get_db()
+    try:
+        rows = db.execute(
+            "SELECT entity_ref FROM entities WHERE file_path = ? ORDER BY entity_ref",
+            (file_path,),
+        ).fetchall()
+        return [row[0] for row in rows]
+    finally:
+        db.close()
+
+
+def test_upsert_entities_replaces_rows_for_same_file(tmp_store_db):
+    file_path = "people/alice.md"
+
+    store.upsert_entities(
+        file_path, {"category": "people", "entities": ["person/a"]}
+    )
+    store.upsert_entities(
+        file_path, {"category": "people", "entities": ["person/b"]}
+    )
+
+    assert _entity_refs_for_path(file_path) == ["person/b"]
+
+
+def test_upsert_entities_delete_and_insert_are_atomic(tmp_store_db):
+    file_path = "people/alice.md"
+    store.upsert_entities(
+        file_path, {"category": "people", "entities": ["person/a"]}
+    )
+
+    db = store.get_db()
+    try:
+        db.execute("""
+            CREATE TRIGGER abort_person_b_insert
+            BEFORE INSERT ON entities
+            WHEN NEW.entity_ref = 'person/b'
+            BEGIN
+                SELECT RAISE(ABORT, 'blocked person/b');
+            END
+        """)
+        db.commit()
+    finally:
+        db.close()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.upsert_entities(
+            file_path, {"category": "people", "entities": ["person/b"]}
+        )
+
+    assert _entity_refs_for_path(file_path) == ["person/a"]
 
 def test_empty_index_returns_empty():
     with patch("palinode.core.store.get_db") as mock_db:

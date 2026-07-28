@@ -583,7 +583,24 @@ def _update_status_summary(
         status_doc.DEFAULT_MAX_LOG_BLOCKS,
     )
     body = status_doc.merge_log_entry(body, today, lines, max_blocks=max_blocks)
-    updated = status_doc.reconcile_frontmatter(frontmatter_block + body)
+
+    if not frontmatter_block:
+        # No frontmatter to reconcile — write the merged body as-is rather than
+        # refusing, which is what this path has always done.
+        updated = body
+    else:
+        meta = status_doc.desired_frontmatter(frontmatter_block + body)
+        if meta is None:
+            logger.warning(
+                "status frontmatter for %s does not parse — skipping the write "
+                "so the log entry is not written into a broken document "
+                "(run `palinode repair-status`)", file_path,
+            )
+            return
+        # Reached only when new activity was merged above, so this is a real
+        # content change and the receipt is earned.
+        meta["last_updated"] = _utc_now().isoformat()
+        updated = status_doc.render(meta, body)
 
     git_tools.write_memory_file(file_path, updated)
 

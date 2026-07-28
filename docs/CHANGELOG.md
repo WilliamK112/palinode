@@ -14,6 +14,71 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Security
 
+## [0.9.6] — 2026-07-28
+
+### Added
+
+- **`palinode_save` now rejects tool-envelope markup in `content` (#697).** The guard `session_end` got in #689 covers the other write path the same corruption enters through: a malformed tool call whose tail is absorbed into the string parameter, or harness markup lifted out of a transcript. Detection is shared (`palinode/core/envelope.py`), but **the strongest signal deliberately does not transfer**. Session-end rejects on co-occurrence — markup present *and* the `decisions`/`blockers` arrays absent — which is near-zero-false-positive there because a real `/wrap` summary always carries them. Every save array is optional and absent on most honest calls, so on save that would collapse into a blanket ban on the tag vocabulary and 400 an ordinary note containing a `<details><summary>` block. Save is guarded by the unmatched-closing-tag and trailing-fragment signals only. Rejection is HTTP 400 naming the offending fragment, raised before any write; fenced code and inline spans remain exempt, so a note *about* tool-call syntax still saves. No fallback file is needed — no save surface is fire-and-forget, so every caller sees the rejection while it still holds the content.
+- **Human-curated entity aliases, resolved at query time (#693).** A subject written several ways became several nodes, so every lookup returned a plausible, non-empty, *incomplete* answer. A new `entity-aliases.yaml` in the memory dir maps spellings to one subject and `get_entity_files` / `get_entity_graph` widen to match. Deliberately query-time: the files on disk keep their own refs, so a wrong mapping is undone by deleting one line rather than by un-merging data. Absent or empty file means exact match, unchanged. Ships with no mappings — `palinode lint` surfaces candidates ranked by confidence and a human decides.
+- **Entity-alias candidates are now ranked by confidence (#693).** Running the check against a real store showed the two signals are not equally trustworthy: separator matches were always genuine, while prefix matches flagged pairs that must NOT be merged — a project and its own repo, a suite and its core package. A ref the store references under several categories has an identity of its own, so those clusters are demoted rather than hidden, with a lone-straggler exception so a barely-used short form beside an established longer one stays high. High-confidence clusters sort first.
+- **`palinode_save` now tolerates double-encoded arrays on all five array parameters (#691).** Some MCP clients serialize array arguments as JSON strings; the existing guard was wired to `entities` only, so the same client input made one array work and the other four fail in three different error shapes. `sources`, `contradicts`, `backed_by` and `claims` now go through the same coercion, matching `palinode_session_end`, which already guarded both of its arrays. No silent corruption either way — unguarded paths failed loudly; the defect was the inconsistency.
+- **`palinode lint` now flags entity refs that look like aliases of one another (#693).** Refs are free text written per save, so one subject can end up as several nodes — and because every lookup then returns a plausible, non-empty, *incomplete* result, the under-recall never announces itself. Two high-precision signals: refs identical once case and separators are ignored, and a short form coexisting with a longer one at a token boundary. Free-form edit distance is deliberately not used — a noisy check gets ignored. **Detection only**: the report names candidates and never merges, because a short form and a longer one may be two different people and a wrong join is unrecoverable, whereas a split is merely invisible until inspected.
+- Watcher now handles file renames (`on_moved`). A `mv` used to be dropped
+  silently, orphaning the renamed file's chunks and entity rows under the old
+  path until a manual reindex; the rename now retires the old path and indexes
+  the new one (#710).
+
+### Changed
+
+- `repair-status` now separates damage from formatting. Its file count reports
+  only documents that are semantically wrong; a document whose YAML merely
+  differs from canonical serialization is reported as `noncanonical`, and one
+  whose frontmatter cannot be parsed as `unparseable`. `--execute` writes both
+  kinds, but normalizing formatting no longer stamps `last_updated`, so it
+  cannot move a memory inside a recency-filtered search. The `--json` report
+  gains `changed`, `noncanonical` and `unparseable` keys (#708).
+
+### Fixed
+
+- **The MCP `initialize` handshake advertised the SDK's version as palinode's.** `Server(...)` was constructed without `version=`, and the mcp SDK's fallback for that is its own package version — so every client rendered palinode as "v1.27.0" (or whatever mcp release happened to be installed), and the number moved on its own whenever the SDK was bumped. This is the version surface users actually see in their client's connection UI; the `/status` and `/health` surfaces were corrected earlier and neither reaches the handshake. Now reports `palinode.__version__`.
+
+- **`mcp` is now capped below 2.0 — an uncapped range installed an MCP server that could not start.** `mcp` 2.0.0 (released 2026-07-28) removed both `Server.list_tools` and `Server.call_tool`, the decorators `palinode/mcp.py` is built on, so importing the module raised `AttributeError` at load. The requirement was `mcp>=1.10` with no upper bound, and pip resolves that to 2.0.0 — so this affected anyone installing the package fresh, not just CI. Now `mcp>=1.10,<2`, which resolves to a working 1.x (1.29.0 at time of writing); the lower bound still excludes the DNS-rebinding and DoS CVEs. Migrating to the 2.x server API is tracked separately.
+
+- **`palinode save` exited 0 when the save failed (#697).** Seven `click.Abort()` sites in `palinode/cli/save.py` constructed the exception and discarded it, so `palinode save … && echo ok` printed `ok` for a save that never happened. Affected the failure handler and six argument-validation paths (missing content, missing `--type`, `--ps`/`--type` conflict, invalid `--metadata-json`, non-object metadata, malformed `--external-ref`) — all now raise. This becomes load-bearing the moment save starts rejecting more inputs. The fix also exposed a test that had been asserting `exit_code == 0` against an unreachable API: `test_cli_save_passes_project_flag` took the save-failed branch on every run and never checked the flag it is named for; it now stubs the client and asserts the forwarded value.
+- `repair-status` reported every `projects/*-status.md` as needing repair on a
+  perfectly clean store. `reconcile_frontmatter` stamped `last_updated`, injected
+  `memory_count`/`date_range` and re-serialized the YAML unconditionally, so the
+  caller's `changed = repaired != original` could never be false. It is replaced
+  by a pure `desired_frontmatter(content) -> dict | None` and a deterministic
+  `render(meta, body)`, which let a caller ask whether a document is already
+  correct without altering it (#708).
+- The file-indexing write path is now a single reconcile seam
+  (`palinode/indexer/reconcile.py`): a pure `derive` (parse + fingerprint), a
+  read-only `plan`, and an `apply` that embeds and writes every derived
+  artifact — chunks, vectors, FTS tokens, cached metadata and entity rows — in
+  **one transaction**. Replaces the previous path that wrote across several
+  independent connections and commits. `index_file` is unchanged for callers.
+  Embedding is fail-closed: if a section that needs a vector cannot embed, the
+  whole reconcile rolls back and the file is retried intact rather than being
+  left half-indexed (#717).
+
+- A changed or removed entity ref no longer orphans its old row. Entity rows
+  are now replaced (delete-then-insert) on every reconcile, where the previous
+  writer only ever inserted — so a corrected `entities:` ref added a node and
+  stranded the old one, and removing all refs deleted nothing (#699).
+- Frontmatter-only edits (status, TTL, entities, visibility) are now seen by
+  the indexer. Change detection gained a `meta_hash` alongside the body
+  `content_hash`; a frontmatter edit refreshes the cached `chunks.metadata`
+  with no re-embed, instead of being invisible behind the body-only hash (#698).
+- Auto-description fallback now ignores YAML frontmatter and markdown rule delimiters instead of persisting `---` (#704).
+- **Entity re-indexing now replaces stale refs for a file (#699).** `store.upsert_entities` deletes the file's existing entity rows and inserts the current frontmatter refs in one transaction, so correcting or renaming an `entities:` entry no longer leaves orphaned rows in `GET /entities`.
+
+### Removed
+
+### Security
+
+- **Root-level memory-store artifacts are now git-ignored.** The existing rules covered memory *directories* (`people/`, `daily/`, …), but three artifacts sit at the root of `PALINODE_DIR` where nothing matched them: `entity-aliases.yaml` (human-curated, and the most identifying file in a store — it names real people and projects by their actual refs), `.audit/` (`mcp-calls.jsonl` and `retrievals.jsonl`, a record of what was searched for), and `.palinode/` (watcher state). `PALINODE_DIR` is configurable, so a memory dir pointing at a git checkout previously left all three untracked but visible to `git add -A`. The `examples/` carve-out still wins, so shipped sample data is unaffected.
+
 ## [0.9.5] — 2026-07-22
 
 ### Added

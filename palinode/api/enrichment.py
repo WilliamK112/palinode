@@ -40,6 +40,7 @@ from palinode.core.ollama_client import (
     OllamaTimeout,
     get_ollama_client,
 )
+from palinode.core.parser import split_frontmatter
 
 logger = logging.getLogger("palinode.api")
 
@@ -262,15 +263,18 @@ def _generate_description(content: str) -> "str | object":
 
 
 def _extract_first_line(content: str, max_chars: int = 150) -> str:
-    """Extract the first non-empty, non-header line from markdown content."""
-    for line in content.split("\n"):
+    """Extract the first meaningful body line from markdown content."""
+    _, body = split_frontmatter(content)
+    for line in body.split("\n"):
         line = line.strip()
         if not line:
+            continue
+        if line in {"---", "***", "___"}:
             continue
         # Strip markdown headers
         line = re.sub(r'^#+\s*', '', line)
         line = line.strip()
-        if line:
+        if line and line not in {"---", "***", "___"}:
             return line[:max_chars]
     return ""
 

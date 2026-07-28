@@ -10,9 +10,32 @@
 # log and exactly wrong for anything where the two sides might be alternatives,
 # so keep this list narrow — one entry, deliberately.
 #
-# This does NOT remove the need to look: union can still put a bullet under the
-# wrong heading if a branch introduces its own `### Added`/`### Fixed`. The
-# standard headings are pre-seeded under `## Unreleased` so branches add bullets
-# under existing headings instead of creating duplicates. Leave them in place
-# when you cut a release.
+# SCOPE — read this before assuming it fixed the problem above. `union` applies
+# only where GIT does the merge. GitHub's server-side merge does NOT apply
+# .gitattributes merge drivers, so a second CHANGELOG-touching PR still reports
+# "Pull Request has merge conflicts" and its merge button still fails. Since
+# this repo lands work via PR, that is the common path — meaning this driver
+# does NOT eliminate the N-1 conflicts described above. Verified on a real
+# CHANGELOG-touching merge: GitHub refused it; the identical merge run locally
+# reported "Automatic merge went well" with zero conflicted files.
+#
+# What it does buy: the resolution becomes mechanical instead of manual —
+#   git fetch origin && git merge origin/main   # union auto-resolves
+#   git push                                    # GitHub re-computes: mergeable
+# No markers, no hand-editing. Cost per conflict drops from "edit by hand" to
+# "one local merge", not to zero.
+#
+# This does NOT remove the need to look: union resolves silently, so a bad merge
+# leaves no trace. It can still put a bullet under the wrong heading if a branch
+# introduces its own `### Added`/`### Fixed`. The standard headings are
+# pre-seeded under `## Unreleased` so branches add bullets under existing
+# headings instead of creating duplicates. Leave them in place when you cut a
+# release.
+#
+# That check is no longer a matter of remembering. `tests/test_changelog_structure.py`
+# asserts exactly one of each seeded heading under `## Unreleased` and fails CI on a
+# duplicate, a missing heading, an invented one, or a bullet above the first heading.
+# It exists because the silent case actually happened: merging main into a
+# release branch produced two `### Fixed` headings with no conflict marker and
+# nothing in `git status` — caught by hand, one merge before a release.
 docs/CHANGELOG.md merge=union

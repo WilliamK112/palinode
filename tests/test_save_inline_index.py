@@ -369,13 +369,15 @@ class TestFrontmatterLastUpdatedOnInitialSave:
         )
 
 
-class TestIndexFileLogsSilentEmbedSwallow:
-    """#337 — a per-section embed miss must be observable, not a bare flag.
+class TestEmbedOutageFailsClosed:
+    """#337 observability + #717 fail-closed on a partial embed outage.
 
-    Before #337, ``index_file`` set ``embed_failure = True`` and ``continue``d
-    with no log line, so the indexer never said which section/file failed. Now
-    each failed section emits a WARNING and the file emits one summary WARNING
-    naming the count of failed sections.
+    Before #337, an embed miss set a bare flag with no log line. Before #717,
+    the write path did a *partial* index on outage — it pruned stale rows and
+    wrote the sections that did embed, leaving the index reflecting a
+    half-applied edit. Now an embed miss in embedding mode rolls the whole
+    reconcile transaction back: nothing is written, the file is retried intact,
+    and one WARNING names the file + failing section so the abort is observable.
     """
 
     def _write_file(self, tmp_path, monkeypatch):
@@ -396,7 +398,15 @@ class TestIndexFileLogsSilentEmbedSwallow:
         )
         return file_path
 
-    def test_section_embed_failure_logs_warning(self, tmp_path, monkeypatch, caplog):
+    def _chunk_count(self, file_path):
+        db = store.get_db()
+        n = db.execute(
+            "SELECT count(*) FROM chunks WHERE file_path = ?", (str(file_path),)
+        ).fetchone()[0]
+        db.close()
+        return n
+
+    def test_embed_outage_aborts_and_is_observable(self, tmp_path, monkeypatch, caplog):
         import logging as _logging
 
         file_path = self._write_file(tmp_path, monkeypatch)
@@ -405,13 +415,48 @@ class TestIndexFileLogsSilentEmbedSwallow:
                 outcome = index_file(str(file_path))
 
         assert outcome["embedded"] is False
+        # Fail-closed: nothing was written, not even a partial row.
+        assert outcome["chunks_written"] == 0
+        assert self._chunk_count(file_path) == 0, "index must not be half-applied"
+        assert outcome["error"] and "retry" in outcome["error"]
+        # Observable: one WARNING names the file + failing section.
         msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.WARNING]
-        # Per-section line names the failing section + file.
-        assert any("section embed returned empty" in m for m in msgs), msgs
-        # One summary line names the file + failed-section count.
         assert any(
-            "file partially indexed" in m and "sections_failed=1" in m for m in msgs
+            "reconcile aborted" in m and "section_id=root" in m for m in msgs
         ), msgs
+
+    def test_first_embedded_section_is_rolled_back_when_a_later_one_fails(
+        self, tmp_path, monkeypatch
+    ):
+        """A partial outage writes *nothing* — the good section rolls back too."""
+        monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+        monkeypatch.setattr(config, "db_path", str(tmp_path / ".palinode.db"))
+        store.init_db()
+        (tmp_path / "insights").mkdir()
+        file_path = tmp_path / "insights" / "two-section.md"
+        # Body must exceed the parser's ~2000-char single-chunk threshold and
+        # carry h2 headers for it to split into two sections.
+        filler = ("Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
+                  * 40)
+        file_path.write_text(
+            "---\nid: insights-two\ncategory: insights\n---\n\n"
+            f"## One\n\nFirst section embeds fine. {filler}\n\n"
+            f"## Two\n\nSecond section will fail. {filler}\n"
+        )
+
+        call = {"n": 0}
+
+        def _flaky_embed(text):
+            call["n"] += 1
+            return [0.02] * 1024 if call["n"] == 1 else []
+
+        with patch("palinode.core.embedder.embed", side_effect=_flaky_embed):
+            outcome = index_file(str(file_path))
+
+        assert outcome["embedded"] is False
+        assert self._chunk_count(file_path) == 0, (
+            "one section embedded but the outage on the other must roll it back too"
+        )
 
     def test_successful_index_logs_no_failure_warning(self, tmp_path, monkeypatch, caplog):
         import logging as _logging
@@ -423,5 +468,4 @@ class TestIndexFileLogsSilentEmbedSwallow:
 
         assert outcome["embedded"] is True
         msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.WARNING]
-        assert not any("section embed returned empty" in m for m in msgs), msgs
-        assert not any("file partially indexed" in m for m in msgs), msgs
+        assert not any("reconcile aborted" in m for m in msgs), msgs

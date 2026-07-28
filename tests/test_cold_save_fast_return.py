@@ -23,8 +23,9 @@ import pytest
 from palinode.core import store
 from palinode.core.config import config
 from palinode.core.ollama_client import OllamaClient, RetryPolicy
-from palinode.indexer import index_file as index_file_mod
-from palinode.indexer.index_file import _embeds_deferred, index_file
+from palinode.indexer import reconcile as reconcile_mod
+from palinode.indexer.index_file import index_file
+from palinode.indexer.reconcile import _embeds_deferred
 
 _FAKE_VECTOR = [0.01] * 1024
 
@@ -42,11 +43,11 @@ def tmp_store(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_probe_cache():
-    index_file_mod._probe_cache["ts"] = 0.0
-    index_file_mod._probe_cache["ok"] = None
+    reconcile_mod._probe_cache["ts"] = 0.0
+    reconcile_mod._probe_cache["ok"] = None
     yield
-    index_file_mod._probe_cache["ts"] = 0.0
-    index_file_mod._probe_cache["ok"] = None
+    reconcile_mod._probe_cache["ts"] = 0.0
+    reconcile_mod._probe_cache["ok"] = None
 
 
 def _write_md(tmp_path) -> str:
@@ -123,7 +124,7 @@ def test_gate_proceeds_when_probe_succeeds():
 # ── deferred pass: FTS-only rows, no embed attempts ─────────────────────────
 
 def test_deferred_pass_writes_fts_only_rows_and_never_calls_embedder(tmp_store, monkeypatch):
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: True)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: True)
     filepath = _write_md(tmp_store)
 
     with patch("palinode.core.embedder.embed") as embed_spy:
@@ -145,12 +146,12 @@ def test_deferred_pass_writes_fts_only_rows_and_never_calls_embedder(tmp_store, 
 def test_deferred_rows_converge_to_embedded_on_warm_rerun(tmp_store, monkeypatch):
     filepath = _write_md(tmp_store)
 
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: True)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: True)
     index_file(filepath)
 
     # Embedder comes back: the missing-vec re-embed branch (fix B)
     # picks the row up even though content_hash is unchanged.
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: False)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: False)
     with patch("palinode.core.embedder.embed", return_value=_FAKE_VECTOR):
         result = index_file(filepath)
 
@@ -162,14 +163,14 @@ def test_deferred_rows_converge_to_embedded_on_warm_rerun(tmp_store, monkeypatch
 
 def test_unchanged_and_indexed_rows_stay_untouched_in_deferred_mode(tmp_store, monkeypatch):
     filepath = _write_md(tmp_store)
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: False)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: False)
     with patch("palinode.core.embedder.embed", return_value=_FAKE_VECTOR):
         index_file(filepath)
 
     # A later cold pass (e.g. process restart, Ollama down) over an already
     # fully-indexed file must hit the unchanged fast path — embedded stays
     # True, no FTS-only downgrade of existing vectors.
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: True)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: True)
     result = index_file(filepath)
 
     assert result["embedded"] is True

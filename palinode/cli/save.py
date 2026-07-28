@@ -185,20 +185,17 @@ def save(
 
     if not content:
         console.print("[red]Error: Must provide content or a file.[/red]")
-        click.Abort()
-        return
+        raise click.Abort()
 
     # Resolve memory type: --ps is shorthand for ProjectSnapshot
     if is_ps and memory_type and memory_type != "ProjectSnapshot":
         console.print(f"[red]Error: --ps conflicts with --type {memory_type}. Pick one.[/red]")
-        click.Abort()
-        return
+        raise click.Abort()
     if is_ps:
         memory_type = "ProjectSnapshot"
     if not memory_type:
         console.print("[red]Error: Must provide --type or --ps.[/red]")
-        click.Abort()
-        return
+        raise click.Abort()
 
     priority_flags = int(priority is not None) + int(important) + int(critical)
     if priority_flags > 1:
@@ -217,12 +214,10 @@ def save(
             metadata = _json.loads(raw)
         except _json.JSONDecodeError as e:
             console.print(f"[red]Error: --metadata-json is not valid JSON: {e}[/red]")
-            click.Abort()
-            return
+            raise click.Abort()
         if not isinstance(metadata, dict):
             console.print("[red]Error: --metadata-json must be a JSON object.[/red]")
-            click.Abort()
-            return
+            raise click.Abort()
     else:
         metadata = None
 
@@ -235,8 +230,7 @@ def save(
                 console.print(
                     f"[red]Error: --external-ref must be KEY=VALUE, got: {pair!r}[/red]"
                 )
-                click.Abort()
-                return
+                raise click.Abort()
             key, _, value = pair.partition("=")
             external_refs[key.strip()] = value
 
@@ -328,4 +322,4 @@ def save(
 
     except Exception as e:
         console.print(f"[red]Error saving memory: {str(e)}[/red]")
-        click.Abort()
+        raise click.Abort()

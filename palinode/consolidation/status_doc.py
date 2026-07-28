@@ -453,21 +453,33 @@ def _clean_entities(value: Any) -> list[str]:
     return cleaned
 
 
-def reconcile_frontmatter(content: str, *, now: datetime | None = None) -> str:
-    """Rewrite the frontmatter so its counts and dates describe the body.
+def desired_frontmatter(content: str) -> dict[str, Any] | None:
+    """What *content*'s frontmatter should say, given its body. Pure.
 
-    Sets ``memory_count`` (distinct ``<!-- fact:… -->`` markers in the body),
-    ``date_range`` (min → max ``[YYYY-MM-DD]`` / ``### YYYY-MM-DD`` in the body)
-    and ``last_updated``. Re-dumps via ``yaml.safe_dump``, which quotes scalars
-    that would otherwise re-parse as YAML flow sequences — the ``- [2026-05-24]
-    …`` breakage in #470.
+    Sets ``memory_count`` (distinct ``<!-- fact:… -->`` markers in the body)
+    and ``date_range`` (min → max ``[YYYY-MM-DD]`` / ``### YYYY-MM-DD`` in the
+    body), and cleans fact-marker residue out of ``entities``.
 
-    Key order is preserved; unparseable frontmatter is left untouched (a
-    consolidation write must never be the thing that destroys a file).
+    No clock, no I/O, no serialization — so a caller can ask *"is this document
+    already correct?"* without changing it. That question is unanswerable
+    against a function that stamps the time on its way past, which is what
+    made ``repair-status`` report a clean store as 100% dirty (#708).
+
+    ``last_updated`` is passed through untouched. It is a write receipt, not
+    derived state: only a caller that decides to write may set it, and it is
+    excluded from the correctness comparison (see ``_without_receipt``).
+    Leaving it in place preserves its position under ``sort_keys=False``.
+
+    Returns ``None`` when there is no frontmatter, when it does not parse, or
+    when it is not a mapping. The caller must then leave the file alone — a
+    consolidation write must never be the thing that destroys a file.
     """
-    match = FRONTMATTER_RE.match(content)
+    block, body = split_frontmatter(content)
+    if not block:
+        return None
+    match = FRONTMATTER_RE.match(block)
     if not match:
-        return content
+        return None
     try:
         meta = yaml.safe_load(match.group(1))
     except yaml.YAMLError as exc:
@@ -475,11 +487,10 @@ def reconcile_frontmatter(content: str, *, now: datetime | None = None) -> str:
             "status frontmatter does not parse — leaving it untouched "
             "(run `palinode repair-status`): %s", exc,
         )
-        return content
+        return None
     if not isinstance(meta, dict):
-        return content
+        return None
 
-    body = content[match.end():]
     meta = dict(meta)
     if "entities" in meta:
         meta["entities"] = _clean_entities(meta["entities"])
@@ -487,12 +498,47 @@ def reconcile_frontmatter(content: str, *, now: datetime | None = None) -> str:
     dates = _body_dates(body)
     if dates:
         meta["date_range"] = f"{dates[0]} to {dates[-1]}"
-    meta["last_updated"] = (now or _utc_now()).isoformat()
+    return meta
 
+
+def render(meta: dict[str, Any], body: str) -> str:
+    """Serialize *meta* and *body* into a document. Deterministic.
+
+    ``safe_dump`` quotes any scalar that would otherwise re-read as YAML
+    syntax — the ``- [2026-05-24] …`` breakage in #470. Key order is preserved.
+    """
     dumped = yaml.safe_dump(
         meta, default_flow_style=False, allow_unicode=True, sort_keys=False
     )
     return f"---\n{dumped}---\n{body}"
+
+
+def _without_receipt(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """*meta* minus ``last_updated`` — the view that decides correctness.
+
+    ``last_updated`` records *when the content last meaningfully changed*, so
+    comparing it would make every document differ from itself.
+    """
+    if meta is None:
+        return {}
+    trimmed = dict(meta)
+    trimmed.pop("last_updated", None)
+    return trimmed
+
+
+def current_frontmatter(content: str) -> dict[str, Any] | None:
+    """*content*'s frontmatter exactly as written. ``None`` if absent or bad."""
+    block, _ = split_frontmatter(content)
+    if not block:
+        return None
+    match = FRONTMATTER_RE.match(block)
+    if not match:
+        return None
+    try:
+        meta = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return None
+    return meta if isinstance(meta, dict) else None
 
 
 # ── one-time repair ──────────────────────────────────────────────────────────
@@ -570,7 +616,7 @@ def _repair_log_line(line: str, known_ids: set[str]) -> tuple[str | None, bool]:
 def repair_status_doc(content: str, *,
                       max_blocks: int = DEFAULT_MAX_LOG_BLOCKS,
                       extra_known_ids: set[str] | None = None,
-                      now: datetime | None = None) -> tuple[str, dict[str, int]]:
+                      now: datetime | None = None) -> tuple[str, dict[str, Any]]:
     """Repair one status document in memory. Returns ``(content, report)``.
 
     ``extra_known_ids`` widens the resolvable set beyond the markers still in
@@ -589,12 +635,32 @@ def repair_status_doc(content: str, *,
     3. the log is bounded to *max_blocks* date blocks with a cumulative elision
        line;
     4. frontmatter counts/dates are reconciled with the body.
+
+    The report distinguishes two kinds of difference (#708):
+
+    ``changed``
+        the document is semantically wrong — a counter moved, entities were
+        relocated, log lines were repaired, or the body differs. This is what
+        a caller should count when asking *"does anything need repair?"*.
+    ``noncanonical``
+        the document is semantically correct but its YAML is not what
+        ``render`` would emit (quoting, spacing, comments). Reported so #470
+        formatting drift is visible, but it does not mean damage.
+    ``unparseable``
+        the frontmatter could not be read; the original content is returned
+        untouched.
+
+    ``last_updated`` is stamped only when ``changed`` — normalizing formatting
+    must not move a document up ``ranker``'s recency window.
     """
-    report = {
+    report: dict[str, Any] = {
         "frontmatter_markers_stripped": 0,
         "entities_relocated": 0,
         "log_lines_elided": 0,
         "log_ids_unresolved": 0,
+        "changed": False,
+        "noncanonical": False,
+        "unparseable": False,
     }
 
     frontmatter_block, body = split_frontmatter(content)
@@ -673,4 +739,20 @@ def repair_status_doc(content: str, *,
         if after:
             body += "\n" + after.lstrip("\n")
 
-    return reconcile_frontmatter(frontmatter_block + body, now=now), report
+    repaired = frontmatter_block + body
+    desired = desired_frontmatter(repaired)
+    if desired is None:
+        report["unparseable"] = True
+        return content, report
+
+    repaired_body = split_frontmatter(repaired)[1]
+    report["changed"] = (
+        _without_receipt(desired) != _without_receipt(current_frontmatter(content))
+        or repaired_body != split_frontmatter(content)[1]
+    )
+    if report["changed"]:
+        desired["last_updated"] = (now or _utc_now()).isoformat()
+
+    rendered = render(desired, repaired_body)
+    report["noncanonical"] = not report["changed"] and rendered != content
+    return rendered, report

@@ -118,9 +118,9 @@ def test_ingest_embedded_smoke(bench_dir, fake_embed):
 
 def test_ingest_fts_only_degradation(bench_dir, monkeypatch):
     # Force the keyword-only path (what an embedder-less host really does).
-    from palinode.indexer import index_file as ifmod
+    from palinode.indexer import reconcile as reconcile_mod
 
-    monkeypatch.setattr(ifmod, "_embeds_deferred", lambda client: True)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: True)
     corpus.generate(bench_dir, seed=9, size=4)
     harness.init_store()
     res = harness.index_all(bench_dir)

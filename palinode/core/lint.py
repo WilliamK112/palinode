@@ -17,6 +17,190 @@ from palinode.core import parser
 # deliberately links every frontmatter entity that has no inline body link.
 _AUTO_FOOTER_MARKER = "<!-- palinode-auto-footer -->"
 
+def _alias_key(name: str) -> str:
+    """Separator-and-case-insensitive form of an entity ref's name part.
+
+    ``alpha-bravo``, ``Alpha_Bravo`` and ``alphabravo`` all reduce to
+    ``alphabravo``.
+    """
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _is_token_prefix(short: str, long: str) -> bool:
+    """True when `short` is `long` truncated at a token boundary.
+
+    ``alpha`` vs ``alpha-bravo`` -> True (the longer adds a whole token).
+    ``alpha`` vs ``alphabravo``  -> False (mid-token; a different name entirely).
+
+    The token-boundary requirement is what keeps this from flagging every name
+    that merely starts with the same letters.
+    """
+    if short == long or not long.startswith(short):
+        return False
+    return long[len(short)] in "-_/. "
+
+
+def _independent_identity(name: str, category: str, names_by_category: dict[str, set[str]]) -> list[str]:
+    """Other categories that carry this same name.
+
+    A ref the store references under SEVERAL categories has an identity of its
+    own — `project/x`, `insight/x` and `decision/x` all pointing at the same
+    subject means "x" is an established thing, not a stray spelling of something
+    else. That distinction is what separates a genuine alias split from two
+    deliberately different entries.
+
+    Validated against a live store (2026-07-24) on eight hand-labelled prefix
+    pairs, separating all eight. Eight pairs from one store is a real signal, not
+    a proof — which is why this DEMOTES confidence rather than suppressing the
+    finding.
+    """
+    return sorted(c for c in names_by_category.get(name, set()) if c != category)
+
+
+def check_entity_aliases(
+    entity_references: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Flag entity refs that look like aliases of one another (#693).
+
+    The problem: refs are free text written per save, with no canonicalization.
+    The same subject ends up as several nodes, and every lookup returns a
+    plausible, non-empty, INCOMPLETE result — under-recall presenting as success.
+    Nothing in the output says anything is missing, so it never announces itself.
+
+    **This detects and reports. It never merges, and must never learn to.** A
+    short form and a longer form MAY BE DIFFERENT PEOPLE — two colleagues can
+    share a given name. A wrong join is unrecoverable from the merged data,
+    whereas a split is merely invisible until inspected, so the ordering has to
+    stay detect -> propose -> human confirms -> alias map. This function is the
+    first step only; it hands the operator a question, not an answer.
+
+    Two deliberately HIGH-PRECISION signals, both matching the shapes actually
+    observed in a live store:
+
+    * ``separator`` — identical once case and separators are stripped
+      (``a-b`` vs ``ab``). Effectively always the same subject.
+    * ``prefix`` — one ref is the other truncated at a token boundary
+      (``a`` vs ``a-b``). The common short-form/full-form split.
+
+    Free-form edit distance is deliberately NOT used. It would flag every pair of
+    similar-looking names, and a check an operator learns to ignore is worse than
+    no check. Precision matters more than recall here because the output is a
+    prompt for human judgement.
+
+    Only refs in the SAME category are compared: ``person/alpha`` and
+    ``project/alpha`` are different namespaces, not aliases.
+
+    Returns one entry per candidate cluster, each carrying every member ref with
+    its file count so the operator can see the shape of the split (a near-even
+    split reads very differently from a long tail).
+    """
+    by_category: dict[str, list[tuple[str, str, int]]] = {}
+    for ref, count in entity_references.items():
+        category, _, name = ref.partition("/")
+        if not name:
+            continue  # not a category/name ref — nothing to compare within
+        by_category.setdefault(category, []).append((ref, name, count))
+
+    # Which categories each name appears under — the independence signal below.
+    names_by_category: dict[str, set[str]] = {}
+    for cat, members in by_category.items():
+        for _, name, _ in members:
+            names_by_category.setdefault(name.lower(), set()).add(cat)
+
+    clusters: list[dict[str, Any]] = []
+
+    for category, members in sorted(by_category.items()):
+        # Group by the separator-insensitive key first: everything in one bucket
+        # is the same subject spelled differently.
+        buckets: dict[str, list[tuple[str, str, int]]] = {}
+        for ref, name, count in members:
+            buckets.setdefault(_alias_key(name), []).append((ref, name, count))
+
+        for key, bucket in sorted(buckets.items()):
+            if len(bucket) > 1:
+                clusters.append({
+                    "kind": "separator",
+                    "confidence": "high",
+                    "category": category,
+                    "refs": [
+                        {"ref": r, "files": c}
+                        for r, _, c in sorted(bucket, key=lambda b: -b[2])
+                    ],
+                    "detail": (
+                        f"{len(bucket)} refs in {category!r} are identical once case and "
+                        f"separators are ignored — almost certainly one subject"
+                    ),
+                })
+
+        # Then prefix containment (short form vs full form).
+        #
+        # Compared on the ORIGINAL names, not the separator-stripped keys: the
+        # key for `alpha-bravo` is `alphabravo`, which no longer contains the
+        # boundary `_is_token_prefix` looks for, so running this on keys silently
+        # matches nothing. Buckets are still used to avoid re-reporting refs that
+        # the separator pass already grouped.
+        reported: set[frozenset[str]] = set()
+        ordered = sorted(members, key=lambda m: len(m[1]))
+        for i, (short_ref, short_name, _) in enumerate(ordered):
+            for long_ref, long_name, _ in ordered[i + 1:]:
+                if not _is_token_prefix(short_name.lower(), long_name.lower()):
+                    continue
+                pair = frozenset(
+                    {_alias_key(short_name), _alias_key(long_name)}
+                )
+                if pair in reported:
+                    continue
+                reported.add(pair)
+                group = buckets[_alias_key(short_name)] + buckets[_alias_key(long_name)]
+                elsewhere = _independent_identity(
+                    long_name.lower(), category, names_by_category
+                )
+                # The demotion asks "is the LONGER form its own thing?" — but that
+                # alone mis-fires when the SHORTER form is the stray one. A ref used
+                # once, in one category, is a straggler whatever the other side looks
+                # like, so it stays high. (Observed: a 1-file `x` beside an
+                # established `x-mcp` was demoted purely because `x-mcp` is
+                # established, hiding a real one-line merge.)
+                counts = {r: c for r, _, c in group}
+                smallest = min(counts.values()) if counts else 0
+                lone = [
+                    n for n in (short_name.lower(), long_name.lower())
+                    if len(names_by_category.get(n, set())) == 1
+                ]
+                straggler = smallest <= 2 and bool(lone)
+                if elsewhere and not straggler:
+                    confidence = "low"
+                    detail = (
+                        f"{long_ref!r} is also referenced as "
+                        + ", ".join(f"{c}/{long_name}" for c in elsewhere)
+                        + " — the store already treats it as its own subject, so this is "
+                        "more likely two distinct entries than one split. Demoted, not "
+                        "hidden: check it, but expect the answer to be 'leave them'."
+                    )
+                else:
+                    confidence = "high"
+                    detail = (
+                        f"a short form and a longer form coexist in {category!r} and the "
+                        f"longer one appears nowhere else — the shape of a straggler "
+                        f"spelling. Still a question: two subjects can share a first token."
+                    )
+                clusters.append({
+                    "kind": "prefix",
+                    "confidence": confidence,
+                    "category": category,
+                    "refs": [
+                        {"ref": r, "files": c}
+                        for r, _, c in sorted(group, key=lambda b: -b[2])
+                    ],
+                    "detail": detail,
+                })
+
+    # High-confidence first: the operator should meet the near-certain merges
+    # before the ones the store says are probably distinct.
+    clusters.sort(key=lambda c: (c["confidence"] != "high", c["kind"], c["category"]))
+    return clusters
+
+
 def check_wiki_drift(
     metadata: dict[str, Any],
     body: str,
@@ -362,5 +546,8 @@ def run_lint_pass() -> dict[str, Any]:
         "claim_anchor_issues": claim_anchor_issues,
         "stale_open_questions": stale_open_questions,
         "open_contradictions": open_contradictions,
+        # Refs that look like aliases of one another. Detection only — the
+        # report is a question for a human, never an instruction to merge.
+        "entity_aliases": check_entity_aliases(entity_references),
         "core_count": core_count,
     }

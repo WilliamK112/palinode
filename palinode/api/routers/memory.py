@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from palinode.core import store, git_tools
 from palinode.core.config import config
+from palinode.core.envelope import envelope_complaint
 from palinode.core.scope import ScopeChain
 from palinode.core.visibility import is_visible
 from palinode.api._util import (
@@ -385,6 +386,30 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
     if len(req.content) > _MAX_REQUEST_BYTES:
         raise HTTPException(status_code=413, detail="Content too large")
+
+    # Fail loud BEFORE any write: an envelope indexed as memory is silent
+    # corruption. No fallback file is needed on this path the way session-end
+    # needs one — none of the four save surfaces is fire-and-forget: MCP and
+    # the plugin return the 400 in-band to an agent that still holds the
+    # content, the CLI prints it to a human who typed it, and no hook or
+    # script posts /save at all.
+    #
+    # `missing_params=()` is the load-bearing difference from session-end. Every
+    # save array (`entities`, `sources`, `claims`, `contradicts`, `backed_by`)
+    # is optional and absent on most honest calls, so their absence is not an
+    # absorption signature here and must not license rejection on a bare tag
+    # match — that would 400 an ordinary note containing a `<details><summary>`
+    # block. Save is guarded by the unmatched-tag and trailing-fragment signals.
+    complaint = envelope_complaint(
+        req.content,
+        "content",
+        remediation="Re-send `content` as the note text alone, without the "
+        "surrounding tool call.",
+    )
+    if complaint:
+        logger.warning("save rejected: %s", complaint)
+        raise HTTPException(status_code=400, detail=complaint)
+
     slug = req.slug
     if slug:
         # Prevent any potential JSON escape or traversal exploits if user defines slug

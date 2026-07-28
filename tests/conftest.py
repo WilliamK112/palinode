@@ -1,6 +1,6 @@
 """Shared test fixtures.
 
-The cold-embed gate in ``palinode.indexer.index_file``
+The cold-embed gate in ``palinode.indexer.reconcile``
 (``_embeds_deferred``) runs a real ``probe_embed`` against the configured
 Ollama URL the first time a process indexes anything. Unit tests have no
 Ollama, so without intervention every mocked-embedder test would silently
@@ -81,9 +81,9 @@ def _isolate_global_config():
 
 @pytest.fixture(autouse=True)
 def _warm_embed_gate(monkeypatch):
-    from palinode.indexer import index_file as index_file_mod
+    from palinode.indexer import reconcile as reconcile_mod
 
-    monkeypatch.setattr(index_file_mod, "_embeds_deferred", lambda client: False)
+    monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: False)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

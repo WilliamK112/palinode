@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "palinode"
-version = "0.9.5"
+version = "0.9.6"
 description = "The memory substrate for AI agents and developer tools. Git-versioned, file-native, MCP-first."
 authors = [
   {name = "Paul Kyle", email = "paul@phasespace.co"}
@@ -36,7 +36,12 @@ dependencies = [
     "fastapi>=0.115,<0.137",      # older: CSRF/ReDoS CVEs. Cap <0.137: 0.137.1 regressed include_router (routes not added to app → routeless API). 0.136.x is the last good line. See #544.
     "uvicorn>=0.32",              # 0.11.x had log-injection / response-splitting CVEs
     "pydantic>=2.7,<3.0",         # 1.x and pre-2.4 had ReDoS / infinity-loop CVEs
-    "mcp>=1.10",                  # earlier versions: DNS rebinding / FastMCP DoS / Streamable HTTP DoS CVEs
+    # Upper bound is load-bearing: mcp 2.0.0 (2026-07-28) removed both
+    # Server.list_tools and Server.call_tool, the decorators palinode/mcp.py is
+    # built on, so an uncapped range installs a server that cannot start.
+    # Lower bound: earlier versions carry DNS rebinding / FastMCP DoS /
+    # Streamable HTTP DoS CVEs. Lift the cap only with the 2.x migration.
+    "mcp>=1.10,<2",
     "rich>=13.7",
     "click>=8.1",
     "jinja2>=3.1.5",              # provenance UI templating; 3.1.5 fixes sandbox-escape CVEs

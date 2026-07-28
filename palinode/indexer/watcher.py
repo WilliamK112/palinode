@@ -14,7 +14,7 @@ import logging
 import weakref
 
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent, DirModifiedEvent, DirCreatedEvent, DirDeletedEvent
+from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent, FileMovedEvent, DirModifiedEvent, DirCreatedEvent, DirDeletedEvent, DirMovedEvent
 
 import threading
 import urllib.request
@@ -349,6 +349,31 @@ class PalinodeHandler(FileSystemEventHandler):
                 store.delete_file_chunks(event.src_path)
             except Exception as e:
                 logger.error(f"Failed to delete chunks for {event.src_path}: {e}")
+
+    def on_moved(self, event: FileMovedEvent | DirMovedEvent) -> None:
+        """Reconcile a rename: retire the old path, index the new one.
+
+        Without this, a ``mv`` (which watchdog delivers here, not to
+        ``on_modified``) was dropped silently: chunk ids are derived from the
+        path, so every chunk of the moved file orphaned under the old path, and
+        its entity rows survived too (#710). Deleting the source's derived state
+        and indexing the destination makes a rename a first-class edit.
+        """
+        if event.is_directory:
+            return
+        if self.is_valid_file(event.src_path):
+            try:
+                logger.info(f"Renamed away, deleting chunks for: {event.src_path}")
+                store.delete_file_chunks(event.src_path)
+            except Exception as e:
+                logger.error(
+                    f"Failed to delete chunks for moved {event.src_path}: {e}"
+                )
+        if self.is_valid_file(event.dest_path):
+            try:
+                self._process_file(event.dest_path)
+            except Exception as e:
+                logger.error(f"Failed to index moved {event.dest_path}: {e}")
 
 
 def main() -> None:

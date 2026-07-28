@@ -28,7 +28,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from palinode.api.routers.session import _envelope_complaint
+from palinode.core.envelope import envelope_complaint
 from palinode.core.config import config
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -198,7 +198,9 @@ def test_ordinary_summary_still_passes(tmp_path, monkeypatch):
     "the executor applies KEEP/UPDATE/MERGE ops",
 ])
 def test_clean_text_never_complains(text):
-    assert _envelope_complaint(text, "summary", arrays_present=False) is None
+    assert envelope_complaint(
+        text, "summary", missing_params=("decisions", "blockers")
+    ) is None
 
 
 # ── The hook, fixed at its source ────────────────────────────────────────────
@@ -251,9 +253,10 @@ def test_hook_output_passes_the_boundary_guard(tmp_path):
     """The two halves of #682 have to agree: what the hook now sends must not
     be what the boundary now rejects."""
     payload = _run_hook(tmp_path, _MARKUP_TRANSCRIPT)
-    assert _envelope_complaint(
+    arrays_present = bool(payload["decisions"] or payload["blockers"])
+    assert envelope_complaint(
         payload["summary"], "summary",
-        arrays_present=bool(payload["decisions"] or payload["blockers"]),
+        missing_params=() if arrays_present else ("decisions", "blockers"),
     ) is None, payload["summary"]
 
 

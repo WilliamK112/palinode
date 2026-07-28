@@ -19,6 +19,19 @@ inbox/
 migration/
 research/
 
+# Root-level store artifacts. The directory patterns above miss these: they sit
+# AT the root of PALINODE_DIR rather than inside a category folder, so nothing
+# above matches them.
+#   - entity-aliases.yaml is human-curated and names real people and projects
+#     by their actual refs — it is the most identifying file in the store.
+#   - .audit/ holds mcp-calls.jsonl and retrievals.jsonl: a record of what was
+#     searched for, which is memory content by another route.
+# Neither normally lives in a code repo at all. These entries exist because
+# PALINODE_DIR is configurable, so a misconfigured dir pointing at a checkout
+# would otherwise leave them sitting untracked where `git add -A` sweeps them in.
+entity-aliases.yaml
+.audit/
+
 !palinode/**
 !examples/**
 
@@ -33,6 +46,10 @@ research/
 
 # Operational logs
 logs/
+
+# Watcher/operational state at the root of PALINODE_DIR (pending queue,
+# db-size history). Rebuildable, same class as logs/ above.
+.palinode/
 
 # Execution prompts (contain infrastructure details)
 M1-EXECUTE-PROMPT.md

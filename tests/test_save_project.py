@@ -112,22 +112,37 @@ def test_project_optional(mock_memory_dir):
         assert fm["entities"] == ["person/alice"]
 
 
-def test_cli_save_passes_project_flag(mock_memory_dir):
-    """The CLI ``--project / -p`` flag forwards the value to the API."""
+def test_cli_save_passes_project_flag(mock_memory_dir, monkeypatch):
+    """The CLI ``--project / -p`` flag forwards the value to the API.
+
+    The API client is stubbed deliberately. Left unstubbed, this test reaches a
+    real HTTP endpoint that is not running under pytest, and every run took the
+    save-failed branch — which used to exit 0 because its ``click.Abort()`` was
+    constructed and never raised, so ``exit_code == 0`` passed on a save that
+    never happened and the ``project`` forwarding this test is named for went
+    unchecked. Assert on the forwarded value, not on the exit code alone.
+    """
     from click.testing import CliRunner
 
-    from palinode.cli.save import save
+    from palinode.cli.save import api_client, save
 
-    with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
-        runner = CliRunner()
-        result = runner.invoke(
-            save,
-            [
-                "--type",
-                "Decision",
-                "-p",
-                "palinode",
-                "test memory body",
-            ],
-        )
-        assert result.exit_code == 0, result.output
+    captured = {}
+
+    def fake_save(*args, **kwargs):
+        captured.update(kwargs)
+        return {"file_path": "/tmp/memory.md", "id": "decisions-memory"}
+
+    monkeypatch.setattr(api_client, "save", fake_save)
+    runner = CliRunner()
+    result = runner.invoke(
+        save,
+        [
+            "--type",
+            "Decision",
+            "-p",
+            "palinode",
+            "test memory body",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["project"] == "palinode"

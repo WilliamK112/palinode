@@ -28,6 +28,38 @@ def test_extract_first_line_skips_blank():
     assert _extract_first_line("\n\n  \nActual content") == "Actual content"
 
 
+def test_extract_first_line_skips_frontmatter():
+    content = """---
+id: decision/sqlite-storage
+category: decision
+description: Old description
+---
+
+## Decision to use SQLite for storage
+More details here.
+"""
+    assert _extract_first_line(content) == "Decision to use SQLite for storage"
+
+
+def test_extract_first_line_frontmatter_only_returns_empty():
+    content = """---
+id: decision/bodyless
+category: decision
+---
+"""
+    assert _extract_first_line(content) == ""
+
+
+def test_extract_first_line_skips_rule_delimiters_in_body():
+    content = """
+---
+***
+___
+## Meaningful body heading
+"""
+    assert _extract_first_line(content) == "Meaningful body heading"
+
+
 def test_extract_first_line_truncates():
     long = "A" * 300
     result = _extract_first_line(long, max_chars=150)
@@ -44,6 +76,33 @@ def test_generate_description_fallback_on_connection_error():
     with _patch_client(side_effect=OllamaUnreachable("offline", role="chat")):
         result = _generate_description("Decision to use SQLite for storage.\nMore details here.")
     assert result == "Decision to use SQLite for storage."
+
+
+def test_generate_description_fallback_uses_frontmatter_body():
+    """Connection-error fallback extracts body text, not frontmatter delimiters."""
+    content = """---
+id: decision/sqlite-storage
+category: decision
+---
+
+Decision to use SQLite for storage.
+More details here.
+"""
+    with _patch_client(side_effect=OllamaUnreachable("offline", role="chat")):
+        result = _generate_description(content)
+    assert result == "Decision to use SQLite for storage."
+
+
+def test_generate_description_fallback_frontmatter_only_returns_empty():
+    """Body-less frontmatter yields no description for the caller to inject."""
+    content = """---
+id: decision/bodyless
+category: decision
+---
+"""
+    with _patch_client(side_effect=OllamaUnreachable("offline", role="chat")):
+        result = _generate_description(content)
+    assert result == ""
 
 
 def test_generate_description_uses_llm_when_available():

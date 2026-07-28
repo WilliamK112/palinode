@@ -159,16 +159,16 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
         repaired, report = repair_status_doc(
             original, max_blocks=max_blocks, extra_known_ids=extra
         )
-        changed = repaired != original
         report = {
             "file": path,
-            "changed": changed,
             "bytes_before": len(original),
             "bytes_after": len(repaired),
             **report,
         }
         reports.append(report)
-        if changed and execute:
+        # `changed` is damage, `noncanonical` is formatting drift. Both are
+        # worth writing under --execute; neither is worth reporting as a repair.
+        if execute and (report["changed"] or report["noncanonical"]):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(repaired)
             report["chunks_repointed"] = _propagate_entities(path, repaired)
@@ -204,7 +204,19 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
 
     for report in reports:
         if not report["changed"]:
-            click.echo(f"  [ok] {report['file']} — already clean")
+            if report.get("unparseable"):
+                click.echo(
+                    f"  [skip] {report['file']} — frontmatter does not parse; "
+                    "left untouched for manual review"
+                )
+            elif report.get("noncanonical"):
+                verb = "normalized" if execute else "non-canonical"
+                click.echo(
+                    f"  [{verb}] {report['file']} — formatting only, "
+                    "nothing to repair"
+                )
+            else:
+                click.echo(f"  [ok] {report['file']} — already clean")
             continue
         verb = "repaired" if execute else "would repair"
         if report.get("markers_only"):
@@ -224,6 +236,8 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
         )
 
     pending = sum(1 for r in reports if r["changed"])
+    noncanonical = sum(1 for r in reports if r.get("noncanonical"))
+    unparseable = sum(1 for r in reports if r.get("unparseable"))
     markers = sum(r["frontmatter_markers_stripped"] for r in reports)
     if not execute and pending:
         click.echo(
@@ -231,4 +245,15 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
             f"({markers} frontmatter marker(s) total). Re-run with --execute, "
             "then review the diff and commit. --execute also repoints the "
             "index, so no re-index is needed."
+        )
+    if not execute and noncanonical:
+        click.echo(
+            f"\n{noncanonical} file(s) have non-canonical frontmatter — "
+            "formatting only, nothing is wrong with them. --execute normalizes "
+            "the YAML without touching last_updated."
+        )
+    if unparseable:
+        click.echo(
+            f"\n{unparseable} file(s) have unparseable frontmatter and were "
+            "left untouched — these need a human."
         )
