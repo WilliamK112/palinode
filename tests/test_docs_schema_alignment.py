@@ -1,11 +1,13 @@
-"""Regression guards for #298 + #299 — keep code and docs in sync.
+"""Regression guards for the request-size doc reconciliation + the save request-schema
+clarification — keep code and docs in sync.
 
-#298: PALINODE_MAX_REQUEST_BYTES default must stay 5 MB. If anyone bumps
-the constant, this test fails and the README/OPERATIONS docs need updating.
+the request-size doc reconciliation: PALINODE_MAX_REQUEST_BYTES default must stay 5 MB.
+If anyone bumps the constant, this test fails and the README/OPERATIONS docs need
+updating.
 
-#299: SaveRequest schema is {content, type, slug, ...}. Not {category, body, ...}.
-Pin the field names so any rename is caught here AND in the docs.
-"""
+the save request-schema clarification: SaveRequest schema is {content, type, slug,...}.
+Not {category, body,...}. Pin the field names so any rename is caught here AND in the
+docs. """
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,7 +48,7 @@ def test_max_request_bytes_documented_in_operations():
 def test_save_request_schema_uses_content_not_body():
     """SaveRequest must use `content` (the body) and `type` — not `body` /
     `category`. Pins the schema so a careless rename can't silently break
-    every API consumer. See #299.
+    every API consumer.
     """
     from palinode.api.server import SaveRequest
 
@@ -69,7 +71,7 @@ def test_save_endpoint_docstring_documents_schema():
     """The /save endpoint docstring is what FastAPI's auto-generated /docs
     UI renders. It must show the canonical {content, type, slug} schema
     so new integrators don't guess from the legacy {category, body, slug}
-    shape that caused #299.
+    shape that caused the save request-schema clarification.
     """
     from palinode.api.server import save_api
 

@@ -1,4 +1,4 @@
-"""Tests for the recall-feedback loop (ADR-006/007, #371).
+"""Tests for the recall-feedback loop (ADR-006/007).
 
 On every retrieval hit, access metadata must be written back to the ``chunks``
 table: ``recall_count`` increments, ``last_recalled`` is stamped (tz-aware UTC

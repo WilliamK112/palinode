@@ -100,7 +100,7 @@ def trigger_remove(trigger_id, fmt):
         if output_fmt == OutputFormat.JSON:
             print_result(result, fmt=output_fmt)
         else:
-            console.print(f"[green]Trigger removed.[/green]")
+            console.print("[green]Trigger removed.[/green]")
     except Exception as e:
         console.print(f"[red]Error removing trigger: {str(e)}[/red]")
         click.Abort()

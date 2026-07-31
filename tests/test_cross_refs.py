@@ -1,4 +1,4 @@
-"""Tests for #73 — mechanical untyped cross-linking (`cross_refs`).
+"""Tests for the mechanical cross-linking work — mechanical untyped cross-linking (`cross_refs`).
 
 Covers the pure matchers (detect_refs / build_registry), then the file-mutating
 orchestrator (update_file_cross_refs) on a real tmp memory_dir with git off and

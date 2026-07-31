@@ -1,11 +1,11 @@
-"""The consolidation propose→apply seam (#554).
+"""The consolidation propose→apply seam.
 
 Before this seam, the only way to test the runner→executor path was to mock
 ``_consolidate_project`` wholesale (see test_consolidation_dry_run), which skips
-the real fact-extraction, prompt-building, JSON parse/repair, and executor
+the real fact-extraction, prompt-building, JSON parse/repair, and operation
 application — the parts most likely to harbour bugs. The injectable ``llm_fn``
-splits the nondeterministic half (the LLM call) from the deterministic half, so
-a fake adapter returning canned op-JSON drives the real pipeline end to end.
+separates the planning call from the application stage, so a fake adapter
+returning canned op-JSON drives the real pipeline end to end.
 
 Live adapter = the default ``_call_llm_with_fallback`` (covered by test_fallback);
 fake adapter = the ``_FAKE_*`` callables below. Two adapters → a real seam.
@@ -18,7 +18,6 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 
 from palinode.consolidation import runner
 from palinode.core.config import config

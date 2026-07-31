@@ -1,4 +1,5 @@
-"""Regression tests for #352: /search snippet enrichment + MCP rendering.
+"""Regression tests for the palinode_search returns un-truncated chunk content; exceeds
+work: /search snippet enrichment + MCP rendering.
 
 Pathologically large chunks (e.g. flat files with no section breaks) used to
 return un-truncated content from /search and blow the MCP tool-result budget.

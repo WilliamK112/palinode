@@ -1,4 +1,5 @@
-"""End-to-end integration test for the `/wrap` save-and-resume loop (issue #139).
+"""End-to-end integration test for the `/wrap` save-and-resume loop (issue the
+integration test work).
 
 Covers layers 1-3 of the four-layer validation model documented in
 `docs/VALIDATION-STRATEGY.md`:
@@ -10,22 +11,22 @@ Covers layers 1-3 of the four-layer validation model documented in
        `POST /search` against the on-disk SQLite DB and surfaces the record.
 
 Layer 4 (LLM-in-the-loop behavioural test) is deferred — see
-`docs/L4-BEHAVIORAL-TESTING-DESIGN.md` for the design sketch and tradeoffs,
-and issue #140 for the LLM-prompt-fidelity counterpart.
+`docs/L4-BEHAVIORAL-TESTING-DESIGN.md` for the design sketch and tradeoffs, and issue
+the integration tests for slash command prompts work for the LLM-prompt-fidelity
+counterpart.
 
-The test uses `tmp_path` for the memory directory and FastAPI's `TestClient`
-so it neither touches the user's real `~/palinode` nor needs Ollama running.
-The CLI is invoked with Click's `CliRunner`; the singleton ``PalinodeAPI``
-client (``palinode.cli._api.api_client``) has its underlying ``httpx.Client``
-swapped for one with an ``ASGITransport`` so its requests dispatch in-process
-to the same FastAPI app the test uses for ``TestClient``. The M0 dual-write
-(daily append + indexed individual file) thus round-trips end-to-end without
-touching the network. (Test-fixture fix for #195 after #178's ADR-010 rewrite
-moved the CLI off the module-level ``httpx.post`` the previous patch hooked.)
+The test uses `tmp_path` for the memory directory and FastAPI's `TestClient` so it
+neither touches the user's real `~/palinode` nor needs Ollama running. The CLI is
+invoked with Click's `CliRunner`; the singleton ``PalinodeAPI`` client
+(``palinode.cli._api.api_client``) has its underlying ``httpx.Client`` swapped for one
+with an ``ASGITransport`` so its requests dispatch in-process to the same FastAPI app
+the test uses for ``TestClient``. The M0 dual-write (daily append + indexed individual
+file) thus round-trips end-to-end without touching the network. (Test-fixture fix for
+the session_end CLI rewrite regression after the ADR-010 follow-up bundle's ADR-010
+rewrite moved the CLI off the module-level ``httpx.post`` the previous patch hooked.)
 """
 from __future__ import annotations
 
-import glob
 import hashlib
 import os
 from datetime import datetime, timezone
@@ -112,13 +113,13 @@ def api_client():
 def cli_with_api_redirect(api_client):
     """Route the CLI's API singleton through the in-process FastAPI app.
 
-    Post-#178 (ADR-010), ``palinode session-end`` no longer calls
+    Post-the ADR-010 follow-up bundle (ADR-010), ``palinode session-end`` no longer calls
     ``httpx.post`` directly — it goes through the ``PalinodeAPI`` singleton
     in ``palinode.cli._api`` whose long-lived ``httpx.Client`` carries the
     ``X-Palinode-Source: cli`` header. The previous fixture patched
     ``httpx.post`` (the module-level function), which the new code path
     doesn't use, so the CLI tried to reach a real localhost:6340 and failed
-    with ``ECONNREFUSED`` (#195).
+    with ``ECONNREFUSED``.
 
     The fix: swap ``api_client.client`` for an ``httpx.Client`` whose
     transport delegates each request to the in-process FastAPI ``TestClient``
@@ -133,13 +134,12 @@ def cli_with_api_redirect(api_client):
     individual call sites, and the real ``PalinodeAPI`` body-shaping /
     error-translation code path is exercised end-to-end.
 
-    Post-#197: ``PalinodeAPI`` now accepts an injected ``httpx.Client`` so
-    the fixture constructs a fresh ``PalinodeAPI(client=...)`` to build the
-    test transport, then sets it on the existing singleton so CLI commands
-    that hold a direct reference to the singleton object pick it up.  On
-    teardown a new default client is constructed via ``PalinodeAPI()`` rather
-    than snapshotting and restoring the old one.
-    """
+    Post-the injected-httpx-client refactor: ``PalinodeAPI`` now accepts an injected
+    ``httpx.Client`` so the fixture constructs a fresh ``PalinodeAPI(client=...)`` to
+    build the test transport, then sets it on the existing singleton so CLI commands
+    that hold a direct reference to the singleton object pick it up. On teardown a new
+    default client is constructed via ``PalinodeAPI()`` rather than snapshotting and
+    restoring the old one. """
     from palinode.cli._api import PalinodeAPI, api_client as cli_api_client
     from palinode.core.defaults import SAVE_SOURCE_HEADER
 

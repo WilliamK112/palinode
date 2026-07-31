@@ -1,6 +1,6 @@
-"""Tests for #91: deduplicate search results by file (score-gap based)."""
-import pytest
-from unittest.mock import patch, MagicMock
+"""Tests for the deduplicate search results by file work: deduplicate search results by
+file (score-gap based)."""
+from unittest.mock import patch
 from palinode.core import store
 from palinode.core.config import config
 

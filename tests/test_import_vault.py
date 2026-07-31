@@ -1,4 +1,4 @@
-"""Tests for `palinode import --from-vault` (#236).
+"""Tests for `palinode import --from-vault`.
 
 Coverage:
 - Round-trip: 3-file vault (Projects/, daily-note, freeform) → correct palinode locations + frontmatter
@@ -14,15 +14,13 @@ Coverage:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import frontmatter as fm_lib
-import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main
-from palinode.import_.vault import plan_import, execute_import
+from palinode.import_.vault import plan_import
 
 
 # ---------------------------------------------------------------------------

@@ -260,14 +260,16 @@ def config_edit():
     """Open configuration file in default editor."""
     import os
     import subprocess
-    
+
+    from palinode.cli._format import console
+
     config_file = os.environ.get("PALINODE_CONFIG", "palinode.config.yaml")
     if not os.path.exists(config_file):
         # Check standard locations
         from palinode.core.config import config
         config_file = os.path.join(config.memory_dir, "palinode.config.yaml")
         if not os.path.exists(config_file):
-             console.print(f"[red]Error: Config file not found at default locations.[/red]")
+             console.print("[red]Error: Config file not found at default locations.[/red]")
              return
              
     editor = os.environ.get("EDITOR", "vi")

@@ -1,16 +1,16 @@
-"""Periodic project-memory review — advisory audit + proposed ops (#366).
+"""Periodic project-memory review — advisory audit + proposed ops.
 
 A first-class "step back and review the whole project's memory" pass. It
 COMPOSES existing deterministic health primitives (the `lint` signals) scoped to
 a project, and translates the findings into PROPOSED corrective operations in the
 executor's vocabulary (KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE/RETRACT) — **without
-applying any of them**. Like the executor's `PROPOSE_CONTRADICTS` op (#533), the
+applying any of them**. Like the executor's `PROPOSE_CONTRADICTS` op, the
 output is advice for a human/agent decision gate, never an auto-mutation.
 
-Design (issue #366):
+Design (the periodic project-memory review job):
   - **Advisory / read-only.** `run_review` writes nothing. It only reports.
   - **Deterministic + offline.** It composes the `lint` pass (orphans, stale
-    files, stale open-questions #72, open contradictions #533, missing
+    files, stale open-questions, open contradictions, missing
     descriptions, wiki drift) — none of which need the embedder — so it is safe
     to run on a nightly/weekly cron without Ollama. Embedding-based near-duplicate
     detection stays the explicit `dedup_suggest` call (surfaced as a hint in the

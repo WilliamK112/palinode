@@ -1,7 +1,7 @@
-"""Branch coverage for the deterministic executor's op types (#311).
+"""Branch coverage for the deterministic executor's op types.
 
-Assertion philosophy (load-bearing — #311 said tests that pin current behavior
-are "worse than no test"):
+Assertion philosophy (load-bearing — the executor branch-coverage work said tests that
+pin current behavior are "worse than no test"):
 
   * Assert the **documented contract and observable structure** — the `stats`
     counters, whether a fact is still a live/active bullet, whether an
@@ -14,13 +14,12 @@ are "worse than no test"):
     behavior and `xfail` (non-strict) the gap, so the discrepancy is surfaced,
     not encoded.
 
-ARCHIVE caveat: the remove-the-line (current impl) vs. flag-`status: archived`
-in-place (PROGRAM.md §"Never hard-delete") question — and whether an archived
-fact is suppressed from default recall — is **unresolved (#485)**. ARCHIVE tests
-below assert only the settled contract (the op runs + the audit trail is
-preserved) and are explicitly flagged where they characterize current,
-#485-dependent behavior. They must be re-pinned to the documented contract when
-#485 lands.
+ARCHIVE caveat: the remove-the-line (current impl) vs. flag-`status: archived` in-place
+(PROGRAM.md §"Never hard-delete") question — and whether an archived fact is suppressed
+from default recall — is **unresolved**. ARCHIVE tests below assert only the settled
+contract (the op runs + the audit trail is preserved) and are explicitly flagged where
+they characterize current, the archived-status recall fix-dependent behavior. They must
+be re-pinned to the documented contract when the archived-status recall fix lands.
 
 Pure file-mutation layer — no DB, no Ollama.
 """

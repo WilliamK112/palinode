@@ -1,4 +1,4 @@
-"""ADR-009 Layer 1 slice 3 — scoped memory selection (#107).
+"""ADR-009 Layer 1 slice 3 — scoped memory selection.
 
 Covers the pure visibility predicate (``chain_allows``) and the shared
 listing helper (``collect_memory_files``) behind GET /list and the upcoming

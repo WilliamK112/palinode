@@ -1,4 +1,5 @@
-"""Tests for created_at preservation on existing-slug overwrite (ADR-015 §2.4, #430).
+"""Tests for created_at preservation on existing-slug overwrite (ADR-015 §2.4, the
+timestamped slugs defeat content-hash dedup work).
 
 Before this change, ``save_api`` re-stamped both ``created_at`` and
 ``last_updated`` to *now* on every write, including overwrites of an existing

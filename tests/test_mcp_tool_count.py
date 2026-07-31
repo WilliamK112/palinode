@@ -1,11 +1,10 @@
 """
 Test: MCP tool count consistency
 
-Ensures that docs/MCP-SETUP.md's available-tools table and palinode/mcp.py's
-registered tools stay in sync.  This test is the enforcement mechanism for
-Option C of issue #238 — prose tool counts are removed from docs; the table
-itself is the source of truth, and this assertion catches any drift.
-"""
+Ensures that docs/MCP-SETUP.md's available-tools table and palinode/mcp.py's registered
+tools stay in sync. This test is the enforcement mechanism for Option C of issue the
+canonical MCP tool-count maintenance — prose tool counts are removed from docs; the
+table itself is the source of truth, and this assertion catches any drift. """
 from __future__ import annotations
 
 import re

@@ -180,7 +180,7 @@ def _build_file_content(
 
 
 def _git_commit(memory_dir: str, staged_files: list[str], log_file: str | None) -> None:
-    """Commit each migrated file in its own per-file commit (#566).
+    """Commit each migrated file in its own per-file commit.
 
     Each imported section is a genesis mutation, so each created memory gets its
     own commit via the git_tools choke point — never a batched ``git add --``

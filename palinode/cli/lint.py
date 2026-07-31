@@ -54,7 +54,7 @@ def lint(fmt, deep_contradictions, max_llm_calls, similarity_threshold):
         console.print(json.dumps(data, indent=2))
         return
 
-    console.print(f"\n[bold green]Palinode Memory Lint Report[/bold green]\n")
+    console.print("\n[bold green]Palinode Memory Lint Report[/bold green]\n")
 
     if data["missing_fields"]:
         console.print(f"[bold yellow]Missing Frontmatter ({len(data['missing_fields'])})[/bold yellow]")

@@ -1,4 +1,4 @@
-"""palinode repair-status — one-time repair of rotted status documents (#679/#470).
+"""palinode repair-status — one-time repair of rotted status documents.
 
 Status docs written before the consolidation write path was fixed carry three
 kinds of damage that no amount of forward-only fixing removes:
@@ -8,7 +8,7 @@ kinds of damage that no amount of forward-only fixing removes:
   pseudo-ids, whole paragraphs of model deliberation in the id slot);
 * frontmatter counts and date ranges months out of date with the body;
 * ``entities:`` entries carrying ``<!-- fact:… -->`` residue, or replaced
-  wholesale by status prose (#470).
+  wholesale by status prose.
 
 This runs the *same* rules the writer now applies, plus the block cap. It is
 deliberately local + dry-run by default: it edits memory files in place with no

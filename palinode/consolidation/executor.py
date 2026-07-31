@@ -16,12 +16,9 @@ import os
 import re
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
-import yaml
 
 from palinode.core import git_tools
-from palinode.core.config import config
 from palinode.core.parser import split_frontmatter
 from palinode.consolidation.op_parse import op_kind
 
@@ -44,7 +41,7 @@ def _is_replace_policy(content: str) -> bool:
     A WARNING is emitted on the fail-open path when the raw text contains
     ``update_policy: replace`` but the parsed metadata does not — this
     indicates frontmatter corruption that silently removed the protection.
-    The fail-open behaviour is intentional and preserved (#483).
+    The fail-open behaviour is intentional and preserved.
     """
     try:
         from palinode.core.parser import parse_markdown
@@ -401,7 +398,7 @@ def _retract_fact(content: str, fact_id: str, reason: str, file_path: str) -> st
 
 
 def _ensure_archived_frontmatter(content: str) -> str:
-    """Ensure a history file's frontmatter carries ``status: archived`` (#485).
+    """Ensure a history file's frontmatter carries ``status: archived``.
 
     History files hold ARCHIVE'd / SUPERSEDE'd facts. They must be excluded
     from default recall (``config.search.exclude_status = ["archived"]``) while
@@ -428,11 +425,11 @@ def append_to_history(file_path: str, fact_id: str, text: str) -> str:
     The history file carries ``status: archived`` frontmatter so its content
     (archived + superseded facts) is suppressed from default recall while
     remaining indexed and retrievable on demand — preserving the audit trail
-    PROGRAM.md's "never hard-delete" contract requires (#485).
+    PROGRAM.md's "never hard-delete" contract requires.
 
-    Returns the history-file path so callers that must stage it in the same
-    commit (the on-demand archive op, #664) don't re-derive the naming rule.
-    """
+    Returns the history-file path so callers that must stage it in the same commit (the
+    on-demand archive op, the no on-demand archive/supersede for a specific work) don't
+    re-derive the naming rule. """
     base = re.sub(r'-status\.md$', '', file_path)
     base = re.sub(r'\.md$', '', base)
     history_path = f"{base}-history.md"

@@ -248,7 +248,7 @@ async def test_palinode_doctor_deep_api_error_returns_error_text(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_palinode_status_surfaces_version(monkeypatch) -> None:
-    """palinode_status must render the deployed version from /status (#579)."""
+    """palinode_status must render the deployed version from /status."""
     payload = {"total_files": 1, "total_chunks": 2, "version": "9.9.9-test"}
 
     async def fake_get(path, params=None, timeout=30.0):
@@ -266,7 +266,7 @@ async def test_palinode_status_surfaces_version(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_palinode_doctor_surfaces_version(monkeypatch) -> None:
-    """palinode_doctor passes through the version field from /doctor (#579)."""
+    """palinode_doctor passes through the version field from /doctor."""
     async def fake_get(path, params=None, timeout=30.0):
         payload = {
             "version": "9.9.9-test",

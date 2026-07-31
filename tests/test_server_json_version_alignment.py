@@ -1,4 +1,4 @@
-"""Registry drift guard for #313.
+"""Registry drift guard for the registry-drift guard.
 
 server.json is the MCP marketplace manifest submitted via `mcp-publisher publish`.
 Its top-level `version` field and the `packages[*].version` fields must match
@@ -47,7 +47,7 @@ def _registry_version(version: str) -> str:
     ``0.8.13+internal`` must never appear there (``mcp-publisher`` would ship a
     malformed/unpublishable version). Internal builds legitimately set a ``+local``
     segment in ``pyproject.toml``, so the drift guard compares the *public* version
-    (everything before ``+``) and lets the local label diverge. See #454.
+    (everything before ``+``) and lets the local label diverge.
     """
     return version.split("+", 1)[0]
 

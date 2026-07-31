@@ -1,5 +1,4 @@
 """Tests for ADR-008 ambient context search (Phase G1)."""
-import pytest
 from unittest.mock import patch, MagicMock
 from palinode.core import store
 from palinode.core.config import config
@@ -73,7 +72,7 @@ def test_search_hybrid_context_disabled():
                         # Should NOT be called when disabled
                         mock_entities.return_value = []
 
-                        res = store.search_hybrid(
+                        _res = store.search_hybrid(
                             "query", query_embedding=[0.0]*1024, top_k=2,
                             context_entities=["project/palinode"],
                         )
@@ -98,7 +97,7 @@ def test_search_hybrid_boost_factor():
                         # Should NOT be called when boost is 1.0
                         mock_entities.return_value = []
 
-                        res = store.search_hybrid(
+                        _res = store.search_hybrid(
                             "query", query_embedding=[0.0]*1024, top_k=2,
                             context_entities=["project/palinode"],
                         )
@@ -108,7 +107,7 @@ def test_search_hybrid_boost_factor():
 
 
 def test_search_vector_context_boost():
-    """Non-hybrid search should also apply context boost (#92)."""
+    """Non-hybrid search should also apply context boost."""
     with patch("palinode.core.store.get_db") as mock_db:
         with patch("palinode.core.store.get_entity_files") as mock_entities:
             # Simulate two vector results: kmd ranks higher by raw cosine
@@ -146,7 +145,7 @@ def test_search_vector_context_boost():
 
 
 def test_search_vector_context_disabled_no_boost():
-    """Non-hybrid search should not boost when context.enabled is False (#92)."""
+    """Non-hybrid search should not boost when context.enabled is False."""
     original = config.context.enabled
     try:
         config.context.enabled = False
@@ -171,7 +170,7 @@ def test_search_vector_context_disabled_no_boost():
 
 
 def test_search_vector_boost_factor_one_noop():
-    """Non-hybrid search: boost=1.0 should be a no-op (#92)."""
+    """Non-hybrid search: boost=1.0 should be a no-op."""
     original = config.context.boost
     try:
         config.context.boost = 1.0

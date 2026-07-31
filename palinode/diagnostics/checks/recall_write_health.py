@@ -1,7 +1,7 @@
 """
 Check: recall_write_health
 
-Verifies that the recall-feedback loop (ADR-006/007, #371) is actually
+Verifies that the recall-feedback loop (ADR-006/007) is actually
 writing access metadata back to the ``chunks`` table on retrieval.
 
 The failure mode this catches is the one the 2026-05-29 production audit

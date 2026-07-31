@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
 
 from palinode.core.config import Config
 from palinode.diagnostics.checks.service import api_reachable, api_status_consistent
@@ -31,7 +30,6 @@ from palinode.diagnostics.checks.watcher import (
     watcher_alive,
     watcher_indexes_correct_db,
     _WATCHER_MODULE,
-    _WATCHER_SERVICE,
 )
 from palinode.diagnostics.types import CheckResult, DoctorContext
 

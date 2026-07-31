@@ -1,11 +1,11 @@
-"""ADR-007 demand-decay importance — the tuning PR (#86).
+"""ADR-007 demand-decay importance — the tuning PR.
 
-Grounds the #371 recall write-back in the ADR-007 §3.3 importance rule:
+Grounds the recall write-back in the ADR-007 §3.3 importance rule:
 
   - reinforce on *explicit, distinct-session* demand by exponential approach
         importance ← importance + (cap − importance) · alpha
   - decay on read (no sweeper, no write) at rank time
-        eff = base + (importance − base) · exp(−Δt/τ),  floored at base.
+        eff = base + (importance − base) · exp(−Δt/τ), floored at base.
 
 Test map (ADR-007 §6.7):
   (a) explicit-mode recall nudges importance; auto/ambient does NOT.

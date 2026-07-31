@@ -1,8 +1,9 @@
-"""Tests for embed-path context-window hardening — issue #335.
+"""Tests for embed-path context-window hardening — the work hardening the palinode embed
+path against ollama context-window work.
 
-As of #338 Phase 3, `embedder._embed_local` delegates to the centralized
-`OllamaClient.embed()`, which owns the dual-endpoint fallback, vector parsing,
-and context-overflow detection (those mechanics are tested directly in
+As of Phase 3 of the Ollama traffic-surface hardening, `embedder._embed_local` delegates
+to the centralized `OllamaClient.embed()`, which owns the dual-endpoint fallback, vector
+parsing, and context-overflow detection (those mechanics are tested directly in
 `tests/test_ollama_client.py`). This file covers the *embedder wrapper* contract:
 
 - `_embed_local` re-raises `EmbeddingContextError` (does not swallow it to []).
@@ -25,7 +26,7 @@ from palinode.core.embedder import (
     _is_ctx_overflow_message,
     check_model_context,
 )
-from palinode.core.ollama_client import OllamaError, OllamaUnreachable
+from palinode.core.ollama_client import OllamaUnreachable
 
 
 def _client_with_embed(*, embed_return=None, embed_side_effect=None):

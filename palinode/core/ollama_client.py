@@ -1,9 +1,9 @@
 """Centralized Ollama client — the single mediation layer for palinode↔Ollama I/O.
 
-#338 (Ollama traffic-surface hardening), Phase 1+2+3. Before this module every
-caller built its own ``httpx`` request, set its own timeout, and swallowed its
-own errors, so palinode was an *unmediated* dependency on a single Ollama host's
-instantaneous responsiveness. This client replaces that with one seam:
+the Ollama traffic-surface hardening (Ollama traffic-surface hardening), Phase 1+2+3.
+Before this module every caller built its own ``httpx`` request, set its own timeout,
+and swallowed its own errors, so palinode was an *unmediated* dependency on a single
+Ollama host's instantaneous responsiveness. This client replaces that with one seam:
 
 * **Per-role routing** (``OllamaRole``) — ``embed`` resolves to the configured
   embedding host, while ``chat`` resolves to the configured chat/generate host. Typed
@@ -13,22 +13,22 @@ instantaneous responsiveness. This client replaces that with one seam:
   config singleton, so env/config changes and test monkeypatching are honoured.
 * **Retry with jittered backoff** on transient failures (read timeout, connect
   error, HTTP 5xx). Per-call ``retries=0`` opts a latency-sensitive path out
-  (e.g. the #336 inline-description path must not turn one 5 s timeout into
+  (e.g. the inline-description path must not turn one 5 s timeout into
   three).
 * **Circuit breaker per role** that *opens loudly* (WARNING log + surfaced
   state). When open, calls fast-fail with :class:`OllamaCircuitOpen` in well
   under a millisecond instead of waiting for a timeout. Half-opens after a
   cooldown to probe recovery.
-* **Structured JSON-line logging** (#337): every call emits one line with
+* **Structured JSON-line logging**: every call emits one line with
   ``{event, role, endpoint, model, latency_ms, retry_count, circuit_state,
   outcome}`` so an operator can grep a single greppable shape.
 * **Rolling latency/error metrics** per role (5-minute window) exposed via
   :meth:`OllamaClient.metrics` for ``/status`` and the ``palinode doctor``
   Ollama check.
 
-Callers migrate onto this seam incrementally (see #338 phasing). This module is
-additive — it changes no existing behaviour until a caller is pointed at it.
-"""
+Callers migrate onto this seam incrementally (see the Ollama traffic-surface hardening
+phasing). This module is additive — it changes no existing behaviour until a caller is
+pointed at it. """
 from __future__ import annotations
 
 import json
@@ -39,7 +39,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Deque, Optional
+from typing import Any, Callable, Deque
 
 import httpx
 
@@ -600,7 +600,7 @@ class OllamaClient:
         *, latency_ms: float, retry_count: int, circuit_state: str, outcome: str,
         op: str, level: int,
     ) -> None:
-        """Emit one structured JSON-line log event (#337 field convention)."""
+        """Emit one structured JSON-line log event (the logging audit field convention)."""
         event_logger.log(level, json.dumps({
             "event": event,
             "op": op,

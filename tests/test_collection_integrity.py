@@ -1,10 +1,10 @@
-"""Collection integrity — no test may go missing without saying so (#356).
+"""Collection integrity — no test may go missing without saying so.
 
-#356 was filed on a smoke run that collected 1081 unit tests on the LXC rig
-against an MBP baseline of 1215, and read that 134-test delta as tests silently
-uncollected on Linux. The delta was a numerator mismatch (the rig runs unit-only,
-the baseline number included ``tests/integration/``), not a collection failure —
-ubuntu CI and macOS collect the same suite item-for-item. But the underlying
+The uncollected-test-count investigation was filed on a smoke run that collected 1081
+unit tests on the LXC rig against an MBP baseline of 1215, and read that 134-test delta
+as tests silently uncollected on Linux. The delta was a numerator mismatch (the rig runs
+unit-only, the baseline number included ``tests/integration/``), not a collection
+failure — ubuntu CI and macOS collect the same suite item-for-item. But the underlying
 worry is real and cheap to close permanently: *silent* non-collection is
 indistinguishable from a green run.
 

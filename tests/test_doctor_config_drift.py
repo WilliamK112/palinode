@@ -281,7 +281,7 @@ class TestMcpConfigHomes:
     ) -> None:
         """When SSH_CONNECTION is set and there are no palinode entries,
         the check should return passed=True with an informational message
-        explaining the SSH deployment context. Fixes #255."""
+        explaining the SSH deployment context. Fixes the mcp_config_homes SSH-stdio fix."""
         # Point candidate paths to an empty config file
         f = tmp_path / "claude.json"
         f.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")

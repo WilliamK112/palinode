@@ -1,4 +1,4 @@
-"""First-run / cold-Ollama UX (#611).
+"""First-run / cold-Ollama UX.
 
 Covers the four surfaces that made a fresh install "look broken":
   - OllamaClient.probe_embed — a real functional embed probe (not just a ping)
@@ -19,7 +19,7 @@ import time
 import httpx
 import pytest
 
-from palinode.core.ollama_client import OllamaClient, OllamaError, RetryPolicy
+from palinode.core.ollama_client import OllamaClient, RetryPolicy
 from palinode.diagnostics.types import CheckResult, DoctorContext
 from palinode.core.config import config
 

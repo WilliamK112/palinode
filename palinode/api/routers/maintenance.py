@@ -1,16 +1,17 @@
-"""Maintenance, ingest, reindex, entity, lint, migrate, and depends routes (#314 Stage 3).
+"""Maintenance, ingest, reindex, entity, lint, migrate, and depends routes (Stage 3 of
+the router split).
 
 Extracted from palinode/api/server.py:
   POST /ingest
   POST /ingest-url
   POST /rebuild-fts
   POST /reindex
-  GET  /entities/{entity_ref:path}
-  GET  /entities
+  GET /entities/{entity_ref:path}
+  GET /entities
   POST /lint
   POST /migrate/openclaw
-  GET  /depends/_unblocked
-  GET  /depends/{slug:path}
+  GET /depends/_unblocked
+  GET /depends/{slug:path}
   POST /migrate/mem0
 """
 from __future__ import annotations
@@ -92,7 +93,7 @@ async def reindex_api(since: str | None = None) -> dict[str, Any]:
                still skips unchanged content).
 
     Returns 409 if a reindex is already in progress — check /status for
-    progress.  (#200)
+    progress.
     """
     if _reindex_lock.locked():
         raise HTTPException(

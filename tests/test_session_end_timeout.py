@@ -1,5 +1,5 @@
 """
-Cross-surface session-end timeout consistency tests (#377).
+Cross-surface session-end timeout consistency tests.
 
 All three surfaces that call POST /session-end (CLI, MCP, hook) must use the
 same timeout budget defined in ``palinode.core.defaults.SESSION_END_TIMEOUT_SECONDS``.
@@ -24,7 +24,6 @@ import importlib
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -191,7 +190,7 @@ def test_hook_script_byte_identical_to_canonical():
     """`palinode init` embeds the session-end hook as a string constant because
     an installed package cannot read examples/. Pin the embedded HOOK_SCRIPT
     byte-for-byte to examples/hooks/palinode-session-end.sh so the two can't
-    silently drift — the #633 failure mode, where the embedded copy carried the
+    silently drift — the failure mode, where the embedded copy carried the
     /wrap-skip dedup gate, PALINODE_HOOK_DRYRUN, and the fallback-log-on-failure
     path while the manual-install examples copy carried none of them. Mirrors
     the session-start guard test_embedded_init_copy_matches_canonical_script.

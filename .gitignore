@@ -62,7 +62,7 @@ M3.5-EXECUTE-PROMPT.md
 .DS_Store
 
 # Build artifacts
-# #295: generic Python build outputs — rebuilt fresh by publish-pypi.yml on
+# Generic Python build outputs — rebuilt fresh by publish-pypi.yml on
 # tag push, so tracking them in git only causes staleness and bloat.
 build/
 dist/
@@ -82,6 +82,17 @@ nohup.out
 
 # Launch-posts working draft — local-only, not for git
 artifacts/launch-posts.md
+
+# Public-sync working trees. Each is a full git CHECKOUT of the public repo or
+# a cut snapshot — one is 153 MB — regenerated per sync and never committed.
+# They are ignored not to save space but to keep `git status` legible: eight
+# permanent untracked entries hide real untracked work behind them, which is
+# how the v0.9.6 sync report sat uncommitted for a week while its own
+# directory sat right above it in the same listing.
+artifacts/public-sync-*-repo/
+artifacts/public-review-tree-*-payload/
+artifacts/*-cut-source/
+artifacts/*-wheel-verify/
 
 # Test-rig deploy-key material (.claude/plans/test-rigs/) — never commit secrets
 .claude/plans/test-rigs/group_vars/all.vault.yml

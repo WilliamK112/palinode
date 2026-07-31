@@ -1,6 +1,6 @@
 """Cross-cutting API plumbing with no single thematic home.
 
-Extracted from the former ``routers/_shared.py`` junk drawer (#556). These are
+Extracted from the former ``routers/_shared.py`` junk drawer. These are
 the genuinely miscellaneous helpers + process-wide state that every router layer
 leans on but that don't belong to any one themed module (path-safety,
 rate-limiting, search shaping, write normalization): the sanitized-500 helper,
@@ -44,7 +44,7 @@ def _safe_500(e: Exception, context: str = "Internal error") -> HTTPException:
 
 
 def _project_from_cwd(cwd: str | None) -> str | None:
-    """Derive a project slug from a CWD path's basename (#145).
+    """Derive a project slug from a CWD path's basename.
 
     Mirrors the slug rules used by `palinode init` so the slug a session
     self-reports matches the slug that scaffolding chose. Returns None if

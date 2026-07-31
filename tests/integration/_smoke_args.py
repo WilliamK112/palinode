@@ -1,8 +1,8 @@
 """Shared smoke-args registry for MCP tool-coverage tests.
 
 Used by:
-  - tests/integration/test_mcp_e2e.py (#343, in-process via _dispatch_tool)
-  - tests/integration/test_mcp_stdio.py (#344, real stdio JSON-RPC subprocess)
+  - tests/integration/test_mcp_e2e.py (in-process via _dispatch_tool)
+  - tests/integration/test_mcp_stdio.py (real stdio JSON-RPC subprocess)
 
 Sourced from palinode/mcp.py::list_tools(); a drift guard in test_mcp_e2e.py
 asserts that every registered tool has an entry here.

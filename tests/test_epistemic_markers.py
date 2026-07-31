@@ -1,4 +1,4 @@
-"""Tests for the ADR-018 epistemic-marker axis (#72).
+"""Tests for the ADR-018 epistemic-marker axis.
 
 Covers:
   (a) epistemic round-trips through API / CLI-api-client and persists to
@@ -238,7 +238,7 @@ def test_provenance_open_question_warns():
 
 def test_provenance_unverified_is_labelled_lower_trust():
     """`unverified` renders like `inference` — an honest lower-trust assertion,
-    distinct from both `fact` and the trust-neutral `unmarked` (#589)."""
+    distinct from both `fact` and the trust-neutral `unmarked`."""
     row = _claim_row({"id": "insights-x", "epistemic": "unverified"})
     assert row.value == "unverified — asserted, not checked"
     assert row.state == "ok"

@@ -1,4 +1,5 @@
-"""Tests for the prompt-injection delimiter wrapping (#284 / Tier B #5).
+"""Tests for the prompt-injection delimiter wrapping (the pre-release gate hotfix bundle
+/ Tier B #5).
 
 `_generate_description` and `_generate_summary` build Ollama HTTP requests
 that interpolate user-supplied memory content into the prompt body. Without
@@ -12,15 +13,13 @@ This suite verifies that:
 - both `_generate_description` and `_generate_summary` send a prompt that
   contains the delimiter and the "treat as data" guard text
 
-We patch the centralized Ollama client (#338 Phase 2) rather than spinning up a
-real Ollama; we capture the prompt passed to ``client.generate`` and assert the
-prompt string shape.
-"""
+We patch the centralized Ollama client (Phase 2 of the Ollama traffic-surface hardening)
+rather than spinning up a real Ollama; we capture the prompt passed to
+``client.generate`` and assert the prompt string shape. """
 from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from palinode.api.server import (
     _generate_description,

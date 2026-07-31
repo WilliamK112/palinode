@@ -1,4 +1,4 @@
-"""Tests for `palinode mcp-smoke` CLI subcommand (#345, parent #342).
+"""Tests for `palinode mcp-smoke` CLI subcommand (parent the MCP harness validation).
 
 Validates:
   - --list exits 0 and lists every Tier 1+2 harness
@@ -11,7 +11,6 @@ Validates:
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 from click.testing import CliRunner

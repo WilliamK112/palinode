@@ -1,4 +1,4 @@
-"""Tests for #115 — optional external_refs frontmatter support.
+"""Tests for the gitlab-aware entity linking work — optional external_refs frontmatter support.
 
 Covers:
 - Save with external_refs writes to frontmatter

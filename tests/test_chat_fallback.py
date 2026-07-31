@@ -1,4 +1,4 @@
-"""Tests for the CHAT-role OpenAI-compat fallback chain — issue #464.
+"""Tests for the CHAT-role OpenAI-compat fallback chain — issue the OpenAI-compat chat fallback.
 
 Covers:
 - _chat_fallback_oneliner returns None when no fallbacks are configured (the
@@ -151,7 +151,7 @@ def test_summary_brownout_uses_fallback(fallbacks_on):
 
 
 def test_summary_any_primary_failure_cascades(fallbacks_on):
-    """#464 (revised): ANY primary failure — connect/HTTP/bad-body, not just a
+    """the OpenAI-compat chat fallback (revised): ANY primary failure — connect/HTTP/bad-body, not just a
     brownout — now cascades to the fallback chain. With a remote OpenAI-compat
     primary a connect error is exactly the case the configured backups cover."""
     fake = _fake_client(

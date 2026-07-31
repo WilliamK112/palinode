@@ -36,7 +36,7 @@ router = APIRouter()
 
 
 def _normalize_sources(raw: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Validate and normalize ``sources:`` quote anchors for save (#459).
+    """Validate and normalize ``sources:`` quote anchors for save.
 
     Each entry must be a dict with non-empty ``ref`` and ``quote``. The
     ``quote_hash`` is computed when absent and validated when present — a stored
@@ -82,7 +82,7 @@ def _normalize_sources(raw: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def _normalize_link_refs(raw: Any, field: str) -> list[str]:
-    """Validate a typed-link ref list (#533), raising HTTP 400 on malformed input.
+    """Validate a typed-link ref list, raising HTTP 400 on malformed input.
 
     Thin wrapper over :func:`palinode.core.typed_links.normalize_link_refs` that
     maps the core ``TypedLinkError`` to ``HTTPException(400)`` — mirroring how
@@ -262,7 +262,7 @@ def collect_memory_files(
       ``restricted`` memories are all dropped (scoped mode).
     - With ``scope_chain=None`` — the ``GET /list`` contract — scope
       isolation does not apply, but **access control still does**:
-      ``private`` and ``restricted`` memories are never listed (#108).
+      ``private`` and ``restricted`` memories are never listed.
       That gate is load-bearing, not decorative: the shipped SessionStart
       hook injects from ``GET /list?core_only=true``, so without it a
       ``core: true`` memory marked ``private`` would be auto-injected into
@@ -344,7 +344,7 @@ def list_api(category: str | None = None, core_only: bool = False) -> list[dict[
     Never scope-filters (no session chain here — that's /context/prime's job),
     but ``private`` and ``restricted`` memories are always withheld: this is
     the endpoint the SessionStart hook injects from, so access control cannot
-    be optional here (#108).
+    be optional here.
     """
     return collect_memory_files(category=category, core_only=core_only)
 
@@ -369,7 +369,7 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
     the destination directory (``Decision`` → ``decisions/``, ``Insight`` →
     ``insights/``, etc.). The ``category`` field is **not** part of this
     schema — it is *derived* from ``type``. The body field is ``content``,
-    not ``body``. See #299 for the history.
+    not ``body``.
 
     Size limit: request bodies are capped at ``PALINODE_MAX_REQUEST_BYTES``
     (default ``5242880`` = 5 MB). Saves over the limit return HTTP 413.
@@ -940,14 +940,14 @@ def generate_summaries_api() -> dict[str, Any]:
 
     Scans all markdown files under ``palinode_dir``:
 
-    - **Descriptions** (#405): any file missing a ``description`` field gets one
+    - **Descriptions**: any file missing a ``description`` field gets one
       generated via Ollama. Descriptions are not core-gated — every memory gets
-      one, mirroring the prior inline behavior that #405 moved off the /save hot
+      one, mirroring the prior inline behavior that moved off the /save hot
       path. Skipped entirely when ``auto_summary.enabled`` is False.
-    - **Summaries** (#403): files with ``core: true`` and no ``summary`` get one.
+    - **Summaries**: files with ``core: true`` and no ``summary`` get one.
 
     This endpoint is the watcher-driven backfill that lands both enrichments
-    after /save returns fast (#403/#405). Despite the name, it fills both —
+    after /save returns fast. Despite the name, it fills both —
     the name is kept for API/MCP/CLI parity with the shipped surface.
 
     Populates _auto_summary_state for /status and /health/auto-summary

@@ -4,7 +4,7 @@ Pure-function helpers that the dispatcher delegates to. These tests don't
 exercise the async tool dispatch — they cover only the logic the dispatcher
 calls into, which is what changes most often and is easiest to regress.
 
-The timeout-message tests (#416) also drive the async dispatcher directly with
+The timeout-message tests also drive the async dispatcher directly with
 a mocked slow server, since the verify-before-retry contract lives in the
 dispatcher's except block, not in a pure helper alone.
 """

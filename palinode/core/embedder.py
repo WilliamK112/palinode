@@ -17,7 +17,7 @@ from palinode.core.ollama_client import (
     EmbeddingContextError,
     OllamaError,
     OllamaRole,
-    _is_ctx_overflow_message,
+    _is_ctx_overflow_message,  # noqa: F401  — deliberate re-export, see below
     get_ollama_client,
 )
 
@@ -80,7 +80,7 @@ def check_model_context(
 
     Args:
         url: Deprecated/ignored — the centralized client resolves the EMBED URL
-            from config (#338 Phase 3). Kept for signature compatibility.
+            from config (Phase 3 of the Ollama traffic-surface hardening). Kept for signature compatibility.
         model: Model name (defaults to config).
         min_ctx: Minimum acceptable num_ctx value (default 8192 for bge-m3).
     """

@@ -1,5 +1,5 @@
-"""Tests for #93: penalize daily/ files in search results."""
-import pytest
+"""Tests for the daily files dominate search results work: penalize daily/ files in
+search results."""
 from unittest.mock import patch, MagicMock
 from palinode.core import store
 from palinode.core.config import config

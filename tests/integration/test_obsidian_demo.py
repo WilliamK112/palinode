@@ -1,4 +1,4 @@
-"""Integration test enforcing the 10-minute Obsidian demo walkthrough (#210, Deliverable H).
+"""Integration test enforcing the 10-minute Obsidian demo walkthrough (Deliverable H).
 
 One test function per minute-block in artifacts/obsidian-integration/demo-plan.md.
 The gate: each test PASSES or is marked @pytest.mark.xfail with a specific reason.

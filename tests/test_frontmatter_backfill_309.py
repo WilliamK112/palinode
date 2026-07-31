@@ -1,4 +1,4 @@
-"""Frontmatter backfill (#309) — idempotency, dry-run, non-destructiveness, honesty.
+"""Frontmatter backfill — idempotency, dry-run, non-destructiveness, honesty.
 
 Every test runs against a real memory tree under ``tmp_path`` (and, where git
 provenance is in play, a real ``git init``ed repo) — no mocked filesystem, no
@@ -141,7 +141,7 @@ def test_legacy_created_is_carried_forward_not_reinterpreted(memory_dir):
 
 
 def test_topic_is_never_dropped_or_remapped(memory_dir):
-    """#309 proposed dropping ``topic`` or folding it into ``description``."""
+    """the frontmatter backfill work proposed dropping ``topic`` or folding it into ``description``."""
     path = _write(
         memory_dir,
         "research/prd-audit-v1.md",

@@ -1,4 +1,5 @@
-"""Tests for telemetry recall-exclusion (ADR-015 §2.3, #398).
+"""Tests for telemetry recall-exclusion (ADR-015 §2.3, the palinode_save type vocabulary
+too narrow work).
 
 Memories carrying ``metadata.kind: telemetry`` in frontmatter (which flattens to
 a top-level ``kind`` field via save_api) are machine/monitor writes. They are
@@ -7,8 +8,9 @@ pollute human recall — but remain retrievable when the caller passes an explic
 ``include_telemetry`` override.
 
 The filter lives in the shared store layer (``search`` / ``search_fts`` /
-``list_recent``, inherited by ``search_hybrid``) so all surfaces — API, MCP,
-CLI, plugin — inherit it (ADR-010 parity), the same pattern #371 used.
+``list_recent``, inherited by ``search_hybrid``) so all surfaces — API, MCP, CLI, plugin
+— inherit it (ADR-010 parity), the same pattern the verify ADR-006 implementation status
+work used.
 
 All tests use real SQLite in tmp_path (no mocked DB). Only the embedder is
 bypassed by inserting deterministic unit vectors directly.
@@ -17,7 +19,6 @@ from __future__ import annotations
 
 import math
 import os
-from unittest.mock import patch
 
 import pytest
 

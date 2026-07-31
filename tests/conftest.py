@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import os
+import pathlib
 
 import pytest
 
@@ -86,6 +87,83 @@ def _warm_embed_gate(monkeypatch):
     monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_db_path(tmp_path, monkeypatch):
+    """Point ``config.db_path`` at this test's ``tmp_path`` by default.
+
+    ``db_path`` is resolved to an **absolute** path when config loads, so a
+    fixture that patches ``config.memory_dir`` does *not* move it — the store
+    still opens at the process default. That default is the developer's real
+    database, and tests were both writing to it and silently depending on its
+    existence and schema.
+
+    Redirecting per-test kills the whole class rather than patching offenders
+    one at a time: three separate files had it, in two different shapes, and
+    which ones were visible depended on whether the default file already
+    existed on that machine. A test that wants a specific ``db_path`` still
+    overrides this, because its own patch runs afterwards.
+
+    ``tmp_path`` is the same directory most fixtures already use for
+    ``memory_dir``, so the database lands inside the memory dir exactly as it
+    would in production.
+    """
+    from palinode.core.config import config
+
+    monkeypatch.setattr(config, "db_path", str(tmp_path / ".palinode.db"))
+
+
+@pytest.fixture(scope="session")
+def _default_db_path() -> pathlib.Path | None:
+    """The db path the process resolves to before any test patches it."""
+    from palinode.core.config import config
+
+    return pathlib.Path(config.db_path) if config.db_path else None
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_the_default_db(request, _default_db_path):
+    """Fail the test that opens a store at the *process default* db path.
+
+    ``config.db_path`` is resolved to an **absolute** path when config loads.
+    Patching ``config.memory_dir`` afterwards therefore does NOT move it — the
+    store still opens wherever the default pointed. A fixture that patches only
+    ``memory_dir`` and then invokes anything that opens a store is writing
+    somewhere real.
+
+    Where that lands is environment-dependent, which is what made this hard to
+    see: on the dev rig it produced a stray ``.palinode.db`` beside the code and
+    looked like a cosmetic litter problem, while on a developer machine the same
+    code writes into **their actual memory database**. The symptom was reported;
+    the mechanism is the same either way.
+
+    Guarding the resolved default rather than the repo root catches both. The
+    check is mtime-based because the file usually already exists — absence is
+    not the signal, mutation is.
+    """
+    if _default_db_path is None:
+        yield
+        return
+
+    def _stamp() -> tuple[bool, float]:
+        try:
+            return True, _default_db_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return False, 0.0
+
+    before = _stamp()
+    yield
+    after = _stamp()
+    if after != before:
+        pytest.fail(
+            f"{request.node.nodeid} wrote to {_default_db_path} — the process "
+            "default database. It opened a store without redirecting "
+            "`config.db_path`, which is absolute and unaffected by patching "
+            "`config.memory_dir`. Patch both:\n"
+            "    monkeypatch.setattr(config, 'memory_dir', str(tmp_path))\n"
+            "    monkeypatch.setattr(config, 'db_path', str(tmp_path / '.palinode.db'))"
+        )
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Make session teardown deterministic w.r.t. palinode's background writers.
 
@@ -94,7 +172,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     during pytest's capture teardown (``ValueError: I/O operation on closed
     file``) and, when one was mid-write as the interpreter finalized, took the
     whole run down with ``_enter_buffered_busy`` / SIGABRT — exit 134 *after*
-    every test had passed (#677).
+    every test had passed.
 
     Two steps, in order:
 

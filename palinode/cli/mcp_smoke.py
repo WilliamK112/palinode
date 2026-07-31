@@ -3,7 +3,7 @@
 
 Lists supported MCP harnesses with tier info, prints the smoke runbook
 for a given harness, and optionally records completed smoke runs to a
-JSONL log for launch-gate validation (Phase 4, #346).
+JSONL log for launch-gate validation (Phase 4, the MCP release gate).
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def _is_tty() -> bool:
 
 
 def claude_desktop_running() -> bool | None:
-    """Best-effort detection of a live Claude Desktop process (#373).
+    """Best-effort detection of a live Claude Desktop process.
 
     Claude Desktop holds ``claude_desktop_config.json`` in memory and rewrites
     it on quit, silently clobbering any edit made while it runs (and stripping

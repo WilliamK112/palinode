@@ -1,4 +1,4 @@
-"""Pure-function tests for the hybrid-search ranker (#553).
+"""Pure-function tests for the hybrid-search ranker.
 
 The point of extracting ``rank_hybrid`` out of ``store.search_hybrid``: each
 scoring stage is now exercisable on plain dicts with **no** database, no

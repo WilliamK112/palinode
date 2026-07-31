@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import textwrap
 
 import pytest
 import yaml
@@ -204,7 +203,6 @@ def test_activate_prompt_idempotent(mock_memory_dir):
 
 def test_list_memory_excludes_prompts_dir(mock_memory_dir):
     """GET /list should not return files from the prompts/ directory."""
-    from unittest.mock import patch
 
     prompts_dir = os.path.join(mock_memory_dir, "prompts")
     _write_prompt(prompts_dir, "compaction-v1", task="compaction")

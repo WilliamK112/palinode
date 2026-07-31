@@ -1,7 +1,6 @@
-"""Tests for #116: MCP audit log (structured JSON tool call logging)."""
+"""Tests for the MCP audit log work: MCP audit log (structured JSON tool call logging)."""
 import json
 import os
-import time
 
 import pytest
 
@@ -67,7 +66,7 @@ class TestSanitizeArguments:
 class TestAuditLogger:
     def test_creates_directory(self, audit_dir):
         cfg = AuditConfig(enabled=True, log_path=".audit/mcp-calls.jsonl")
-        logger = AuditLogger(str(audit_dir), cfg)
+        _logger = AuditLogger(str(audit_dir), cfg)
         assert (audit_dir / ".audit").is_dir()
 
     def test_log_creates_file(self, audit_logger):
@@ -187,9 +186,8 @@ class TestAuditConfig:
 class TestResolvedAuditLogPath:
     """The resolved config (after load_config) must have an absolute audit path.
 
-    Verifies the fix for #254: a fresh install should not trigger the
-    audit_log_writable doctor warning about relative paths.
-    """
+    Verifies the fix for the default audit.log_path is relative work: a fresh install
+    should not trigger the audit_log_writable doctor warning about relative paths. """
 
     def test_resolved_default_is_absolute(self, tmp_path, monkeypatch):
         """When audit.log_path is at the default, load_config resolves it to

@@ -1,7 +1,8 @@
-"""#385 regression: upsert_chunks must log and surface vec0 write failures.
+"""the chunks_vec silent-drop fix regression: upsert_chunks must log and surface vec0
+write failures.
 
 Previously, both the pre-INSERT DELETE and the INSERT-after-DELETE pair on
-chunks_vec were wrapped in bare `except Exception: pass`.  A vec0 structural
+chunks_vec were wrapped in bare `except Exception: pass`. A vec0 structural
 failure (corrupt table, missing virtual table extension, etc.) silently
 produced a chunk row in `chunks` with no corresponding `chunks_vec` row —
 the chunk was FTS5-searchable but invisible to vector search.

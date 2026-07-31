@@ -18,7 +18,6 @@ All writes are opt-out via flags. Existing files are preserved — we append
 or skip, never overwrite without --force.
 """
 import json
-import os
 import re
 import stat
 from pathlib import Path
@@ -703,7 +702,7 @@ def _write_slash_command(path: Path, body: str, force: bool) -> str:
 
 
 def _skill_md(name: str, body: str) -> str:
-    """Render a slash-command body as a Claude Code SKILL.md (#474).
+    """Render a slash-command body as a Claude Code SKILL.md.
 
     A skill needs a ``name:`` in its frontmatter; the command bodies open with
     ``---\\ndescription: …\\n---``. Inject ``name:`` so the same ``*_COMMAND_BODY``
@@ -1368,11 +1367,11 @@ def init(
         if mcp:
             click.echo(f"  {mcp_json.relative_to(target)}  (MCP server block)")
         if obsidian:
-            click.echo(f"  .obsidian/app.json  (Obsidian app config)")
-            click.echo(f"  .obsidian/graph.json  (graph view settings)")
-            click.echo(f"  .obsidian/workspace.json  (workspace layout)")
-            click.echo(f"  _index.md  (MOC at vault root)")
-            click.echo(f"  _README.md  (vault orientation)")
+            click.echo("  .obsidian/app.json  (Obsidian app config)")
+            click.echo("  .obsidian/graph.json  (graph view settings)")
+            click.echo("  .obsidian/workspace.json  (workspace layout)")
+            click.echo("  _index.md  (MOC at vault root)")
+            click.echo("  _README.md  (vault orientation)")
         return
 
     results = []

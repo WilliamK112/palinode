@@ -1,5 +1,5 @@
 """
-Tests for the ``project`` shorthand on save (ADR-010 / #159).
+Tests for the ``project`` shorthand on save (ADR-010).
 
 ``project="palinode"`` on the API/CLI/MCP save surface is sugar for
 appending ``"project/palinode"`` to ``entities``.  A pre-prefixed value

@@ -1,4 +1,4 @@
-"""#536 (C1) — ``palinode trace`` provenance composition command.
+"""the trace provenance command (C1) — ``palinode trace`` provenance composition command.
 
 Covers the composition engine (:mod:`palinode.core.trace`) joining every
 provenance primitive into one lineage view: source citations (G1), the

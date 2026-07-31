@@ -1,4 +1,4 @@
-"""Search/recall result shaping: filters, snippets, similarity, dedup (#556).
+"""Search/recall result shaping: filters, snippets, similarity, dedup.
 
 Extracted from the former ``routers/_shared.py`` junk drawer. Everything the
 search and session-end paths run over a candidate slate after the store returns
@@ -49,7 +49,7 @@ def _compute_effective_date_after(req: Any) -> str | None:
 
 
 def _filter_types(results: list[dict[str, Any]], types: list[str] | None) -> list[dict[str, Any]]:
-    """Drop results whose frontmatter `type` isn't in the allowed list (#141).
+    """Drop results whose frontmatter `type` isn't in the allowed list.
 
     Empty / None ``types`` is a no-op. Filter is OR-style: a result keeps if its
     type matches any of the values.
@@ -63,7 +63,7 @@ def _filter_types(results: list[dict[str, Any]], types: list[str] | None) -> lis
 def _filter_type_deny(
     results: list[dict[str, Any]], type_deny: list[str] | None
 ) -> list[dict[str, Any]]:
-    """Exclude results whose frontmatter `type` is in the deny list (#391).
+    """Exclude results whose frontmatter `type` is in the deny list.
 
     Empty / None ``type_deny`` is a no-op. Takes precedence over the allow-list:
     if a type is in both ``types`` and ``type_deny``, the result is dropped.
@@ -96,7 +96,7 @@ def _filter_min_priority(
 
 
 def _resolve_snippet_max_chars(req_max_chars: int | None) -> int:
-    """Return the effective snippet cap for a request (#391).
+    """Return the effective snippet cap for a request.
 
     Uses the per-request override when supplied (clamped to [1, 8000]),
     falling back to the config default.
@@ -145,7 +145,7 @@ def _windowed_snippet(content: str, query: str, max_chars: int) -> str:
 def _enrich_with_snippets(
     results: list[dict[str, Any]], query: str, max_chars: int
 ) -> None:
-    """In-place add ``snippet`` and ``content_truncated`` to each result (#352).
+    """In-place add ``snippet`` and ``content_truncated`` to each result.
 
     The ``content`` field is preserved so API/CLI consumers that legitimately
     want full chunk bodies are unchanged. MCP callers render ``snippet`` by
@@ -176,7 +176,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     dot = 0.0
     na = 0.0
     nb = 0.0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=False):
         dot += x * y
         na += x * x
         nb += y * y
@@ -297,7 +297,7 @@ def _check_session_end_dedup(
     window_minutes: int = SESSION_END_DEDUP_WINDOW_MINUTES,
     threshold: float = SESSION_END_DEDUP_THRESHOLD,
 ) -> tuple[str | None, float]:
-    """Look for a recent indexed save whose embedding is near-identical to ``content`` (#126).
+    """Look for a recent indexed save whose embedding is near-identical to ``content``.
 
     Returns ``(matched_slug, similarity)`` when a recent save scores at or
     above ``threshold``; ``(None, 0.0)`` otherwise.  Failure modes — empty

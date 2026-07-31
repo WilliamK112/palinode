@@ -18,7 +18,6 @@ from palinode.cli.mcp_config import (
     DEFAULT_HTTP_PORT,
     _build_http_entry,
     _build_stdio_entry,
-    _candidate_paths,
     _check_divergence,
     _extract_palinode_entry,
     _http_url,
@@ -631,7 +630,7 @@ class TestEmitCommand:
 
 class TestClaudeDesktopLiveWarning:
     """`mcp-config` diagnose surfaces a LIVE warning only when Claude Desktop is
-    actually running — editing its config while it's live loses the edit (#373).
+    actually running — editing its config while it's live loses the edit.
 
     The always-on static "quit first" note is separate; this asserts the extra
     live-detection escalation.

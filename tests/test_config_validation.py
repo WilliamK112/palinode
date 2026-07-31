@@ -1,4 +1,5 @@
-"""Tests for Config.validate_paths() — issue #201.
+"""Tests for Config.validate_paths() — the fix for palinode.config.yaml db_path not
+validated against palinode_dir work.
 
 Covers:
   - db_path under memory_dir → no warnings
@@ -12,10 +13,8 @@ palinode installation and to stay hermetically isolated.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-import pytest
 
 import palinode.core.config as config_module
 from palinode.core.config import load_config

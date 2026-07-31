@@ -19,9 +19,9 @@ The "LLM maintains a markdown knowledge base" pattern crystallised in 2025–202
 Palinode follows the **same wiki-maintenance pattern**. Wikilinks plus typed frontmatter, LLM-as-maintainer, the same `entities:` / `[[wikilinks]]` dual-surface contract. Where Palinode differs is one floor down:
 
 - The peer projects are **patterns** — a `CLAUDE.md` and a slash-command set the LLM follows.
-- Palinode is a **system** — a SQLite-vec hybrid search index, a deterministic consolidation executor, a file watcher, an MCP server, four parity surfaces (MCP / API / CLI / plugin).
+- Palinode is a **system** — a SQLite-vec hybrid search index, validated consolidation operations, a file watcher, an MCP server, four parity surfaces (MCP / API / CLI / plugin).
 
-You can use a peer project's pattern on top of Palinode's system — they compose cleanly because both speak markdown. The differentiator is what Palinode does behind the contract: persistent semantic search across sessions and across LLM identities, deterministic compaction operations (not "ask the LLM to merge nicely"), and the same store accessible from any MCP client without a per-tool integration.
+You can use a peer project's pattern on top of Palinode's system — they compose cleanly because both speak markdown. The differentiator is what Palinode does behind the contract: persistent semantic search across sessions and across LLM identities, schema-validated compaction with auditable commits, and the same store accessible from any MCP client without a per-tool integration.
 
 Smart Connections, in particular, is the closest peer for the "find semantically related notes" surface. It is plugin-locked (in-Obsidian only). Palinode's equivalents (`palinode_search`, `palinode_dedup_suggest`, `palinode_orphan_repair`) are MCP-callable from any compatible client.
 

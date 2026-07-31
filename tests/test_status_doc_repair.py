@@ -1,9 +1,9 @@
-"""Status-doc frontmatter integrity + the one-time repair pass (#470, #679).
+"""Status-doc frontmatter integrity + the one-time repair pass.
 
-#470 filed the symptom — ``entities:`` holding freeform ``[2026-05-24] …``
-status sentences, which strict YAML reads as a flow-sequence opener — and
-hypothesised a serialization bug in "whatever writes the status doc". The actual
-mechanism is different and is what these tests pin:
+The report behind the status-doc YAML repair filed the symptom — ``entities:`` holding
+freeform ``[2026-05-24] …`` status sentences, which strict YAML reads as a flow-sequence
+opener — and hypothesised a serialization bug in "whatever writes the status doc". The
+actual mechanism is different and is what these tests pin:
 
 1. ``fact_ids.add_fact_ids_to_file`` tagged **every** ``- item`` line in the
    file, YAML frontmatter included, so ``- project/infrastructure`` under
@@ -246,11 +246,10 @@ def test_repair_reconciles_frontmatter_counts():
 def test_repair_is_idempotent(doc):
     """A second pass must be a true no-op — *including* ``last_updated``.
 
-    This assertion used to exempt the timestamp ("last_updated moves;
-    everything else must be stable"), which is exactly the behaviour #708
-    reports: the receipt moved on every pass, so `changed` was always true and
-    a clean store could never report zero.
-    """
+    This assertion used to exempt the timestamp ("last_updated moves; everything else
+    must be stable"), which is exactly the behaviour the repair-status cleanliness fix
+    reports: the receipt moved on every pass, so `changed` was always true and a clean
+    store could never report zero. """
     once, _ = repair_status_doc(doc)
     twice, report = repair_status_doc(once)
     assert twice == once  # byte-for-byte, timestamp included
@@ -268,7 +267,8 @@ def test_repair_resolves_ids_from_the_history_sibling():
 
 
 def test_repair_leaves_a_clean_document_alone():
-    """The whole document, not just the body — that gap is what hid #708."""
+    """The whole document, not just the body — that gap is what hid the repair-status
+cleanliness fix."""
     repaired, report = repair_status_doc(CANONICAL_DOC)
     assert repaired == CANONICAL_DOC
     assert report["changed"] is False
@@ -311,6 +311,37 @@ def test_desired_frontmatter_returns_none_when_it_cannot_decide(content):
     assert desired_frontmatter(content) is None
 
 
+def _isolate_store(tmp_path: Path, monkeypatch) -> None:
+    """Point BOTH ``memory_dir`` and ``db_path`` at ``tmp_path``.
+
+    ``db_path`` is resolved to an **absolute** path when config loads, so
+    patching ``memory_dir`` alone does not move it — the store still opens at
+    the process default, which on a developer machine is their real database.
+    Every helper in this module that reaches code opening a store (the CLI
+    paths, ``store.get_db()``) goes through here so the pair cannot drift apart
+    again. ``tests/conftest.py`` fails any test that writes the default DB.
+
+    ``PALINODE_ALLOW_FRESH_DB`` is required, not incidental: ``_ensure_db``
+    refuses to auto-create a database when ``memory_dir`` already holds ``.md``
+    files, because that combination usually means a misconfigured path rather
+    than a first run. These fixtures write fixture documents and *then* open a
+    store, which is exactly that shape. It never fired before because the store
+    being opened was the real one, which already existed.
+    """
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    monkeypatch.setattr(config, "db_path", str(tmp_path / ".palinode.db"))
+    monkeypatch.setenv("PALINODE_ALLOW_FRESH_DB", "1")
+
+    # Create the schema too. Redirecting the path alone yields an empty file
+    # with no tables, and the tests that query the index were previously
+    # satisfied by the real database's schema — which is the clearest statement
+    # of what this defect was: not a stray file, but tests reading and writing a
+    # live store.
+    from palinode.core import store as _store
+
+    _store.init_db()
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -318,7 +349,7 @@ def _memory_dir(tmp_path: Path, monkeypatch) -> Path:
     projects = tmp_path / "projects"
     projects.mkdir(parents=True, exist_ok=True)
     (projects / "infra-status.md").write_text(CORRUPTED_DOC, encoding="utf-8")
-    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    _isolate_store(tmp_path, monkeypatch)
     return projects
 
 
@@ -407,7 +438,7 @@ def _mixed_store(tmp_path: Path, monkeypatch) -> Path:
     (tmp_path / "people" / "alice.md").write_text(TAGGED_PERSON, encoding="utf-8")
     (tmp_path / "decisions" / "d1.md").write_text(TAGGED_PERSON, encoding="utf-8")
     (tmp_path / "insights" / "i1.md").write_text(WELL_FORMED_DOC, encoding="utf-8")
-    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    _isolate_store(tmp_path, monkeypatch)
     return tmp_path
 
 
@@ -469,14 +500,13 @@ def test_set_entities_for_path_replaces_rather_than_accumulates(tmp_path, monkey
     """A corrected entity ref must remove the old row, not add a second one.
 
     `upsert_entities` only ever INSERTs, so a changed ref writes a new row and
-    orphans the old one (#699). The stale node then survives both the file
+    orphans the old one. The stale node then survives both the file
     repair and a full `palinode reindex`.
     """
-    import os
 
     from palinode.core import store
 
-    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    _isolate_store(tmp_path, monkeypatch)
     (tmp_path / "projects").mkdir(exist_ok=True)
     fp = str(tmp_path / "projects" / "thing.md")
 
@@ -506,7 +536,7 @@ def test_repair_execute_repoints_the_index(tmp_path, monkeypatch):
     from palinode.cli.repair_status import repair_status
     from palinode.core import store
 
-    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    _isolate_store(tmp_path, monkeypatch)
     d = tmp_path / "insights"
     d.mkdir()
     fp = d / "note.md"

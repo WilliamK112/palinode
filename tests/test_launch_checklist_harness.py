@@ -1,7 +1,7 @@
 """Regression guard: LAUNCH-CHECKLIST.md must contain the harness smoke section.
 
 Catches accidental deletion of the release-blocking harness-smoke checkboxes
-added in #346 (Phase 4 of #342).
+added in the MCP release gate (Phase 4 of the MCP harness validation).
 """
 from __future__ import annotations
 

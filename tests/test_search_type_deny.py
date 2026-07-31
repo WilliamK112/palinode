@@ -1,4 +1,4 @@
-"""Tests for /search type_deny and per-request max_chars (#391).
+"""Tests for /search type_deny and per-request max_chars.
 
 Coverage:
 - _filter_type_deny: deny list excludes matched types; None/empty is no-op
@@ -8,7 +8,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import pytest
 
 from palinode.api.server import (
     SearchRequest,
@@ -175,7 +174,8 @@ def test_enrich_with_per_request_max_chars_larger_than_content():
 
 
 def test_omitting_type_deny_and_max_chars_is_backward_compatible():
-    """SearchRequest with neither new field behaves exactly as before #391."""
+    """SearchRequest with neither new field behaves exactly as before the recall-profile
+primitive for autorecall + is work."""
     req = SearchRequest(query="decision audit", types=["Decision"])
     assert req.type_deny is None
     assert req.max_chars is None

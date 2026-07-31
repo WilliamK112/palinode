@@ -1,19 +1,19 @@
-"""Regression tests for #273 + #354 — silent-misconfig → loud-recoverable.
+"""Regression tests for the palinode CLI silently uses defaults when work + the
+git-persistence no-op fix — silent-misconfig → loud-recoverable.
 
-#273: palinode CLI silently used defaults when no config file was found.
-The dim "Palinode config: defaults" banner was easy to miss when systemd
-wired PALINODE_DIR but an interactive ssh session didn't. Production
-deployments could run `palinode lint` against the wrong filesystem and
-get bogus output. Now warns explicitly with the paths searched.
+the palinode CLI silently uses defaults when work: palinode CLI silently used defaults
+when no config file was found. The dim "Palinode config: defaults" banner was easy to
+miss when systemd wired PALINODE_DIR but an interactive ssh session didn't. Production
+deployments could run `palinode lint` against the wrong filesystem and get bogus output.
+Now warns explicitly with the paths searched.
 
-#354: git_persistence silently no-op'd when memory_dir wasn't a git
+the git-persistence no-op fix: git_persistence silently no-op'd when memory_dir wasn't a git
 repo. /save kept landing on disk, history vanished, no signal to the
 operator. Now warn-once at API startup with the `git init` fix command.
 """
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -54,7 +54,7 @@ def test_load_config_warns_when_using_defaults(tmp_path, monkeypatch, caplog):
 
 def test_load_config_warning_message_lists_searched_paths(caplog, monkeypatch, tmp_path):
     """The warning must name the candidate paths so the user knows where
-    to drop a config file. (#273 acceptance: the user can self-recover.)
+    to drop a config file. (the palinode CLI silently uses defaults when work acceptance: the user can self-recover.)
     """
     from palinode.core import config as cfg_mod
 

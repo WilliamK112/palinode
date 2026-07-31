@@ -1,6 +1,5 @@
 import pytest
 import os
-import yaml
 from fastapi.testclient import TestClient
 from palinode.api.server import app
 from palinode.core.config import config

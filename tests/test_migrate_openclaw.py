@@ -252,7 +252,7 @@ def test_deduplication_skips_identical_content(
     with patch("palinode.migration.openclaw.config") as mock_cfg, \
          patch("palinode.migration.openclaw.datetime", _FrozenDatetime):
         mock_cfg.memory_dir = str(fake_memory_dir)
-        result1 = run_migration(str(memory_md_file), dry_run=False)
+        _result1 = run_migration(str(memory_md_file), dry_run=False)
         result2 = run_migration(str(memory_md_file), dry_run=False)
 
     # Second run: all should be skipped, none created

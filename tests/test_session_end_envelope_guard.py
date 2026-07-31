@@ -1,4 +1,4 @@
-"""Envelope-markup guard on session-end, plus the hook fix at its source (#682).
+"""Envelope-markup guard on session-end, plus the hook fix at its source.
 
 Two entry points put a tool envelope into a session-end string:
 
@@ -203,6 +203,86 @@ def test_clean_text_never_complains(text):
     ) is None
 
 
+# ── Empty is not absent, and a rejection you can quote back ──────────────────
+
+
+def test_empty_arrays_are_not_reported_as_never_arriving(tmp_path, monkeypatch):
+    """Present-but-empty is not absent.
+
+    Absorption swallows parameters whole; it does not deliver them as ``[]``.
+    Truthiness-testing them conflated the two, so a caller with nothing to
+    report was told their arrays never arrived and pointed at a malformed tool
+    call that had not happened. The summary here is still rejected — on the
+    structural signal, which is the honest reason.
+    """
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch,
+              summary="Reviewed the guard</summary>",
+              decisions=[], blockers=[])
+
+    detail = exc.value.detail
+    assert exc.value.status_code == 400
+    assert "no matching opener" in detail, detail
+    assert "arrived with it" not in detail, detail
+
+
+def test_genuinely_absent_arrays_still_trigger_cooccurrence(tmp_path, monkeypatch):
+    """Signal 1 is the only near-zero-false-positive detector of absorption.
+    Narrowing it to true absence must not switch it off."""
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch, summary="Shipped it <summary>x</summary>")
+
+    assert "arrived with it" in exc.value.detail, exc.value.detail
+
+
+def test_rejection_message_can_be_quoted_back_without_re_rejecting(tmp_path, monkeypatch):
+    """The self-perpetuating rejection loop.
+
+    The message names the offending fragment, and the caller's natural next
+    move is to quote it — into a retry summary, an issue, a session note. While
+    that fragment was rendered with ``repr`` it came back unprotected, so the
+    retry was rejected identically and six attempts in a row read as a
+    deterministic transport fault. Backticks are the guard's own documented
+    escape hatch; its own message has to use them.
+    """
+    with pytest.raises(HTTPException) as first:
+        _call(tmp_path, monkeypatch, summary="Wrapped the session</summary>")
+
+    detail = first.value.detail
+    assert "`</summary>`" in detail, detail
+
+    result = _call(tmp_path, monkeypatch,
+                   summary=f"Retrying after rejection: {detail}",
+                   decisions=["quote the guard verbatim"], blockers=[])
+    assert result["daily_file"]
+
+
+def test_mcp_forwards_empty_arrays_instead_of_eliding_them(tmp_path, monkeypatch):
+    """The MCP surface dropped falsy arrays before the request left the client,
+    manufacturing the absorption signature server-side."""
+    import palinode.mcp as pmcp
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return {"daily_file": "daily/x.md", "entry": ""}
+
+    async def _fake_post(path, json=None, timeout=None):
+        captured.update(json or {})
+        return _Resp()
+
+    monkeypatch.setattr(pmcp, "_post", _fake_post)
+    import asyncio
+    asyncio.run(pmcp.call_tool("palinode_session_end", {
+        "summary": "a clean summary", "decisions": [], "blockers": [],
+    }))
+
+    assert captured.get("decisions") == [], captured
+    assert captured.get("blockers") == [], captured
+
+
 # ── The hook, fixed at its source ────────────────────────────────────────────
 
 _requires_jq = pytest.mark.skipif(
@@ -250,13 +330,19 @@ def test_hook_strips_harness_markup_from_the_topic(tmp_path):
 
 @_requires_jq
 def test_hook_output_passes_the_boundary_guard(tmp_path):
-    """The two halves of #682 have to agree: what the hook now sends must not
-    be what the boundary now rejects."""
+    """The two halves of the tool-envelope validation have to agree: what the hook now sends must not
+    be what the boundary now rejects.
+
+    Calls the boundary's own helper rather than re-deriving its presence rule.
+    The re-derived copy silently encoded the older truthiness semantics and
+    would have kept asserting agreement with a boundary that had moved.
+    """
+    from palinode.api.routers.session import _first_envelope_complaint
+    from palinode.api.server import SessionEndRequest
+
     payload = _run_hook(tmp_path, _MARKUP_TRANSCRIPT)
-    arrays_present = bool(payload["decisions"] or payload["blockers"])
-    assert envelope_complaint(
-        payload["summary"], "summary",
-        missing_params=() if arrays_present else ("decisions", "blockers"),
+    assert _first_envelope_complaint(
+        SessionEndRequest(**payload)
     ) is None, payload["summary"]
 
 

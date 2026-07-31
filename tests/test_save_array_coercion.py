@@ -1,4 +1,5 @@
-"""#691: every array parameter on palinode_save tolerates a double-encoded array.
+"""the array-param coercion fix: every array parameter on palinode_save tolerates a
+double-encoded array.
 
 Some MCP clients serialize array arguments as JSON strings. `_coerce_str_array`
 was written against that observed behaviour but wired to only ONE of save's five

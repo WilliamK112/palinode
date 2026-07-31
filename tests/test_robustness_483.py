@@ -1,4 +1,4 @@
-"""Robustness tests for #483.
+"""Robustness tests for the replace-guard fail-open fix.
 
 Two items:
 1. Replace-guard fail-open emits WARNING when frontmatter is unreadable.

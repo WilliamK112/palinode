@@ -1,17 +1,18 @@
-"""Claim-level source anchors (#508; public issue #65 Q1 — unsigned claim_id).
+"""Claim-level source anchors (the claim-id source-anchor layer; public issue the
+OpenClaw-profile migration plan Q1 — unsigned claim_id).
 
 A ``claims:`` frontmatter entry binds one claim *inside* a memory to the
 source span that justifies it, so ``blame`` can answer "which source span
 justifies this claim," not just "when was this line written"::
 
     claims:
-      - claim_id: 0f3a9b2c1d4e5f6a          # stable id, content-addressed
+      - claim_id: 0f3a9b2c1d4e5f6a # stable id, content-addressed
         text: "the claim as stated in the memory"
-        source_id: research/some-paper.md    # a sources[].ref-style path
+        source_id: research/some-paper.md # a sources[].ref-style path
         span:
           quote: "the exact passage cited from the source"
           quote_hash: "<md5 of normalize_quote(quote)>"
-        anchor_id: "optional-opaque-pointer"  # interop; carried verbatim
+        anchor_id: "optional-opaque-pointer" # interop; carried verbatim
 
 This layer COMPOSES with the existing identity/integrity layers — it
 replaces neither:

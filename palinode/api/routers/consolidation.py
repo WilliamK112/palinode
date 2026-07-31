@@ -41,7 +41,8 @@ class ArchiveExpiredRequest(BaseModel):
 
 @router.post("/archive-expired")
 def archive_expired_api(req: ArchiveExpiredRequest = None) -> dict[str, Any]:
-    """Archive ephemeral memories whose `expires_at` has passed (ADR-015 §2.3, #482).
+    """Archive ephemeral memories whose `expires_at` has passed (ADR-015 §2.3, the
+TTL/auto-archive work).
 
     Deterministic, idempotent sweep. `dry_run=true` reports what would be
     archived without writing. Intended for cron / the monitor harness.
@@ -62,7 +63,7 @@ class ArchiveRequest(BaseModel):
 
 @router.post("/archive")
 def archive_api(req: ArchiveRequest) -> dict[str, Any]:
-    """Retire one named memory on demand — ARCHIVE, or SUPERSEDE (#664).
+    """Retire one named memory on demand — ARCHIVE, or SUPERSEDE.
 
     Sets `status: archived` (plus `superseded_by` when a replacement is named),
     appends the reason to the `{base}-history.md` audit sibling, propagates the

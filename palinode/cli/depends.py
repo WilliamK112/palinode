@@ -1,4 +1,4 @@
-"""CLI command: palinode depends — milestone dependency traversal (#97)."""
+"""CLI command: palinode depends — milestone dependency traversal."""
 from __future__ import annotations
 
 import click
@@ -75,7 +75,7 @@ def depends(slug, unblocked, fmt):
 
         orphans = data.get("orphans", [])
         if orphans:
-            console.print(f"\n[yellow]Orphan refs (no matching memory file):[/yellow]")
+            console.print("\n[yellow]Orphan refs (no matching memory file):[/yellow]")
             for o in orphans:
                 console.print(f"  [yellow]{o}[/yellow]")
 

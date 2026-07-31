@@ -1,19 +1,20 @@
-"""
-Regression tests for #191 / #192 / #193 — timestamp-write correctness.
+""" Regression tests for the timestamp inconsistency work / the timestamp-consistency
+fix / the timestamp inconsistency follow-up work — timestamp-write correctness.
 
 Three related issues, all the same shape: a writer used
 ``time.strftime("%Y-%m-%dT%H:%M:%SZ")`` (or ``_utc_now().strftime(...Z)``)
 and produced either local-time-stamped-as-UTC or UTC-without-tz-info-and-
 without-sub-second-precision.
 
-#191 / #192 covered ``save_api``'s ``created_at`` and the watcher's
-``metadata.get("created_at")`` read. #193 extends the cleanup to four
-batch surfaces that write ``last_updated`` (and one ``created_at``):
+the timestamp inconsistency work / the timestamp-consistency fix covered ``save_api``'s
+``created_at`` and the watcher's ``metadata.get("created_at")`` read. The timestamp
+inconsistency follow-up work extends the cleanup to four batch surfaces that write
+``last_updated`` (and one ``created_at``):
 
-- ``palinode/ingest/pipeline.py``        — research-file frontmatter
+- ``palinode/ingest/pipeline.py`` — research-file frontmatter
 - ``palinode/consolidation/layer_split.py`` — identity / status / history files
-- ``palinode/migration/mem0_generate.py``  — mem0-imported records
-- ``palinode/migration/openclaw.py``      — openclaw-migrated records
+- ``palinode/migration/mem0_generate.py`` — mem0-imported records
+- ``palinode/migration/openclaw.py`` — openclaw-migrated records
 
 The audit invariant ``grep -rn 'strftime.*Z' palinode/`` must return zero
 non-comment matches after this change.
@@ -172,7 +173,8 @@ def test_watcher_populates_created_at_from_frontmatter(tmp_path, monkeypatch):
 
 
 def _assert_utc_iso8601(raw, before, after, *, field: str = "value") -> None:
-    """Common assertions for a frontmatter timestamp written by #193 surfaces."""
+    """Common assertions for a frontmatter timestamp written by the timestamp inconsistency
+follow-up work surfaces."""
     assert raw, f"{field} missing or empty"
     if isinstance(raw, datetime):
         parsed = raw

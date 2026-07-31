@@ -1,4 +1,4 @@
-"""Typed relationship links (#533): ``contradicts`` + ``backed_by``.
+"""Typed relationship links: ``contradicts`` + ``backed_by``.
 
 Supersession (``consolidation/executor.py``) already expresses *resolved*
 disagreement: one fact wins, the loser is struck through and logged to history.

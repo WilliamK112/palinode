@@ -1,16 +1,15 @@
-"""#384 regression: recent_save_embeddings must log a warning when the DB
+"""the dedup fail-open fix regression: recent_save_embeddings must log a warning when the DB
 open fails, rather than swallowing the sqlite3.Error silently.
 
 The dedup mechanism is best-effort (it returns [] on failure so callers
 degrade gracefully), but a silent return makes it invisible when the DB is
-misconfigured or temporarily unavailable.  The warning gives operators a
+misconfigured or temporarily unavailable. The warning gives operators a
 log line to correlate with degraded dedup behaviour.
 """
 from __future__ import annotations
 
 import sqlite3
 
-import pytest
 
 from palinode.core import store
 

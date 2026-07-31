@@ -115,15 +115,14 @@ def blame_api(file_path: str, search: str | None = None, claims: bool = False) -
 
 @router.get("/trace/{file_path:path}")
 def trace_api(file_path: str) -> dict[str, Any]:
-    """Compose the full provenance lineage for one memory file (#536).
+    """Compose the full provenance lineage for one memory file.
 
-    The consumer that joins every provenance primitive — source-citation anchors
-    (G1), git blame/history, the supersession trail, typed ``contradicts`` /
-    ``backed_by`` links (G4), and the retrieval log — into one lineage object.
-    Rows whose provenance gap is not built yet (G2 extraction metadata #534, G3
-    terminal edge #535) render an honest ``not_captured`` placeholder. The JSON
-    is the structured object the review UI consumes.
-    """
+    The consumer that joins every provenance primitive — source-citation anchors (G1),
+    git blame/history, the supersession trail, typed ``contradicts`` / ``backed_by``
+    links (G4), and the retrieval log — into one lineage object. Rows whose provenance
+    gap is not built yet (G2 extraction metadata, G3 terminal edge) render an honest
+    ``not_captured`` placeholder. The JSON is the structured object the review UI
+    consumes. """
     from palinode.core.trace import compose_trace
 
     try:

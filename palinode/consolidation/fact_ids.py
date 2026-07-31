@@ -33,7 +33,7 @@ def add_fact_ids_to_file(file_path: str) -> int:
     under ``entities:``) is YAML syntax, not a memory fact. Tagging it made the
     consolidation executor treat it as a fact and rewrite it with LLM prose,
     which is how ``entities:`` came to hold status sentences that break strict
-    ``yaml.safe_load`` (#470).
+    ``yaml.safe_load``.
 
     Returns the number of IDs added.
     """

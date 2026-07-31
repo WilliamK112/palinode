@@ -1,10 +1,10 @@
-"""Session-end and prompts routes (#314 Stage 3).
+"""Session-end and prompts routes (Stage 3 of the router split).
 
 Extracted from palinode/api/server.py and palinode/api/routers/memory.py:
-  POST /session-end    (from memory.py)
-  GET  /prompts        (from server.py)
-  GET  /prompts/{name} (from server.py)
-  POST /prompts/{name}/activate  (from server.py)
+  POST /session-end (from memory.py)
+  GET /prompts (from server.py)
+  GET /prompts/{name} (from server.py)
+  POST /prompts/{name}/activate (from server.py)
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _truncate_marked(text: str, limit: int) -> str:
     cut with ``"..."`` (the convention already used by ``palinode/cli/search.py``).
 
     Returns ``text`` unchanged when it already fits. A *silent* mid-word cut is
-    what made the status file read as corrupted (#681): a reader could not tell
+    what made the status file read as corrupted: a reader could not tell
     "the summary ended there" from "the summary was cut".
     """
     if len(text) <= limit:
@@ -76,14 +76,13 @@ def _status_line(
 ) -> str:
     """Render the one dated line a session-end appends to ``projects/<p>-status.md``.
 
-    The status file is deliberately a longitudinal *index*, one line per session
-    — so this does not inline decision/blocker prose, which is already stored
-    verbatim in two other places (the daily note and the indexed session-end
-    file). It records the **count** and a **pointer** to the durable copy, so a
-    reader can see that the material exists and where to read it. Dropping the
-    arrays with no trace at all — the pre-#681 behaviour — is what made the file
-    look like session-end had corrupted its own input.
-    """
+    The status file is deliberately a longitudinal *index*, one line per session — so
+    this does not inline decision/blocker prose, which is already stored verbatim in two
+    other places (the daily note and the indexed session-end file). It records the
+    **count** and a **pointer** to the durable copy, so a reader can see that the
+    material exists and where to read it. Dropping the arrays with no trace at all — the
+    before the session-end array-drop fix behaviour — is what made the file look like
+    session-end had corrupted its own input. """
     one_liner = _truncate_marked(" ".join(summary.split()), STATUS_SUMMARY_MAX_CHARS)
     counts = []
     if decisions:
@@ -113,7 +112,14 @@ _SESSION_REMEDIATION = "Re-send with `decisions`/`blockers` as real JSON arrays.
 
 def _first_envelope_complaint(req: SessionEndRequest) -> str | None:
     """First envelope complaint across ``summary`` and every array entry."""
-    arrays_present = bool(req.decisions or req.blockers)
+    # Present-but-empty is NOT absent. Signal 1 claims a parameter never
+    # arrived on the wire, and absorption swallows parameters whole — it does
+    # not deliver them as `[]`. Testing truthiness conflated the two, so a
+    # caller who honestly sent "no decisions this session" was told their
+    # arrays never arrived and accused of emitting a malformed tool call
+    # that had not happened. Only genuine absence (``None``) is evidence of
+    # absorption.
+    arrays_present = req.decisions is not None or req.blockers is not None
     complaint = envelope_complaint(
         req.summary,
         "summary",

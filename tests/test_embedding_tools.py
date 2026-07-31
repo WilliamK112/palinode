@@ -1,20 +1,20 @@
-"""Tests for #210 Deliverable F — `palinode_dedup_suggest` and
+"""Tests for the Obsidian integration MVP Deliverable F — `palinode_dedup_suggest` and
 `palinode_orphan_repair` MCP/API/CLI tools.
 
 This file uses a **deterministic fake embedder** (not real BGE-M3) so the
-test suite stays hermetic and doesn't require an Ollama instance.  The fake
+test suite stays hermetic and doesn't require an Ollama instance. The fake
 maps text → vector via a stable hash-to-vector function, with a
 keyword-overlap kicker so semantically-related test inputs land near each
-other in cosine space.  The preprocessing pipeline is exercised end-to-end —
+other in cosine space. The preprocessing pipeline is exercised end-to-end —
 the fake embedder is only swapped in for the embedding step itself.
 
-Mark: deterministic fake embedder (NOT real BGE-M3).  Threshold-recalibration
+Mark: deterministic fake embedder (NOT real BGE-M3). Threshold-recalibration
 recommendation lives in the PR description and CHANGELOG.
 
 The CRITICAL preprocessing test
 (``test_preprocessing_strips_shared_wikilinks_no_false_positive``) PROVES
 that two notes with completely different topics that happen to link the
-same entities are NOT flagged as duplicates of each other.  This is the
+same entities are NOT flagged as duplicates of each other. This is the
 P1-correctness gate from the design doc — without it, every note linking
 the same entities would false-positive against every other one.
 """
@@ -25,7 +25,6 @@ import math
 import os
 import re
 from collections import Counter
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient

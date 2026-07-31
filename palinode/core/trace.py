@@ -1,4 +1,4 @@
-"""Provenance composition — ``palinode trace <file>`` (#536, ADR-010).
+"""Provenance composition — ``palinode trace <file>`` (ADR-010).
 
 The consumer that joins every provenance primitive Palinode already exposes into
 one lineage view for a single memory file. It is *composition over plumbing*:
@@ -224,7 +224,7 @@ def _recall_events(rel_path: str, memory_dir: str) -> list[dict[str, Any]]:
 def _recalled_section(rel_path: str, memory_dir: str) -> dict[str, Any]:
     """G3 (partial) — the retrieval log records *that* a fact was recalled.
 
-    The consuming-action / terminal edge half of G3 (#535) is not built yet;
+    The consuming-action / terminal edge half of G3 is not built yet;
     :func:`_used_in_section` renders that as the honest placeholder.
     """
     events = _recall_events(rel_path, memory_dir)
@@ -409,7 +409,7 @@ def format_trace_text(trace: dict[str, Any]) -> str:
     Shared by the CLI and MCP surfaces. The output carries ``[status]`` and
     ``[fact:id]`` brackets, so terminal callers must print it with Rich markup
     disabled (``console.print(..., markup=False)``) — mirroring the blame/claims
-    render (#262).
+    render.
     """
     fact = trace["fact"]
     lines = [f"## Trace: {trace['file']}", ""]

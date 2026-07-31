@@ -1,4 +1,4 @@
-"""Health, status, and diagnostic routes (#314 Stage 3).
+"""Health, status, and diagnostic routes (Stage 3 of the router split).
 
 Extracted from palinode/api/server.py:
   GET /status
@@ -274,7 +274,7 @@ def watcher_health_api() -> dict[str, Any]:
 
 @router.get("/health/auto-summary")
 def auto_summary_health_api() -> dict[str, Any]:
-    """Health check for the async auto_summary pipeline (#403).
+    """Health check for the async auto_summary pipeline.
 
     Auto_summary moved off the /save hot path; the watcher debounces calls to
     /generate-summaries instead. This endpoint lets external monitors detect a

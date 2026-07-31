@@ -1,4 +1,4 @@
-"""Typed contradiction + evidence-backing links (#533, G4).
+"""Typed contradiction + evidence-backing links (G4).
 
 Covers the four acceptance criteria from the issue:
 

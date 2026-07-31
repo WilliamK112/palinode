@@ -1,7 +1,7 @@
-"""Tests for #337 — malformed env-var overrides must warn, not fall back silently.
+"""Tests for the logging audit — malformed env-var overrides must warn, not fall back silently.
 
 `load_config()` parses two numeric env overrides (`PALINODE_API_PORT`,
-`PALINODE_DESCRIBE_TIMEOUT_SECONDS`). Before #337 a malformed value was caught
+`PALINODE_DESCRIBE_TIMEOUT_SECONDS`). Before the logging audit a malformed value was caught
 by `except ValueError: pass`, silently leaving the operator on the default —
 a "the system did the wrong thing silently" case per docs/logging.md. Each now
 emits one WARNING naming the variable and the rejected value.
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
 
 from palinode.core.config import load_config
 

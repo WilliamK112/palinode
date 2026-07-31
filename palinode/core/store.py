@@ -93,7 +93,7 @@ def utc_now_z() -> str:
 def meta_hash(metadata: dict[str, Any]) -> str:
     """Deterministic hash of a file's frontmatter, stored in ``chunks.meta_hash``.
 
-    Gates the metadata-refresh the body ``content_hash`` cannot see (#698): a
+    Gates the metadata-refresh the body ``content_hash`` cannot see: a
     frontmatter-only edit moves this and leaves the body hash unchanged.
     ``sort_keys`` makes it order-independent; ``default=str`` tolerates dates.
     The one definition both the reconcile path and ``upsert_chunks`` hash with,
@@ -384,7 +384,7 @@ def fts5_delete_chunk(cursor: sqlite3.Cursor, chunk_id: str) -> None:
     orphaned (``count(chunks_fts) > count(chunks)`` until the next
     ``rebuild_fts()``, which silently corrupts BM25 keyword recall). The
     sanctioned removal is the special ``'delete'`` command, fed the column
-    values exactly as they were indexed (#439).
+    values exactly as they were indexed.
 
     MUST be called while the source ``chunks`` row still exists: the values are
     read from it. Best-effort — a missing source row or FTS mismatch is a no-op
@@ -542,7 +542,7 @@ def write_chunk_row(
 def write_chunk_meta(
     cur: sqlite3.Cursor, chunk_id: str, metadata_json: str, meta_hash: str,
 ) -> None:
-    """Refresh a chunk's cached frontmatter without re-embedding (#698).
+    """Refresh a chunk's cached frontmatter without re-embedding.
 
     The body is unchanged, so ``chunks_fts`` (indexed on the body) needs no
     touch and the vector stays valid; only the metadata JSON and its hash move.
@@ -589,7 +589,7 @@ def replace_entities(
     """Replace a file's entity rows — DELETE then INSERT, not accumulate.
 
     ``upsert_entities`` only ever inserted, so a changed ref added a row and
-    orphaned the old one, and removing every ref deleted nothing (#699). The
+    orphaned the old one, and removing every ref deleted nothing. The
     leading DELETE is what makes a correction a correction.
     """
     cur.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
@@ -621,7 +621,7 @@ def upsert_chunks(
             ``fts_ok`` (bool): True iff every FTS5 sync write succeeded.
 
         Callers that need per-index health (e.g. ``index_file``) read
-        ``vec_ok`` / ``fts_ok`` to surface failures in the API response (#385).
+        ``vec_ok`` / ``fts_ok`` to surface failures in the API response.
 
     Thin wrapper over :func:`write_chunk_row` under one :func:`transaction`, so
     the vec0/FTS5 write dance lives in exactly one place (the reconcile path
@@ -914,8 +914,7 @@ def search_internal(
     Thin wrapper around :func:`search` with ``record_access`` hard-set to
     ``False``.  Use this for any internal candidate lookup (consolidation dedup,
     orphan repair, cluster/topic maintenance) so maintenance scans cannot
-    accidentally inflate ``recall_count`` or nudge ``importance`` (ADR-015 H1,
-    #481).
+    accidentally inflate ``recall_count`` or nudge ``importance`` (ADR-015 H1).
 
     The ``record_access`` parameter is intentionally absent from this signature:
     callers cannot override it.  If you need the full ``search()`` API (including
@@ -1056,7 +1055,7 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     The stored content_hash is computed over a single section's content (see
     ``palinode/indexer/index_file.py``), so comparing a whole-file body hash
-    against it always mismatched for multi-section files (#203).  The fix is to
+    against it always mismatched for multi-section files.  The fix is to
     locate the matching section by section_id, hash only that section, and
     compare.
 
@@ -1117,7 +1116,7 @@ def list_recent(
 ) -> list[dict[str, Any]]:
     """Return the most recently created/updated chunks (no semantic ranking).
 
-    Backs the empty-query path on /search (#141). Orders by created_at desc.
+    Backs the empty-query path on /search. Orders by created_at desc.
     Push category and type filters into SQL via ``json_extract`` so the
     "first 100 chunks happen to all be untyped" failure mode doesn't bite
     us on databases where typed memories are a minority of the corpus.
@@ -1202,7 +1201,7 @@ def recent_save_embeddings(
 ) -> list[tuple[str, list[float]]]:
     """Return embeddings of chunks indexed within the last ``window_minutes``.
 
-    Backs the session-end semantic-dedup check (#126).  Joins ``chunks_vec``
+    Backs the session-end semantic-dedup check.  Joins ``chunks_vec``
     against ``chunks`` so we can pull the embedding alongside a useful slug
     (the ``id`` column doubles as a human-readable identifier the API uses
     when reporting which prior save matched).
@@ -1347,7 +1346,7 @@ def _record_recall_by(
     mode: str = "explicit",
     session_id: str | None = None,
 ) -> int:
-    """Batched, resilient access-metadata write keyed by *column* (#371, ADR-007).
+    """Batched, resilient access-metadata write keyed by *column* (ADR-007).
 
     Always increments ``recall_count`` and stamps ``last_recalled`` (tz-aware
     UTC ISO-8601) for every chunk whose *column* is in *keys* — raw frequency
@@ -1426,7 +1425,7 @@ def record_recall(
     mode: str = "explicit",
     session_id: str | None = None,
 ) -> int:
-    """Persist access metadata for the given chunk ids (ADR-006/007, #371, ADR-007).
+    """Persist access metadata for the given chunk ids (ADR-006/007, ADR-007).
 
     Used by the search path, where hits are individual chunks. Falsy ids are
     skipped. ``recall_count``/``last_recalled`` update on every hit; the
@@ -1448,7 +1447,7 @@ def record_recall_for_paths(
     mode: str = "explicit",
     session_id: str | None = None,
 ) -> int:
-    """Persist access metadata for every chunk of the given file paths (#371, ADR-007).
+    """Persist access metadata for every chunk of the given file paths (ADR-007).
 
     Used by the read path (``/read`` / ``palinode_read``), which retrieves whole
     files, so recall is recorded against all chunks belonging to each path.
@@ -1465,7 +1464,7 @@ def record_recall_for_paths(
 
 
 def set_status_for_path(file_path: str, status: str) -> int:
-    """Set the stored chunk ``metadata.status`` for every chunk of a file (#482).
+    """Set the stored chunk ``metadata.status`` for every chunk of a file.
 
     The TTL auto-archive sweep (ADR-015 §2.3) flips an expired memory's
     frontmatter to ``status: archived``. That is a frontmatter-only change, so
@@ -1503,7 +1502,8 @@ def set_status_for_path(file_path: str, status: str) -> int:
 
 
 def set_entities_for_path(file_path: str, entities: list[str]) -> int:
-    """Replace the indexed entity refs for one file (#679 repair path).
+    """Replace the indexed entity refs for one file (the consolidation status-file rot work
+repair path).
 
     Sibling of :func:`set_status_for_path`, for the same reason and with the
     same shape. Correcting a memory's ``entities:`` frontmatter is a

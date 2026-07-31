@@ -156,7 +156,7 @@ class PalinodeAPI:
         """Read a memory file via the API.
 
         Returns ``{file, content, size_bytes, [frontmatter]}``.  When
-        ``meta=True``, ``frontmatter`` is a parsed dict.  ADR-010 / #168.
+        ``meta=True``, ``frontmatter`` is a parsed dict.  ADR-010.
         """
         params: dict = {"file_path": file_path}
         if meta:
@@ -166,7 +166,7 @@ class PalinodeAPI:
         return response.json()
 
     def list_files(self, category: str | None = None, core_only: bool | None = None):
-        """List memory files via the API.  ADR-010 / #170."""
+        """List memory files via the API.  ADR-010."""
         params: dict = {}
         if category:
             params["category"] = category
@@ -177,7 +177,7 @@ class PalinodeAPI:
         return response.json()
 
     def lint(self):
-        """Run the memory lint pass via the API.  ADR-010 / #170.
+        """Run the memory lint pass via the API.  ADR-010.
 
         Raises ``RequestError`` if the API is unreachable; the CLI catches
         this to fall back to a local in-process lint pass.
@@ -187,7 +187,7 @@ class PalinodeAPI:
         return response.json()
 
     def review(self, project: str | None = None):
-        """Run the advisory project-memory review via the API (#366).
+        """Run the advisory project-memory review via the API.
 
         Raises ``RequestError`` if the API is unreachable; the CLI catches
         this to fall back to a local in-process review pass.
@@ -200,7 +200,7 @@ class PalinodeAPI:
         return response.json()
 
     def list_prompts(self, task: str | None = None):
-        """List stored prompt versions.  ADR-010 / #170."""
+        """List stored prompt versions.  ADR-010."""
         params: dict = {}
         if task:
             params["task"] = task
@@ -209,25 +209,25 @@ class PalinodeAPI:
         return response.json()
 
     def get_prompt(self, name: str):
-        """Read a specific prompt by name.  ADR-010 / #170."""
+        """Read a specific prompt by name.  ADR-010."""
         response = self.client.get(f"/prompts/{name}")
         response.raise_for_status()
         return response.json()
 
     def activate_prompt(self, name: str):
-        """Activate a prompt version.  ADR-010 / #170."""
+        """Activate a prompt version.  ADR-010."""
         response = self.client.post(f"/prompts/{name}/activate")
         response.raise_for_status()
         return response.json()
 
     def ingest_inbox(self):
-        """Process files in the inbox directory.  ADR-010 / #170."""
+        """Process files in the inbox directory.  ADR-010."""
         response = self.client.post("/ingest", timeout=60.0)
         response.raise_for_status()
         return response.json()
 
     def ingest_url(self, url: str, name: str | None = None):
-        """Fetch and save a URL as a research reference.  ADR-010 / #170."""
+        """Fetch and save a URL as a research reference.  ADR-010."""
         payload: dict = {"url": url}
         if name:
             payload["name"] = name
@@ -250,7 +250,8 @@ class PalinodeAPI:
         duration_seconds: int | None = None,
         push: bool | None = None,
     ):
-        """Capture session outcomes via the API.  ADR-010 / #170 (#145 fields, #378 push)."""
+        """Capture session outcomes via the API. ADR-010 (the project-slug derivation work
+fields, the session-end hook audit push)."""
         payload: dict = {"summary": summary}
         if decisions:
             payload["decisions"] = list(decisions)
@@ -440,7 +441,7 @@ class PalinodeAPI:
         min_similarity: float | None = None,
         top_k: int | None = None,
     ):
-        """Find existing files semantically near draft content (#210).
+        """Find existing files semantically near draft content.
 
         Defaults applied server-side.  Returns the same shape as
         ``POST /dedup-suggest``: a list of ``{file_path, similarity, snippet,
@@ -461,7 +462,7 @@ class PalinodeAPI:
         min_similarity: float | None = None,
         top_k: int | None = None,
     ):
-        """Find files semantically near a broken `[[wikilink]]` target (#210)."""
+        """Find files semantically near a broken `[[wikilink]]` target."""
         payload: dict = {"broken_link": broken_link}
         if min_similarity is not None:
             payload["min_similarity"] = min_similarity
@@ -477,7 +478,7 @@ class PalinodeAPI:
         min_similarity: float | None = None,
         top_k: int | None = None,
     ):
-        """Find semantically related files not already linked to/from file_path (#235)."""
+        """Find semantically related files not already linked to/from file_path."""
         payload: dict = {"file_path": file_path}
         if min_similarity is not None:
             payload["min_similarity"] = min_similarity
@@ -492,7 +493,7 @@ class PalinodeAPI:
         query: str,
         min_similarity: float | None = None,
     ):
-        """Check whether any wiki page already covers a topic phrase (#235)."""
+        """Check whether any wiki page already covers a topic phrase."""
         payload: dict = {"query": query}
         if min_similarity is not None:
             payload["min_similarity"] = min_similarity
@@ -501,13 +502,13 @@ class PalinodeAPI:
         return response.json()
 
     def depends(self, slug: str) -> dict:
-        """Return the dependency neighbourhood for *slug* (#97)."""
+        """Return the dependency neighbourhood for *slug*."""
         response = self.client.get(f"/depends/{slug}", timeout=10.0)
         response.raise_for_status()
         return response.json()
 
     def depends_unblocked(self) -> list:
-        """Return all slugs whose every depends_on is done (#97)."""
+        """Return all slugs whose every depends_on is done."""
         response = self.client.get("/depends/_unblocked", timeout=10.0)
         response.raise_for_status()
         return response.json()

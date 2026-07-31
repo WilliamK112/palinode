@@ -139,7 +139,7 @@ def test_health_reports_zero_on_empty_db(client):
 
 
 def test_status_health_doctor_report_version(client):
-    """/status, /health, and /doctor all surface the deployed package version (#579).
+    """/status, /health, and /doctor all surface the deployed package version.
 
     Single source of truth is palinode.__version__; the field must be present
     and equal to that value so an operator can confirm which release is running.

@@ -1,8 +1,8 @@
 """
-Retrieval Event Logger — Issue #256
+Retrieval Event Logger — Issue the retrieval-event instrumentation
 
 Append-only JSONL log of every memory-file retrieval, distinguishing
-explicit tool calls from passive auto-injection.  Pure observability;
+explicit tool calls from passive auto-injection. Pure observability;
 no ranker behavior change.
 
 Log path: <memory_dir>/.audit/retrievals.jsonl

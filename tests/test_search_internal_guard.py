@@ -1,4 +1,4 @@
-"""Tests for the search_internal() guard and the bare-search lint net (ADR-015 H1, #481).
+"""Tests for the search_internal() guard and the bare-search lint net (ADR-015 H1).
 
 Two components are verified here:
 
@@ -21,7 +21,6 @@ raw API in a maintenance context.  Together they make H1 ratchet-tight.
 """
 from __future__ import annotations
 
-import ast
 import math
 import os
 import re

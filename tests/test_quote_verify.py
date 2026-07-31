@@ -1,15 +1,15 @@
-"""Tests for the source-quote integrity primitive (provenance Q2, #459).
+"""Tests for the source-quote integrity primitive (provenance Q2, the quote-hash
+source-anchor work).
 
-Covers the deterministic core requested in public issue #65 (Q2): a quote anchor
-is OK only when (a) its stored hash matches the hash of its stored quote and
-(b) the quote still appears in the cited source. Smart-punctuation and
+Covers the deterministic core requested in public issue the OpenClaw-profile migration
+plan (Q2): a quote anchor is OK only when (a) its stored hash matches the hash of its
+stored quote and (b) the quote still appears in the cited source. Smart-punctuation and
 whitespace differences must NOT cause false drift.
 
 Real tmp files only — no mocks (repo rule). The primitive is network-free.
 """
 from __future__ import annotations
 
-import pytest
 
 from palinode.core.quote_verify import (
     QuoteStatus,

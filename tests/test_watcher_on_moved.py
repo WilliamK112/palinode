@@ -1,4 +1,5 @@
-"""#710: a rename must reconcile both paths, not silently orphan the old one.
+"""the watcher has no on_moved handler work: a rename must reconcile both paths, not
+silently orphan the old one.
 
 Chunk ids are derived from the file path, so before ``on_moved`` existed a
 ``mv`` left every chunk (and every entity row) stranded under the old path.

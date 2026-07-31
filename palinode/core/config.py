@@ -104,7 +104,7 @@ class QuickCaptureConfig:
 
 @dataclass
 class CrossRefsConfig:
-    """#73: mechanical, untyped cross-linking during indexing.
+    """the mechanical cross-linking work: mechanical, untyped cross-linking during indexing.
 
     When enabled, the watcher scans an indexed memory's body for mentions of
     other memory files and records them in a ``cross_refs`` frontmatter list.
@@ -364,7 +364,8 @@ class AuditConfig:
 
 @dataclass
 class InstrumentationConfig:
-    """Retrieval-event instrumentation (ADR-007 prerequisite, issue #256).
+    """Retrieval-event instrumentation (ADR-007 prerequisite, from the retrieval-event
+instrumentation).
 
     capture_retrievals: write one JSONL event per file surfaced by search/read.
     Set to False (or PALINODE_INSTRUMENTATION_DISABLED=1) to suppress entirely.

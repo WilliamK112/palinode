@@ -1,4 +1,5 @@
-"""#508 (public #65 Q1) — claim-level source anchors: the unsigned claim_id layer.
+"""the claim-id source-anchor layer (public the OpenClaw-profile migration plan Q1) —
+claim-level source anchors: the unsigned claim_id layer.
 
 Covers the ``claims:`` frontmatter written on save (content-addressed
 ``claim_id`` derivation, span ``quote_hash`` compute/verify, validation

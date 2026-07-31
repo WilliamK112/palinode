@@ -1,11 +1,11 @@
-"""Tests for embedder.py logging — issue #383 (C1) + #338 Phase 3.
+"""Tests for embedder.py logging — the embedder logging fix (C1) plus Phase 3 of the
+Ollama traffic-surface hardening.
 
-As of #338 Phase 3, `_embed_local` delegates to the centralized `OllamaClient`,
-which owns the per-call structured JSON logging (the `palinode.ollama.events`
-logger — covered in tests/test_ollama_client.py). What remains at the embedder
-level is a single summary WARNING when an embed degrades to [] — and the
-privacy invariant that logs never carry raw user text, only `text_len`.
-"""
+As of Phase 3 of the Ollama traffic-surface hardening, `_embed_local` delegates to the
+centralized `OllamaClient`, which owns the per-call structured JSON logging (the
+`palinode.ollama.events` logger — covered in tests/test_ollama_client.py). What remains
+at the embedder level is a single summary WARNING when an embed degrades to [] — and the
+privacy invariant that logs never carry raw user text, only `text_len`. """
 from __future__ import annotations
 
 import logging

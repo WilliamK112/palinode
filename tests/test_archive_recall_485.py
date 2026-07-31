@@ -1,9 +1,10 @@
-"""Regression tests for #485 — ARCHIVE must suppress facts from default recall.
+"""Regression tests for the archived-status recall fix — ARCHIVE must suppress facts
+from default recall.
 
-PROGRAM.md's contract: obsolete/wrong facts are ARCHIVE'd ("move to
-``status: archived``, never hard-delete"). The deterministic executor relocates
-an ARCHIVE'd (or SUPERSEDE'd old-version) fact into a ``{base}-history.md``
-sibling. Before #485 that history file carried no ``status`` frontmatter, so its
+PROGRAM.md's contract: obsolete/wrong facts are ARCHIVE'd ("move to ``status:
+archived``, never hard-delete"). The deterministic executor relocates an ARCHIVE'd (or
+SUPERSEDE'd old-version) fact into a ``{base}-history.md`` sibling. Before the
+archived-status recall fix that history file carried no ``status`` frontmatter, so its
 chunks indexed as ``active`` and the very facts ARCHIVE exists to suppress kept
 surfacing in default recall.
 
@@ -42,7 +43,7 @@ def _fake_embed(text: str, backend: str = "local") -> list[float]:
 
 
 def test_ensure_archived_frontmatter_injects_into_legacy_file():
-    """A pre-#485 history file (no status) gains ``status: archived``."""
+    """A before the archived-status recall fix history file (no status) gains ``status: archived``."""
     legacy = "---\ncategory: history\ncore: false\n---\n\n# History\n\n- old entry\n"
     fixed = _ensure_archived_frontmatter(legacy)
     assert "status: archived" in fixed

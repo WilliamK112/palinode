@@ -4,8 +4,8 @@ Thin wrapper over :mod:`palinode.indexer.reconcile`. Historically this module
 held the whole "parse markdown -> embed sections -> upsert chunks" pipeline
 inline; that logic now lives behind the derive/plan/apply seam in ``reconcile``
 so a file's chunks, vectors, FTS tokens, metadata and entity rows move in one
-transaction (#717), a frontmatter-only edit is seen (#698), and a changed or
-removed entity ref no longer orphans a row (#699).
+transaction, a frontmatter-only edit is seen, and a changed or
+removed entity ref no longer orphans a row.
 
 ``index_file`` is kept as the small, stable entry the watcher
 (``palinode.indexer.watcher``) and ``POST /save`` (``api.routers.memory``)
@@ -39,7 +39,7 @@ def index_file(filepath: str, *, content: str | None = None) -> dict[str, Any]:
             * ``chunks_reembedded`` (int): FTS-only rows re-indexed once a vector
               became available.
             * ``chunks_deleted`` (int): obsolete rows pruned for this file.
-            * ``indexed_vec`` / ``indexed_fts`` (bool): per-index health (#385).
+            * ``indexed_vec`` / ``indexed_fts`` (bool): per-index health.
             * ``error`` (str | None): one-line failure/deferral reason, if any.
     """
     result: dict[str, Any] = {

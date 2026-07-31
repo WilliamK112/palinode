@@ -1,17 +1,15 @@
 """Golden test pinning the FastAPI route surface of ``palinode.api.server``.
 
-This is the **pre-split gate** for the staged router-split work (#314,
-jobs #510–#512). Before any route is moved into a sub-router, the live
-route inventory — path plus sorted HTTP methods — is captured in
-``tests/fixtures/api_route_inventory.json``. A refactor that merely
-relocates handlers into routers must leave this surface byte-for-byte
-identical; if it doesn't, this test fails loudly and the regenerated
-fixture has to be reviewed deliberately.
+This is the **pre-split gate** for the staged router-split work (jobs the router-split
+scaffold stage–the router-split final stage). Before any route is moved into a
+sub-router, the live route inventory — path plus sorted HTTP methods — is captured in
+``tests/fixtures/api_route_inventory.json``. A refactor that merely relocates handlers
+into routers must leave this surface byte-for-byte identical; if it doesn't, this test
+fails loudly and the regenerated fixture has to be reviewed deliberately.
 
 The inventory is computed exactly as it was generated::
 
-    sorted(
-        [route.path, sorted(route.methods)]
+    sorted([route.path, sorted(route.methods)]
         for route in app.routes
         if hasattr(route, "methods") and route.methods
     )

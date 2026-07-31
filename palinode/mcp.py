@@ -225,7 +225,7 @@ _WRITE_PATH_TOOLS = frozenset({"palinode_save", "palinode_session_end"})
 
 
 def _timeout_message(tool: str) -> str:
-    """Build the client-facing message for an httpx timeout (#416).
+    """Build the client-facing message for an httpx timeout.
 
     Write-path tools get a verify-before-retry hint because the save may have
     succeeded server-side; read-path tools keep the plain timeout message.
@@ -248,10 +248,11 @@ _FULL_CONTENT_HARD_CAP = 4000  # Politeness ceiling for full=True.
 def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
     """Format search results as clean text — minimal context burn.
 
-    Renders ``snippet`` by default (populated by ``/search`` per #352) so
-    pathologically large chunks don't blow the MCP tool-result budget. When
-    ``full=True``, renders ``content`` capped at ``_FULL_CONTENT_HARD_CAP``;
-    callers that want untruncated bodies should use ``palinode_read``.
+    Renders ``snippet`` by default (populated by ``/search`` per the palinode_search
+    returns un-truncated chunk content; exceeds work) so pathologically large chunks
+    don't blow the MCP tool-result budget. When ``full=True``, renders ``content``
+    capped at ``_FULL_CONTENT_HARD_CAP``; callers that want untruncated bodies should
+    use ``palinode_read``.
 
     Falls back to a defensive 400-char ``content`` slice if neither field is
     populated (older API or external caller).
@@ -328,7 +329,7 @@ def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
 
 
 def _resolve_save_type(arg_type: str | None, arg_ps: bool | None) -> str:
-    """Resolve the effective `type` for palinode_save (#136).
+    """Resolve the effective `type` for palinode_save.
 
     Either ``arg_type`` (one of the enum values) or ``arg_ps=True``
     (ProjectSnapshot shortcut) must be set. ``arg_ps=True`` combined with a
@@ -555,13 +556,10 @@ def _all_tools() -> list[types.Tool]:
         types.Tool(
             name="palinode_save",
             description=(
-                "Save a memory to Palinode. Use for important facts, decisions, insights, "
-                "or project updates worth remembering across sessions. Provide either "
-                "`type` (one of the enum values) or `ps=true` for the ProjectSnapshot "
-                "shortcut — exactly one is required. "
-                "If this call times out, the save may still have committed server-side: "
-                "call `palinode_search` with a distinctive phrase from your content to "
-                "confirm before retrying, so you don't create a duplicate entry."
+                "Save a memory (fact, decision, insight, project update) worth keeping "
+                "across sessions. Requires exactly one of `type` or `ps=true`. "
+                "On timeout the save may still have committed — palinode_search a "
+                "distinctive phrase before retrying, or you'll duplicate it."
             ),
             inputSchema={
                 "type": "object",
@@ -577,7 +575,7 @@ def _all_tools() -> list[types.Tool]:
                     },
                     "ps": {
                         "type": "boolean",
-                        "description": "Shorthand for type=ProjectSnapshot — matches the CLI `--ps` flag and the `/ps` slash command. If true, `type` may be omitted (or set to ProjectSnapshot redundantly); other type values conflict and error.",
+                        "description": "Shorthand for type=ProjectSnapshot (the CLI `--ps` flag). If true, omit `type`; any other type value errors.",
                     },
                     "slug": {
                         "type": "string",
@@ -594,20 +592,11 @@ def _all_tools() -> list[types.Tool]:
                     },
                     "project": {
                         "type": "string",
-                        "description": (
-                            "Project slug shorthand — e.g. 'palinode' becomes "
-                            "entity 'project/palinode'.  Pairs with "
-                            "`palinode_session_end`'s `project` field for "
-                            "consistent project tagging across save and "
-                            "session-end."
-                        ),
+                        "description": "Project slug shorthand — 'palinode' becomes entity 'project/palinode'.",
                     },
                     "title": {
                         "type": "string",
-                        "description": (
-                            "Optional human-readable title.  Stored in "
-                            "frontmatter and used in list/search displays."
-                        ),
+                        "description": "Human-readable title, used in list/search displays.",
                     },
                     "metadata": {
                         "type": "object",
@@ -629,7 +618,7 @@ def _all_tools() -> list[types.Tool]:
                         # ADR-018: the KIND of claim this memory makes.
                         # Omitting it leaves the memory `unmarked` (no claim —
                         # NOT fact); no frontmatter is written.
-                        "description": "Epistemic marker: 'fact' (observed/verified), 'inference' (derived, lower trust), 'open_question' (unresolved), or 'unverified' (asserted but not checked). Omit to leave the memory unmarked (no claim is made — not treated as fact).",
+                        "description": "Kind of claim: fact=observed, inference=derived, open_question=unresolved, unverified=asserted but unchecked. Omit to leave unmarked — unmarked is NOT fact.",
                     },
                     "external_refs": {
                         "type": "object",
@@ -655,15 +644,15 @@ def _all_tools() -> list[types.Tool]:
                             "type": "object",
                             "properties": {
                                 "ref": {"type": "string", "description": "Path under the memory dir of the cited source."},
-                                "quote": {"type": "string", "description": "The exact passage cited from the source."},
-                                "quote_hash": {"type": "string", "description": "Optional integrity hash; computed on save if omitted."},
+                                "quote": {"type": "string", "description": "The exact passage cited."},
+                                "quote_hash": {"type": "string", "description": "Optional; computed on save."},
                             },
                             "required": ["ref", "quote"],
                         },
                         # Source-citation anchors: each anchors a memory
                         # to the exact passage it cites. quote_hash is computed
                         # server-side when omitted; the verifier reads these back.
-                        "description": "Source-citation anchors: list of {ref, quote, quote_hash} for passages this memory cites.",
+                        "description": "Citation anchors for passages this memory quotes.",
                     },
                     "contradicts": {
                         "type": "array",
@@ -686,17 +675,17 @@ def _all_tools() -> list[types.Tool]:
                             "type": "object",
                             "properties": {
                                 "text": {"type": "string", "description": "The claim as stated in the memory."},
-                                "source_id": {"type": "string", "description": "Path under the memory dir of the source that justifies the claim (a sources[].ref)."},
+                                "source_id": {"type": "string", "description": "A sources[].ref that justifies the claim."},
                                 "span": {
                                     "type": "object",
                                     "properties": {
-                                        "quote": {"type": "string", "description": "The exact passage in the source that justifies the claim."},
-                                        "quote_hash": {"type": "string", "description": "Optional integrity hash; computed on save if omitted."},
+                                        "quote": {"type": "string", "description": "The justifying passage in the source."},
+                                        "quote_hash": {"type": "string", "description": "Optional; computed on save."},
                                     },
                                     "required": ["quote"],
                                 },
-                                "claim_id": {"type": "string", "description": "Optional stable claim id; content-addressed, derived on save if omitted."},
-                                "anchor_id": {"type": "string", "description": "Optional opaque pointer within a large source (interop; nullable)."},
+                                "claim_id": {"type": "string", "description": "Optional; derived on save."},
+                                "anchor_id": {"type": "string", "description": "Optional pointer within a large source."},
                             },
                             "required": ["text", "source_id", "span"],
                         },
@@ -704,7 +693,7 @@ def _all_tools() -> list[types.Tool]:
                         # memory to the source span that justifies it. claim_id
                         # (addressing) composes with quote_hash (integrity);
                         # blame resolves them back.
-                        "description": "Claim-level source anchors: list of {text, source_id, span:{quote, quote_hash}} bindings resolving each claim to the source span that justifies it. claim_id is derived on save; read back via palinode_blame with claims=true.",
+                        "description": "Binds each claim to the source span justifying it. Read back via palinode_blame(claims=true).",
                     },
                 },
                 "required": ["content"],
@@ -1895,9 +1884,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
         # ── session_end ───────────────────────────────────────────────────
         elif name == "palinode_session_end":
             body: dict[str, Any] = {"summary": arguments.get("summary", "")}
-            if arguments.get("decisions"):
+            # Forward empty arrays rather than dropping them. The server's
+            # envelope guard reads the absence of these two as the signature of
+            # an absorbed tool call, so eliding `[]` here manufactured that
+            # signature for callers who had simply nothing to report.
+            # `is not None` keeps "sent, but empty" distinguishable from "never
+            # sent" all the way to the guard.
+            if arguments.get("decisions") is not None:
                 body["decisions"] = _coerce_str_array(arguments["decisions"])
-            if arguments.get("blockers"):
+            if arguments.get("blockers") is not None:
                 body["blockers"] = _coerce_str_array(arguments["blockers"])
             if arguments.get("project"):
                 body["project"] = arguments["project"]

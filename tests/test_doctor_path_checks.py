@@ -13,11 +13,9 @@ No mocking of SQLite — project standard.
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
-import pytest
 
 from palinode.core.config import Config
 from palinode.diagnostics.runner import run_one

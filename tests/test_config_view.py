@@ -1,4 +1,5 @@
-"""Regression test for #274: `palinode config view` must not crash.
+"""Regression test for the palinode config view crashes with typeerror work: `palinode
+config view` must not crash.
 
 Root cause: `from palinode.cli.list import list_cmd` had the side effect of
 binding `palinode.cli.list` (the submodule) onto the `palinode.cli` package
@@ -37,7 +38,7 @@ def test_config_view_json_renders_completely():
 def test_palinode_cli_list_attribute_does_not_shadow_builtin():
     """Guard the latent bug: the rename means `palinode.cli.list` should NOT
     exist as a submodule anymore. If a future change re-introduces a
-    `palinode/cli/list.py`, this test fails loud so we don't re-ship #274.
+    `palinode/cli/list.py`, this test fails loud so we don't re-ship the palinode config view crashes with typeerror work.
     """
     import palinode.cli
 

@@ -1,4 +1,4 @@
-"""Check: ollama_circuit_health (#338 Phase 5).
+"""Check: ollama_circuit_health (Phase 5 of the Ollama traffic-surface hardening).
 
 Reports the state of the centralized Ollama client's per-role circuit breakers
 and rolling latency, so `palinode doctor` can say "Ollama degraded" or "circuit

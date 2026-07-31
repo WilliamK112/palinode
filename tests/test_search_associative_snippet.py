@@ -1,9 +1,11 @@
-"""Regression tests for #392: /search-associative snippet enrichment.
+"""Regression tests for the /search-associative not snippet-bounded; openclaw-palinode
+reads r.content work: /search-associative snippet enrichment.
 
 The /search and /search-recent endpoints got per-result snippet bounding via
-``_enrich_with_snippets`` in #359 (closing #352). The /search-associative
-endpoint was overlooked and still returned un-truncated ``content`` fields,
-so a single associative hit on a multi-fact aggregated file could blow MCP
+``_enrich_with_snippets`` in the bounded-snippet search change (closing the
+palinode_search returns un-truncated chunk content; exceeds work). The
+/search-associative endpoint was overlooked and still returned un-truncated ``content``
+fields, so a single associative hit on a multi-fact aggregated file could blow MCP
 tool-result budgets on its own.
 
 These tests pin the behaviour:

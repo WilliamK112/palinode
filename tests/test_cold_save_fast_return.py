@@ -1,4 +1,4 @@
-"""Cold first-save fast return (#619, follow-on to #611).
+"""Cold first-save fast return (follow-on to the cold/absent ollama first run looks broken work).
 
 Before: the very first save on a fully-cold host (Ollama up, ``bge-m3``
 unpulled/cold, or no Ollama at all) blocked until the full embed timeout —

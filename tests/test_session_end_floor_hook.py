@@ -1,4 +1,4 @@
-"""Tests for the SessionEnd floor-capture hook prototype (#378).
+"""Tests for the SessionEnd floor-capture hook prototype.
 
 The hook (the local dev-only session-end-floor script) is a prototype: when a
 session ends without `/wrap`, it writes a lightweight floor

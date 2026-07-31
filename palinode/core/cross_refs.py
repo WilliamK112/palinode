@@ -1,15 +1,16 @@
-"""Mechanical, untyped cross-linking between memory files (#73).
+"""Mechanical, untyped cross-linking between memory files.
 
-The deterministic complement to the LLM-generated ``[[wikilinks]]`` /
+The code-managed complement to the model-generated ``[[wikilinks]]`` /
 ``entities`` machinery (PROGRAM.md wiki-maintenance contract). During indexing,
 the watcher scans a memory's body for mentions of OTHER memory files — by their
 path ref (``category/slug``), distinctive slug, or distinctive title — and
 records the matches in an untyped ``cross_refs`` frontmatter list.
 
-Design (see ADR/issue #73, deconfliction with #533):
+Design (see the mechanical cross-linking work, and its deconfliction with the
+typed contradiction/evidence links):
   - **Untyped only.** ``cross_refs`` says "this memory mentions that one"; it does
     NOT say *how* they relate. Typed relations (``contradicts`` / ``backed_by``)
-    are #533's job. Untyped refs are deterministic and "always correct".
+    are handled by the typed contradiction/evidence links. Untyped refs are deterministic and "always correct".
   - **Conservative matching.** Better to miss a link than mint a false one, so
     short/generic slugs and titles are skipped (the fuzzy layer is the LLM
     wikilink path). Matching is whole-token / whole-phrase, case-insensitive.

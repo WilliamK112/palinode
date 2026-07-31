@@ -77,9 +77,9 @@ def shutdown_handlers(timeout: float = SHUTDOWN_JOIN_TIMEOUT_S) -> None:
     """Stop every live handler's debounce timers and wait for their threads.
 
     Registered with ``atexit`` so no watcher timer is still running when the
-    interpreter finalizes. That was the #677 abort: a daemon timer holding the
+    interpreter finalizes. That was the abort: a daemon timer holding the
     stderr buffer lock while the main thread flushed it produced
-    ``_enter_buffered_busy ... at interpreter shutdown`` (SIGABRT, exit 134)
+    ``_enter_buffered_busy... at interpreter shutdown`` (SIGABRT, exit 134)
     *after* every test had already passed.
 
     Idempotent and safe to call from anywhere (tests call it at session end).
@@ -150,11 +150,11 @@ class PalinodeHandler(FileSystemEventHandler):
     def _fill_pending_descriptions(self) -> None:
         """Re-call description generation for files that had it deferred.
 
-        #336: watcher-retry half of the graceful-degrade design. After the
-        description-generation timeout during /save, the watcher detects files
-        still missing their description field and calls /generate-summaries
-        (which triggers the API to fill any missing descriptions) or directly
-        re-saves description for each file.
+        the graceful-degrade auto-description work: watcher-retry half of the
+        graceful-degrade design. After the description-generation timeout during /save,
+        the watcher detects files still missing their description field and calls
+        /generate-summaries (which triggers the API to fill any missing descriptions) or
+        directly re-saves description for each file.
 
         Runs from a debounced timer after file events. Logs WARNING if Ollama
         is still unavailable so the operator can correlate.
@@ -356,7 +356,7 @@ class PalinodeHandler(FileSystemEventHandler):
         Without this, a ``mv`` (which watchdog delivers here, not to
         ``on_modified``) was dropped silently: chunk ids are derived from the
         path, so every chunk of the moved file orphaned under the old path, and
-        its entity rows survived too (#710). Deleting the source's derived state
+        its entity rows survived too. Deleting the source's derived state
         and indexing the destination makes a rename a first-class edit.
         """
         if event.is_directory:

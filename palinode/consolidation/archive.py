@@ -1,4 +1,4 @@
-"""On-demand ARCHIVE / SUPERSEDE for one named memory (#664).
+"""On-demand ARCHIVE / SUPERSEDE for one named memory.
 
 ``PROGRAM.md`` §"Never hard-delete" already specifies how a memory is retired —
 ``status: archived`` frontmatter, the ``{base}-history.md`` audit sibling, and

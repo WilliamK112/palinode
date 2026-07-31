@@ -1,6 +1,6 @@
-"""Parse + normalize LLM-proposed consolidation operations (#555).
+"""Parse + normalize LLM-proposed consolidation operations.
 
-The seam right after the proposer (#554) and right before the deterministic
+The seam right after the proposer and right before the deterministic
 executor: turn the raw LLM response into a clean list of operation dicts, and
 read an op's fields through one canonical accessor instead of re-deriving the
 ``op``/``operation`` and ``reason``/``rationale`` aliases (and the

@@ -1,4 +1,5 @@
-"""#387 regression: runner must log and count YAML parse failures instead of silently skipping.
+"""the consolidation YAML-parse fix regression: runner must log and count YAML parse
+failures instead of silently skipping.
 
 Previously, both ``_collect_daily_notes`` (line ~98) and
 ``_get_decisions_for_project`` (line ~66) used bare ``except Exception: pass``
@@ -21,7 +22,6 @@ no mocking of file reads (real files are more reliable for frontmatter logic).
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -172,7 +172,7 @@ class TestCollectDailyNotesYamlParseWarning:
 class TestGetDecisionsYamlParseWarning:
 
     def test_corrupt_decision_frontmatter_logs_warning(self, memory_dir, caplog):
-        """A decision file with invalid YAML must emit a WARNING (#387)."""
+        """A decision file with invalid YAML must emit a WARNING."""
         decisions_dir = memory_dir / "decisions"
         bad_file = decisions_dir / "decision-bad.md"
         bad_file.write_text(

@@ -1,8 +1,8 @@
 """
 CLI command: palinode retrieval-stats
 
-Reads .audit/retrievals.jsonl and reports retrieval-event statistics.
-Issue #256 — ADR-007 prerequisite: surface the data so empirical tau
+Reads.audit/retrievals.jsonl and reports retrieval-event statistics.
+Issue the retrieval-event instrumentation — ADR-007 prerequisite: surface the data so empirical tau
 values can be derived for decay tuning.
 """
 from __future__ import annotations
@@ -70,7 +70,6 @@ def _stats(events: list[dict[str, Any]]) -> dict[str, Any]:
     except OSError:
         pass
 
-    retrieved_set = set(file_counts.keys())
     # Normalize file paths — strip memory_dir prefix for comparison
     def _rel(fp: str) -> str:
         try:
@@ -94,7 +93,6 @@ def _stats(events: list[dict[str, Any]]) -> dict[str, Any]:
             if fp not in last_seen or ts > last_seen[fp]:
                 last_seen[fp] = ts
 
-    now_iso = datetime.now(timezone.utc).isoformat()
     ages_days: list[float] = []
     for fp in all_md:
         if fp in last_seen:
@@ -203,7 +201,7 @@ def retrieval_stats(days: int, fmt: str) -> None:
 
     age = stats["age_days"]
     if age["mean"] is not None:
-        console.print(f"\n[bold]Time since last retrieval (retrieved files only)[/bold]")
+        console.print("\n[bold]Time since last retrieval (retrieved files only)[/bold]")
         console.print(f"  Mean:    {age['mean']} days")
         console.print(f"  Median:  {age['median']} days")
 

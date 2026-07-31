@@ -1,6 +1,5 @@
 import os
 import tempfile
-import pytest
 from palinode.consolidation.fact_ids import generate_fact_id, add_fact_ids_to_file
 
 def test_generate_fact_id_deterministic():

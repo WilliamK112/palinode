@@ -1,4 +1,4 @@
-"""TTL / auto-archive for ephemeral monitoring memories (ADR-015 §2.3, #482).
+"""TTL / auto-archive for ephemeral monitoring memories (ADR-015 §2.3, the TTL/auto-archive work).
 
 Deterministic monitor writes (and any caller) can mark a memory as ephemeral by
 giving it an expiry:
@@ -7,11 +7,11 @@ giving it an expiry:
   absolute ``expires_at`` at save time (see :func:`normalize_expiry`).
 - ``expires_at`` — an explicit ISO-8601 timestamp in frontmatter.
 
-The :func:`archive_expired` sweep flips every memory whose ``expires_at`` has
-passed to ``status: archived``. Because #485 made ``status: archived`` content
-recall-suppressed-but-retained (``config.search.exclude_status``), an expired
-ephemeral memory ages out of default recall while staying on disk + in git for
-audit — exactly ADR-015 §2.3's "down-weighted, then archived" end state.
+The :func:`archive_expired` sweep flips every memory whose ``expires_at`` has passed to
+``status: archived``. Because the archived-status recall fix made ``status: archived``
+content recall-suppressed-but-retained (``config.search.exclude_status``), an expired
+ephemeral memory ages out of default recall while staying on disk + in git for audit —
+exactly ADR-015 §2.3's "down-weighted, then archived" end state.
 
 The sweep is deterministic (no LLM), idempotent, and intended to be run from
 cron / the monitor harness via ``palinode archive-expired`` (CLI), ``POST
@@ -141,14 +141,14 @@ def _iter_memory_files(root: str):
 def _archive_file(path: str) -> None:
     """Set ``status: archived`` in a file's frontmatter, preserving the body.
 
-    Thin alias for the shared frontmatter-flip primitive (#664) so the sweep and
+    Thin alias for the shared frontmatter-flip primitive so the sweep and
     the on-demand op cannot drift on what "archived" writes.
     """
     set_archived_frontmatter(path)
 
 
 def archive_expired(now: datetime | None = None, dry_run: bool = False) -> dict:
-    """Archive every memory whose ``expires_at`` has passed (ADR-015 §2.3, #482).
+    """Archive every memory whose ``expires_at`` has passed (ADR-015 §2.3, the TTL/auto-archive work).
 
     Returns ``{"archived": [relpaths], "count": int, "dry_run": bool}``.
     Idempotent: a memory already at ``status: archived`` is skipped.

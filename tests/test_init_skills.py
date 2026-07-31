@@ -1,10 +1,10 @@
-"""Tests for `palinode init --skills` (skill-format scaffolding, #474).
+"""Tests for `palinode init --skills` (skill-format scaffolding, the palinode init work).
 
 `--skills {none|project|personal|both}` installs /wrap as a Claude Code
 SKILL.md file from the SAME `WRAP_*_COMMAND_BODY` constant the slash command
 uses (single source — no drift). 'personal' targets `~/.claude/skills/` so
 /wrap is typeable in every project, not just the inited one. /wrap is the
-sole lifecycle skill since #631 (/save and /ps deprecated).
+sole lifecycle skill since the /wrap-only init change (/save and /ps deprecated).
 
 All file-only; no network. Personal scope is sandboxed via a tmp HOME.
 """
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from palinode.cli.init import init
@@ -58,7 +57,7 @@ def test_single_source_body_matches_command(tmp_path):
 
 
 def test_wrap_skill_inherits_step0_preflight(tmp_path):
-    """#618: because the skill renders from WRAP_COMMAND_BODY, the Step 0 git
+    """the light /wrap work: because the skill renders from WRAP_COMMAND_BODY, the Step 0 git
     pre-flight lands in the skill too — no separate copy to keep in sync."""
     _run(["--dir", str(tmp_path), *_BASE, "--skills", "project"])
     wrap_skill = (tmp_path / ".claude" / "skills" / "wrap" / "SKILL.md").read_text()

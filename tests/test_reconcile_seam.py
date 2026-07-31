@@ -1,4 +1,4 @@
-"""The write-path reconcile seam — derive / plan / apply (#717, #698, #699).
+"""The write-path reconcile seam — derive / plan / apply.
 
 Real SQLite on tmp_path (project rule: no DB mocks); the embedder is the only
 patched dependency, since these tests are about reconciliation, not embedding.
@@ -86,7 +86,8 @@ def test_plan_is_noop_on_an_unchanged_file(tmp_store):
 
 
 def test_plan_frontmatter_only_edit_is_meta_only_not_reembed(tmp_store):
-    """#698: a frontmatter-only change is seen, and does not re-embed."""
+    """the frontmatter-only edits are invisible work: a frontmatter-only change is seen, and
+does not re-embed."""
     (tmp_store / "projects").mkdir()
     path = str(tmp_store / "projects" / "x.md")
     _reconcile(path, _doc(["person/alice"], status="active"))
@@ -110,7 +111,8 @@ def test_plan_flags_entity_change(tmp_store):
 
 
 def test_changed_entity_ref_replaces_rather_than_orphans(tmp_store):
-    """#699: correcting a ref must not leave the old row behind."""
+    """the store.upsert_entities never removes a file's stale work: correcting a ref must
+not leave the old row behind."""
     (tmp_store / "projects").mkdir()
     path = str(tmp_store / "projects" / "x.md")
     _reconcile(path, _doc(["person/alice"]))
@@ -123,7 +125,8 @@ def test_changed_entity_ref_replaces_rather_than_orphans(tmp_store):
 
 
 def test_removing_all_entities_clears_the_rows(tmp_store):
-    """#699 corollary: the old upsert early-returned on [], deleting nothing."""
+    """the store.upsert_entities never removes a file's stale work corollary: the old upsert
+early-returned on [], deleting nothing."""
     (tmp_store / "projects").mkdir()
     path = str(tmp_store / "projects" / "x.md")
     _reconcile(path, _doc(["person/alice"]))
@@ -134,7 +137,8 @@ def test_removing_all_entities_clears_the_rows(tmp_store):
 
 
 def test_frontmatter_only_edit_refreshes_cached_metadata_without_reembed(tmp_store):
-    """#698 end to end: the status flip reaches chunks.metadata, no embed call."""
+    """the frontmatter-only edits are invisible work end to end: the status flip reaches
+chunks.metadata, no embed call."""
     (tmp_store / "projects").mkdir()
     path = str(tmp_store / "projects" / "x.md")
     _reconcile(path, _doc(["person/alice"], status="active"))

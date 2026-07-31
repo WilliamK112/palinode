@@ -1,6 +1,6 @@
 """The suite's own isolation guarantees — the third way a green run can lie.
 
-Two failure modes live here, both siblings of #677's "exit 134 after everything
+Two failure modes live here, both siblings of the "exit 134 after everything
 passed":
 
 1. **Global config leaking across tests.** ``palinode.core.config.config`` is a

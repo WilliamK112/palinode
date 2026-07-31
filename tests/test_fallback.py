@@ -1,11 +1,10 @@
 """Consolidation LLM fallback-chain tests.
 
-As of #338 Phase 4, `_call_llm_with_fallback` routes through the centralized
-`OllamaClient.chat_completions` (CONSOLIDATION role) instead of `httpx.post`.
-The fallback chain (primary → fallbacks) stays in the runner; each attempt
+As of Phase 4 of the Ollama traffic-surface hardening, `_call_llm_with_fallback` routes
+through the centralized `OllamaClient.chat_completions` (CONSOLIDATION role) instead of
+`httpx.post`. The fallback chain (primary → fallbacks) stays in the runner; each attempt
 passes its own `base_url`/`model` to the client, and a failed attempt raises
-`OllamaError` (which the loop catches to try the next host).
-"""
+`OllamaError` (which the loop catches to try the next host). """
 from unittest.mock import MagicMock, patch
 
 import pytest

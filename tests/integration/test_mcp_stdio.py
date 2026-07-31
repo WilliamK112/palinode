@@ -1,11 +1,12 @@
-"""End-to-end stdio JSON-RPC test for every MCP tool (issue #344, Phase 2 of #342).
+"""End-to-end stdio JSON-RPC test for every MCP tool (issue the MCP phase 2 work, Phase
+2 of the MCP harness validation).
 
 Spawns palinode-api on a random port, then drives palinode-mcp via real MCP
 JSON-RPC over stdio. Catches transport-layer failures (stdio framing, JSON-RPC
 ID handling, lifecycle, env-var inheritance, signal handling) that the
-in-process test (#343) cannot.
+in-process test cannot.
 
-The smoke-args registry is shared with #343 via
+The smoke-args registry is shared with the MCP phase 1 work via
 tests/integration/_smoke_args.py — both surfaces stay in lockstep.
 
 Marked @pytest.mark.slow because subprocess spin-up costs ~3-5 seconds.
@@ -161,7 +162,7 @@ async def test_every_tool_dispatches_via_stdio(api_subprocess):
     `isError` content is allowed — many tools legitimately surface error text
     in a sealed test env (no Ollama, no git remote, no network). The point of
     Phase 2 is to verify stdio JSON-RPC framing, lifecycle, ID handling, and
-    env-var inheritance — tool semantics are covered by Phase 1 (#343).
+    env-var inheritance — tool semantics are covered by Phase 1.
 
     Runs all 25 tool calls in a single session so any transport regression
     surfaces as a clear stdio failure, not test-fixture noise.

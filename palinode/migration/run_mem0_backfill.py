@@ -12,10 +12,9 @@ then optionally disable Mem0's autoRecall in OpenClaw config.
 from __future__ import annotations
 
 import logging
-import json
 
 from palinode.migration.mem0_export import export_all
-from palinode.migration.mem0_classify import run_classification, deduplicate
+from palinode.migration.mem0_classify import run_classification
 from palinode.migration.mem0_generate import generate_files
 
 logging.basicConfig(
@@ -29,12 +28,12 @@ def main():
     # Step 1: Export
     logger.info("=" * 60)
     logger.info("STEP 1: Exporting from Qdrant...")
-    export_path = export_all()
+    _export_path = export_all()
 
     # Step 2: Classify
     logger.info("=" * 60)
     logger.info("STEP 2: Deduplicating and classifying...")
-    classified_path = run_classification()
+    _classified_path = run_classification()
 
     # Step 3: Generate files
     logger.info("=" * 60)

@@ -50,7 +50,7 @@ def split_file(file_path: str) -> dict:
         if len(parts) >= 3:
             try:
                 metadata = yaml.safe_load(parts[1]) or {}
-            except:
+            except Exception:
                 pass
             body = parts[2].strip()
     
@@ -71,7 +71,11 @@ def split_file(file_path: str) -> dict:
         if layer_hint == "status":
             status_sections = [body]
         elif layer_hint == "history":
-            history_sections = [body]
+            # KNOWN BUG: history_sections is never read — the writer below only
+            # consumes identity_sections and status_sections, so `layer_hint:
+            # history` silently discards the body. Left as-is deliberately:
+            # choosing the correct behavior is a design call, not a lint fix.
+            history_sections = [body]  # noqa: F841
         else:
             identity_sections = [body]
         # Short-circuit to file writing (skip section classification below)
@@ -176,7 +180,6 @@ def split_all_core_files() -> dict:
     Returns stats dict.
     """
     import glob
-    from palinode.core import parser as md_parser
     from palinode.core import store
     from palinode.core import embedder
     

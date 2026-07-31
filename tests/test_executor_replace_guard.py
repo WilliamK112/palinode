@@ -1,6 +1,6 @@
 """Executor guard: never SUPERSEDE/ARCHIVE a living (update_policy: replace) doc.
 
-ADR-015 §2.2 / #431 §3: a memory declaring ``update_policy: replace`` is a
+ADR-015 §2.2 / the ADR proposal work §3: a memory declaring ``update_policy: replace`` is a
 living/current-state document. Consolidation may UPDATE it in place but must
 NEVER SUPERSEDE it (which strikes through the fact and forks a
 ``supersedes-`` sibling) or ARCHIVE-into-history it — either forks the single

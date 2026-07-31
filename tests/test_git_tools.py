@@ -79,7 +79,7 @@ def test_git_operations_on_non_git_fail_gracefully():
 
 
 def test_blame_failure_logs_warning(caplog):
-    """A failed git blame logs a WARNING (#337) — not only a returned string."""
+    """A failed git blame logs a WARNING — not only a returned string."""
     import logging as _logging
     with patch("palinode.core.git_tools._run_git") as mock_run:
         mock_res = MagicMock()
@@ -96,7 +96,7 @@ def test_blame_failure_logs_warning(caplog):
 
 
 def test_rollback_checkout_failure_logs_error(caplog):
-    """A failed rollback checkout is operator-critical → ERROR (#337)."""
+    """A failed rollback checkout is operator-critical → ERROR."""
     import logging as _logging
     with patch("palinode.core.git_tools._run_git") as mock_run:
         mock_res = MagicMock()
@@ -114,7 +114,7 @@ def test_rollback_checkout_failure_logs_error(caplog):
 
 
 def test_push_failure_logs_warning(caplog):
-    """A failed push logs a WARNING with the returncode/stderr (#337)."""
+    """A failed push logs a WARNING with the returncode/stderr."""
     import logging as _logging
 
     def fake_run(*args, **kwargs):

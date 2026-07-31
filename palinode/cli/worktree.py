@@ -1,4 +1,4 @@
-"""palinode worktree-reconcile — reclaim stale dead-PID-locked git worktrees (#448).
+"""palinode worktree-reconcile — reclaim stale dead-PID-locked git worktrees.
 
 Claude Code (and similar agents) create isolated worktrees under
 ``.claude/worktrees/`` and mark them ``locked`` with the owning session's PID.
@@ -120,7 +120,10 @@ def reconcile(repo_root: str) -> list[WorktreeVerdict]:
         m = _PID_RE.search(reason)
         pid = int(m.group(1)) if m else None
 
-        def skip(why: str, **kw) -> WorktreeVerdict:
+        # Bind loop vars as defaults: `skip` is only called within the same
+        # iteration today, but late binding would silently misattribute a
+        # verdict if that ever changed (B023).
+        def skip(why: str, *, path=path, branch=branch, pid=pid, **kw) -> WorktreeVerdict:
             return WorktreeVerdict(
                 path=path, branch=branch, pid=pid, action="skip", reason=why,
                 pid_alive=kw.get("pid_alive"), clean=kw.get("clean"),

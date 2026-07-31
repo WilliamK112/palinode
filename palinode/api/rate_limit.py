@@ -1,4 +1,4 @@
-"""In-memory, per-IP request gating and the request-size cap (#556).
+"""In-memory, per-IP request gating and the request-size cap.
 
 Extracted from the former ``routers/_shared.py`` junk drawer. A self-contained
 sliding-window limiter: counters keyed by ``ip:category`` reset each window,

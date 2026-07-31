@@ -33,7 +33,7 @@ def _resolve_scope_chain(
     context: list[str] | None = None,
     session_id: str | None = None,
 ):
-    """Resolve the session scope chain for ADR-009 Layer 2 (#108) search gating.
+    """Resolve the session scope chain for ADR-009 Layer 2 search gating.
 
     The project level is taken from the caller-supplied ambient ``context``
     (the same ``project/*`` refs used for the ADR-008 boost — never guessed);
@@ -71,7 +71,7 @@ def _fetch_visible(
     *,
     record_recall: Callable[[list[str]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch rows and apply the ADR-009 Layer 2 visibility gate (#108).
+    """Fetch rows and apply the ADR-009 Layer 2 visibility gate.
 
     ``run(n)`` performs the bounded store fetch. Visibility cannot be pushed
     into SQL — the authoritative frontmatter lives in the file, not in
@@ -87,7 +87,7 @@ def _fetch_visible(
     overwhelmingly common case — this is a single fetch with today's exact
     limits and today's exact ranking.
 
-    Recall metadata is de-duplicated across the two passes (#667). The store
+    Recall metadata is de-duplicated across the two passes. The store
     records ADR-007 recall inside each fetch, so a naive widened re-fetch would
     increment ``recall_count`` twice for a row present in both passes. When a
     ``record_recall`` callback is supplied (the hybrid/vector search path), the
@@ -166,7 +166,7 @@ class SearchAssociativeRequest(BaseModel):
 
 
 class DedupSuggestRequest(BaseModel):
-    """Find existing files semantically near the supplied draft content (#210).
+    """Find existing files semantically near the supplied draft content.
 
     Used by the LLM at write-time to decide "create new vs update existing".
     Both ``min_similarity`` and ``top_k`` are kwarg-tunable per the design
@@ -183,7 +183,7 @@ class DedupSuggestRequest(BaseModel):
 
 
 class OrphanRepairRequest(BaseModel):
-    """Find files semantically near a broken `[[wikilink]]` target (#210).
+    """Find files semantically near a broken `[[wikilink]]` target.
 
     The LLM uses the candidate slate to propose a redirect or seed a new
     target file with informed context.  ``min_similarity`` defaults are
@@ -196,7 +196,7 @@ class OrphanRepairRequest(BaseModel):
 
 
 class ClusterNeighborsRequest(BaseModel):
-    """Find semantically related files not already linked to/from file_path (#235).
+    """Find semantically related files not already linked to/from file_path.
 
     Used by the LLM during wiki-maintenance passes to surface implicit
     relationships that no ``[[wikilink]]`` yet captures.  Default threshold
@@ -211,7 +211,7 @@ class ClusterNeighborsRequest(BaseModel):
 
 
 class TopicCoverageRequest(BaseModel):
-    """Check whether any wiki page already covers a topic phrase (#235).
+    """Check whether any wiki page already covers a topic phrase.
 
     The LLM calls this BEFORE ingesting new content to ask "is this
     redundant?".  Different framing from ``dedup_suggest``: the input is a
@@ -228,7 +228,7 @@ class TopicCoverageRequest(BaseModel):
 def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, Any]]:
     """Semantic vector search against cached `.palinode.db` chunks.
 
-    Empty query routes to recency-only mode (#141): returns the most recent
+    Empty query routes to recency-only mode: returns the most recent
     chunks ordered by created_at desc, optionally filtered by `types` and
     `since_days`. Skips embedding entirely.
 
@@ -404,7 +404,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
 def search_associative_api(req: SearchAssociativeRequest) -> list[dict[str, Any]]:
     """Entity graph spreading activation recall.
 
-    Subject to the same ADR-009 Layer 2 visibility gate as ``/search`` (#108).
+    Subject to the same ADR-009 Layer 2 visibility gate as ``/search``.
     Entity-graph traversal reaches memories no query term matched, so leaving
     it ungated would have made it the way around every rule ``/search``
     enforces. Note ``store.search_associative`` returns rows with empty

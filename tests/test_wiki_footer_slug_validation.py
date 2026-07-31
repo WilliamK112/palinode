@@ -1,4 +1,5 @@
-"""Tests for the slug-validation step in `_apply_wiki_footer` (#284 / Tier B #4).
+"""Tests for the slug-validation step in `_apply_wiki_footer` (the pre-release gate
+hotfix bundle / Tier B #4).
 
 The auto-footer constructs ``[[slug]]`` markdown wikilinks from the request's
 ``entities`` list. Without validation, an entity like ``foo]]hostile[[`` could

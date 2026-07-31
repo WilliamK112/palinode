@@ -1,4 +1,4 @@
-"""Memory-path resolution and traversal/symlink guards (#284, #556).
+"""Memory-path resolution and traversal/symlink guards.
 
 Extracted from the former ``routers/_shared.py`` junk drawer. The seam every
 file-touching handler crosses before reading a caller-supplied memory path:
@@ -30,7 +30,7 @@ def _resolve_memory_path(file_path: str) -> tuple[str, str]:
     """Resolve a relative memory path without allowing traversal outside memory_dir.
 
     Uses ``pathlib.Path.resolve(strict=False)`` plus ``Path.is_relative_to()``
-    for the membership check (#284). ``strict=False`` is used because callers
+    for the membership check. ``strict=False`` is used because callers
     of this helper sometimes resolve paths that don't yet exist on disk
     (e.g. ``/save`` resolving the destination path before writing it); the
     strict-existence check is performed by callers via ``os.path.exists`` /

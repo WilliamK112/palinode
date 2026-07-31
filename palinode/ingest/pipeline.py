@@ -242,7 +242,8 @@ def ingest_url_file(filepath: str, name: str) -> str | None:
 
 
 def ingest_url(url: str, name: str) -> str | None:
-    """Downloads HTTP response targets applying readability algorithms scrubbing out semantic fat strings locally.
+    """Downloads HTTP response targets applying readability algorithms scrubbing out
+semantic fat strings locally.
 
     Args:
         url (str): Remote address targeting structured layouts schemas online natively resolving endpoints payload sequences.
@@ -289,7 +290,8 @@ def write_research_file(
     source_url: str = "",
     file_type: str = "text",
 ) -> str:
-    """Generates a perfectly modeled Frontmatter YAML formatted chunk safely storing contexts across DB indexes.
+    """Generates a perfectly modeled Frontmatter YAML formatted chunk safely storing
+contexts across DB indexes.
 
     Args:
         name (str): Original target schema label logic strings sequence natively string.

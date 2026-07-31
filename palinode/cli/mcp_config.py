@@ -553,13 +553,13 @@ def mcp_config(
     for r in results:
         if not r.present:
             console.print(f"  [dim]· {r.path}[/dim]")
-            console.print(f"    [dim]not present[/dim]")
+            console.print("    [dim]not present[/dim]")
         elif r.error:
             console.print(f"  [red]✗[/red] {r.path}")
             console.print(f"    [red]ERROR parsing:[/red] {r.error}")
         elif r.entry is None:
             console.print(f"  [yellow]·[/yellow] {r.path}")
-            console.print(f"    file exists — no 'palinode' entry in mcpServers / context_servers")
+            console.print("    file exists — no 'palinode' entry in mcpServers / context_servers")
         else:
             found_any = True
             console.print(f"  [green]✓[/green] {r.path}")

@@ -1,4 +1,4 @@
-"""Tests for /search types, since_days, and recency-only mode (#141)."""
+"""Tests for /search types, since_days, and recency-only mode."""
 from datetime import UTC, datetime, timedelta
 
 from palinode.api.server import (

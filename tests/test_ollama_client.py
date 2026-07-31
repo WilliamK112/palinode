@@ -1,11 +1,12 @@
-"""Unit tests for the centralized Ollama client (#338 Phase 1+2+3).
+"""Unit tests for the centralized Ollama client (Phase 1+2+3 of the Ollama
+traffic-surface hardening).
 
 Drives the acceptance criteria directly:
 - callers get a typed OllamaError subclass, never a bare httpx error;
 - the circuit breaker opens after the failure threshold;
 - once open, calls fast-fail (no network I/O) instead of waiting for a timeout;
 - per-role routing sends embed → embed URL, chat/generate → chat URL;
-- structured JSON-line logs carry the #337 field set;
+- structured JSON-line logs carry the field set;
 - rolling metrics expose p50/p95/error_rate per role.
 
 A fake clock + injected sleep make backoff and cooldown deterministic; an

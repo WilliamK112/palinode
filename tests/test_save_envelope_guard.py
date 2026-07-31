@@ -1,9 +1,9 @@
-"""Envelope-markup guard on the save path (#697, the save-side half of #682).
+"""Envelope-markup guard on the save path (the save-side half of the tool-envelope validation).
 
-`session_end` got this guard in #689. Save is the other write path the same
-corruption enters through, but the strongest of the three detection signals does
-NOT transfer, and these tests pin that asymmetry so a later "simplification"
-can't quietly reintroduce it.
+`session_end` got this guard in the session-end envelope rejection. Save is the other
+write path the same corruption enters through, but the strongest of the three detection
+signals does NOT transfer, and these tests pin that asymmetry so a later
+"simplification" can't quietly reintroduce it.
 
 Session-end rejects on *co-occurrence*: envelope markup present AND the
 `decisions`/`blockers` arrays absent. That is near-zero-false-positive there
@@ -11,7 +11,7 @@ because a real /wrap summary essentially always carries those arrays, so their
 absence is anomalous. Every one of save's arrays (`entities`, `sources`,
 `claims`, `contradicts`, `backed_by`) is optional and absent on most honest
 calls — so on save, "no arrays arrived" is the *norm*, and treating it as a
-signature would collapse the guard into the blanket vocabulary ban #682
+signature would collapse the guard into the blanket vocabulary ban the tool-envelope validation
 explicitly forbids. Save therefore relies on the unmatched-tag and
 trailing-fragment signals only.
 
@@ -86,7 +86,7 @@ def test_opening_tag_at_the_tail_is_rejected(mock_memory_dir):
 
 
 def test_harness_markup_at_the_tail_is_rejected(mock_memory_dir):
-    """The live-store case from #682 (`Topic: <command-message>…`), which
+    """The live-store case from the tool-envelope validation (`Topic: <command-message>…`), which
     arrives through save the same way it arrived through session-end. The tags
     are matched, so only the tail signal fires."""
     with pytest.raises(HTTPException) as exc:
@@ -136,7 +136,7 @@ def test_details_summary_block_is_saveable(mock_memory_dir):
 
 
 def test_note_about_tool_call_syntax_is_saveable(mock_memory_dir):
-    """#682's own constraint: the investigation that produced this guard has to
+    """the tool-envelope validation's own constraint: the investigation that produced this guard has to
     stay saveable. Fenced code is the escape hatch."""
     res = _save(
         "The absorption bug leaves the envelope tail in the string param:\n\n"
@@ -150,7 +150,7 @@ def test_note_about_tool_call_syntax_is_saveable(mock_memory_dir):
 
 
 def test_absent_arrays_are_not_treated_as_an_absorption_signature(mock_memory_dir):
-    """The core of #697. This save has no `entities`, no `sources`, no
+    """The core of the save-side envelope validation. This save has no `entities`, no `sources`, no
     `claims` — the ordinary shape — and matched envelope vocabulary mid-content.
     Under session-end's co-occurrence gate that combination is a hard reject;
     on save it must pass, because absent arrays mean nothing here."""

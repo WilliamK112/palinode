@@ -1,4 +1,4 @@
-"""MCP schema semantics guard and token-surface measurement (#499)."""
+"""MCP schema semantics guard and token-surface measurement."""
 from __future__ import annotations
 
 import json

@@ -49,8 +49,8 @@ def api_reachable(ctx: DoctorContext) -> CheckResult:
             passed=False,
             message=f"API not reachable at {url}: {exc}",
             remediation=(
-                f"Start the API with 'palinode-api' or check its service status:\n"
-                f"  systemctl --user status palinode-api"
+                "Start the API with 'palinode-api' or check its service status:\n"
+                "  systemctl --user status palinode-api"
             ),
         )
 
@@ -169,8 +169,8 @@ def api_status_consistent(ctx: DoctorContext) -> CheckResult:
                     f"has 0 chunks. The API may be serving from a different database."
                 ),
                 remediation=(
-                    f"Verify PALINODE_DIR and db_path are consistent across all services. "
-                    f"Run 'palinode doctor --check phantom_db_files' to locate other DB files."
+                    "Verify PALINODE_DIR and db_path are consistent across all services. "
+                    "Run 'palinode doctor --check phantom_db_files' to locate other DB files."
                 ),
             )
         if api_chunks == 0 and disk_chunks > 0:

@@ -1,4 +1,4 @@
-"""Tests for #366 — advisory project-memory review.
+"""Tests for the periodic project-memory review job work — advisory project-memory review.
 
 `run_review` composes the deterministic lint signals scoped to a project and
 proposes corrective ops. Read-only. No embedder needed — pure filesystem + lint.

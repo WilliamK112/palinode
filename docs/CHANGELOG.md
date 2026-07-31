@@ -14,6 +14,80 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Security
 
+## [0.9.7] — 2026-07-31
+
+A narrow repair release. The session-end envelope guard was rejecting
+well-formed callers, which broke `/wrap` over MCP and — less visibly, and
+worse — left every automatic floor-hook capture running under the guard's
+strictest detection signal.
+
+### Added
+
+- Ruff lint gate in CI (`lint` job) with a deliberately narrow rule set —
+  bug-classes only (`F`, `B`, `E7`, `E9`), no formatting opinions. Every rule
+  left disabled is documented with its reason in `pyproject.toml`
+  `[tool.ruff.lint]`. This makes HARD RULE #7's "run lint checks" enforceable
+  for the first time.
+
+- Per-tool MCP schema size budget, enforced in CI
+  (`tests/test_mcp_schema_size_budget.py`, #765). At least one client caps tool
+  schemas at 4,096 bytes and, on exceeding it, **replaces the schema with an
+  empty object** rather than truncating or erroring — the tool stays in the
+  model's list with no parameter contract, so a write tool is offered with
+  nothing describing it. Reads are unaffected (they are far smaller), so the
+  agent looks healthy while only its save path is broken. Palinode cannot
+  observe this condition — it happens client-side, after the server has done
+  everything right — so a budget test is the only available detection. All 30
+  tools currently pass; `palinode_save` is the largest at 3,815 B.
+
+### Changed
+
+- Trimmed the `palinode_save` MCP tool schema prose by ~18% (~224 tokens), most
+  of it in the nested `claims`/`sources` anchor descriptions. `palinode_save`
+  was the single largest tool in the surface at ~1,228 tokens (20% of the
+  total); MCP tool schemas are the only unconditional Palinode context cost at
+  session start in Claude Code. No parameters, enums, or `required` fields
+  changed — descriptions only.
+
+### Fixed
+
+- `palinode config edit` crashed with `NameError: name 'console' is not defined`
+  on both of its error paths (config file not found; editor failed to launch).
+  `console` is imported per-function in `palinode/cli/__init__.py` and
+  `config_edit` was missing the import. Surfaced by the new ruff gate (`F821`);
+  the existing suite never caught it because nothing exercised those paths.
+
+- **`/wrap` could not complete over MCP — the envelope guard misdiagnosed its
+  own callers (#764).** Two independent defects compounded into what looked
+  like a broken transport. First, empty arrays were conflated with absent ones:
+  `decisions: []` is falsy, so both the MCP handler and the API's
+  co-occurrence check read "the caller sent nothing to report" as "the
+  parameters never arrived", and told a well-formed caller it had emitted a
+  malformed tool call. Absorption swallows parameters whole and never delivers
+  them as `[]`, so only genuine absence (`None`) is now evidence of it. Second,
+  the rejection message rendered the offending fragment with `repr`, leaving it
+  unprotected — so quoting the message into a retry summary re-tripped the
+  guard and failed identically, which is why six consecutive attempts read as a
+  deterministic fault. The fragment is now rendered in backticks, the guard's
+  own documented escape hatch, making the message safe to paste back. The
+  remediation text also now states that inline backticks must not span a line
+  break, which was true but undocumented. Verified over live MCP stdio: array
+  parameters were arriving intact the whole time.
+
+  The `/wrap` symptom was the visible half. The SessionEnd floor hook sends
+  `decisions: []` / `blockers: []` unconditionally by design, so the same
+  conflation put **every automatic capture** permanently under the
+  co-occurrence signal — the strictest one, where any fragment from the tag
+  vocabulary is enough to reject without corroboration. That is backwards: a
+  caller that never sends the arrays is the one whose silence carries no
+  information. The floor hook is the safety net for sessions that end without
+  `/wrap`, so the failure mode there was lost captures rather than a visible
+  error.
+
+### Removed
+
+### Security
+
 ## [0.9.6] — 2026-07-28
 
 ### Added
@@ -262,7 +336,7 @@ The memory-architecture release. Two themes land together. **The provenance wedg
 - **README repositioned to lead with audit-grade / git-native provenance.** The headline moves from "memory substrate for AI agents" to "audit-grade memory for AI coding agents — every fact you can `blame`, `diff`, `rollback`." Framing only; leads with provenance that already ships today (git lineage), no behavior change and no claim about not-yet-built capture (source-spans, extraction metadata).
 - **Single memory-file mutation choke point (#564).** Every path that mutates a memory file now routes its write through one atomic primitive, `git_tools.write_memory_file(path, content)` (temp + fsync + rename, crash-safe), and its commit through `git_tools.commit_memory_file` / `commit_memory_files` (explicit-file staging). Migrated the formerly-scattered mechanisms onto them: the `/save` body write, the summary/description injectors, the consolidation executor's atomic write, ttl-archive, the consolidation runner's project/decision/status writes, the prompt-activate toggle, the openclaw/mem0/vault migration writers, the ingest pipeline, and the Obsidian wiki-footer sync. Pure substrate consolidation, no behaviour change — concentrating writes and commits in one module gives the project one auditable path for memory mutations. The executor's `_atomic_write_text` is retained as a thin local alias delegating to the choke point.
 - **Single op-parse/normalize module for consolidation (#555).** "Is this a well-formed op?" was answered defensively in four places, each re-deriving the `op`/`operation` and `reason`/`rationale` aliases and the `isinstance`/nested-list defense: `runner._consolidate_project` (extract + `json_repair` + filter), `executor.apply_operations` (`op.get("op","KEEP").upper()`), `runner._proposed_changes`, and `write_time._translate_ops`. These now share `palinode/consolidation/op_parse.py` — `parse_operations(raw_text)` (a faithful extraction of the runner JSON-array parse + repair + filter, behaviour-preserving) plus canonical `op_kind(op)` / `op_reason(op)` accessors. A free win falls out: because `op_kind` coerces with `str()` before `.upper()`, a non-string `op` value no longer crashes on `.upper()` — it's stringified, matches no op type, and is skipped, closing one of the #311 executor validation gaps (its previously-`xfail`'d test in `test_executor_ops_coverage` is now a real pass). New `tests/test_op_parse.py`. Pairs with #554: the proposer's output is now the parser's input.
-- **Injectable propose→apply seam for consolidation (#554).** Consolidation's nondeterministic half (the LLM that proposes ops) and deterministic half (`executor.apply_operations`) met inline, so the only way to test the runner→executor path was to mock `_consolidate_project` wholesale — skipping the real fact-extraction, prompt-building, JSON parse, executor application, and git commit. `_consolidate_project` / `_check_contradictions` now take an injectable `llm_fn` (`(system_prompt, user_prompt) -> (response_text, model_used)`, default = the live `_call_llm_with_fallback`), and `run_consolidation` / `run_nightly` thread it through. A fake adapter returning canned op-JSON drives the whole real pipeline deterministically. The LLM caller stays in `runner` (not relocated to a separate module) so the `runner.get_ollama_client` patch seam that `test_fallback` relies on is undisturbed. Behaviour unchanged; new `tests/test_proposer_seam.py` covers inject→real-parse, the no-facts short-circuit (LLM never called), and a full `run_consolidation`→executor apply with a fake LLM (no wholesale mock).
+- **Injectable planning seam for consolidation (#554).** The model call and `executor.apply_operations` met inline, so the only way to test the runner→executor path was to mock `_consolidate_project` wholesale — skipping the real fact-extraction, prompt-building, JSON parse, operation application, and git commit. `_consolidate_project` / `_check_contradictions` now take an injectable `llm_fn` (`(system_prompt, user_prompt) -> (response_text, model_used)`, default = the live `_call_llm_with_fallback`), and `run_consolidation` / `run_nightly` thread it through. A fake adapter returning canned op-JSON drives the whole real pipeline. The model caller stays in `runner` (not relocated to a separate module) so the `runner.get_ollama_client` patch seam that `test_fallback` relies on is undisturbed. Behaviour unchanged; new `tests/test_proposer_seam.py` covers inject→real-parse, the no-facts short-circuit (model never called), and a full `run_consolidation`→executor apply with a fake model (no wholesale mock).
 - **Hybrid-search ranking pipeline extracted into a pure `ranker` module (#553).** `store.search_hybrid` was a ~190-line method with seven scoring stages (RRF fusion → demand-decay re-rank → human-priority nudge → ambient-context boost → daily penalty → per-file dedup → threshold/date) inlined between the DB retrievals and the recall/freshness write-back, so a ranker-tuning change could only be exercised through the full hybrid path against a real SQLite + monkeypatched config globals. The scoring pipeline now lives in `palinode/core/ranker.py` as a pure `rank_hybrid(vec_results, fts_results, …)` that touches no database, filesystem, or network — `search_hybrid` stays the orchestrator (two retrievals, resolving `context_files` from the entity index, then `check_freshness` + `record_recall` on the ranked output). The decay/predicate helpers (`effective_importance`, `score_with_decay`, `_is_daily_file`, `_priority_value`) moved with it and are re-exported from `store` so `store.effective_importance` / `store._is_daily_file` keep resolving. The `_PRIORITY_RANK_WEIGHT` knob stays on `store` (passed into the ranker) so `patch.object(store, "_PRIORITY_RANK_WEIGHT", …)` still tunes ordering. Behaviour is unchanged (the end-to-end priority/decay/dedup tests pass untouched); new `tests/test_ranker.py` exercises RRF fusion, threshold, top_k, dedup, context boost, daily penalty, and the date window directly on plain dicts. Also drops a now-dead `import math` from `store.py`.
 - **`palinode/api/routers/_shared.py` resolved into focused modules (#556, #314 follow-up).** The 742-line `_shared.py` grab-bag — which had no interface of its own (routers imported individual private helpers à la carte) — is split into five cohesive modules under `palinode/api/`: `path_safety.py` (memory-path resolution + traversal/symlink guards, #284), `rate_limit.py` (the per-IP request gate + request-size cap), `memory_write.py` (save-path entity/slug/wiki-footer/source normalization + the description-eligibility predicate), `search_helpers.py` (date/type/priority filters, snippet windowing, similarity + over-fetch rerank + session-end dedup), and `_util.py` (the genuinely cross-cutting leftovers: sanitized-500, UTC clock, CWD→slug, retrieval logger, reindex/auto-summary state). The two byte-identical cosine implementations (`_cosine` / `_cosine_similarity`) are collapsed to one with a back-compat alias. All ~10 router/UI importers are repointed to the new modules and `_shared.py` is deleted; every name stays importable from `palinode.api.server` via repointed re-exports, so existing `from palinode.api.server import _X` call sites (and tests) are unchanged. No public route or behavior change.
 - **`palinode/api/server.py` split into router modules (#314).** Ten routes (`/list`, `/save`, `/session-end`, `/generate-summaries`, `/search`, `/search-associative`, `/dedup-suggest`, `/orphan-repair`, `/cluster-neighbors`, `/topic-coverage`) and their Pydantic models / helper functions are extracted into `palinode/api/routers/memory.py`, `palinode/api/routers/search.py`, and `palinode/api/routers/_shared.py`. The public route surface is unchanged; all symbols remain importable from `palinode.api.server` via re-exports.
@@ -695,7 +769,7 @@ Bug-fix release with small UX additions. Brings the public repo up to date with 
 
 ## [0.5.0] — 2026-04-10
 
-First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and LLM-driven consolidation applied by a deterministic executor.
+First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and model-assisted consolidation applied as validated operations.
 
 ### Added
 
@@ -706,7 +780,7 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 - File watcher daemon with debounced reindex and fault isolation
 
 **Consolidation and compaction**
-- Deterministic executor applying `KEEP` / `UPDATE` / `MERGE` / `SUPERSEDE` / `ARCHIVE` operations proposed by an LLM (LLM proposes structured operations, deterministic Python applies them — keeps every edit reviewable in git)
+- Schema-validated consolidation operations applied as reviewable git commits
 - Weekly full-corpus consolidation with configurable LLM backend
 - Nightly lightweight consolidation pass (`--nightly` flag) bounded to `UPDATE`/`SUPERSEDE` for safer incremental updates
 - Model fallback chains — primary → fallback → fallback on timeout or HTTP error

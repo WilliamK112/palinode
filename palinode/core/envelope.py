@@ -1,4 +1,4 @@
-"""Tool-envelope markup guard for write-path string parameters (#682, #697).
+"""Tool-envelope markup guard for write-path string parameters.
 
 A string parameter on a write surface should carry *content*, never the *tool
 envelope* that delivered it. Two entry points put an envelope there:
@@ -89,7 +89,7 @@ def envelope_complaint(
     remediation: str = "",
 ) -> str | None:
     """Return an actionable rejection message when ``text`` carries a tool
-    envelope rather than content, else ``None`` (#682).
+    envelope rather than content, else ``None``.
 
     Args:
         text: the string parameter's value.
@@ -130,15 +130,24 @@ def envelope_complaint(
         return None
 
     sentences = [
+        # The offender is rendered in backticks, not repr. A rejection message
+        # is the thing a caller most wants to quote — into a retry summary, an
+        # issue, a session note — and repr's bare quotes leave the fragment
+        # unprotected, so quoting the message re-trips the guard and the retry
+        # fails identically. Six consecutive failures were once diagnosed as a
+        # malformed tool call for exactly this reason: the loop is
+        # indistinguishable from a deterministic transport fault. Backticks are
+        # already the documented escape hatch, so a message that uses them is
+        # safe to paste back verbatim.
         f"Refusing to store `{field}`: it contains tool-envelope markup "
-        f"{why} — {offender.group(0)!r}.",
+        f"{why} — `{offender.group(0)}`.",
         "Palinode fails loud here rather than indexing an envelope as if it "
         "were memory.",
     ]
     if remediation:
         sentences.append(remediation)
     sentences.append(
-        "If the markup really is part of the note, put it in a fenced code "
-        "block or backticks and it will pass."
+        "If the markup really is part of the note, wrap it in backticks on a "
+        "single line, or put it in a fenced code block, and it will pass."
     )
     return " ".join(sentences)

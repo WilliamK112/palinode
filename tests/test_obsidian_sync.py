@@ -1,4 +1,4 @@
-"""Tests for `palinode obsidian-sync` — Deliverable E of #210.
+"""Tests for `palinode obsidian-sync` — Deliverable E of the Obsidian integration MVP.
 
 Covers:
 - File with ``entities:`` frontmatter and no body wikilinks → would-update
@@ -9,7 +9,7 @@ Covers:
 - ``--include "decisions/*.md"`` scopes to only matching files
 - File with no frontmatter → unchanged (nothing to backfill)
 - Empty ``memory_dir`` → no errors, summary reports zero
-- Directory structure: files in skip_dirs (.obsidian, archive, logs, .palinode)
+- Directory structure: files in skip_dirs (.obsidian, archive, logs,.palinode)
   are excluded
 - Non-zero exit code when a file fails to parse (simulated via unreadable file)
 
@@ -18,11 +18,8 @@ for isolated filesystem fixtures.
 """
 from __future__ import annotations
 
-import os
-import stat
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main

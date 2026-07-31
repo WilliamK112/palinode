@@ -1,4 +1,4 @@
-"""Frontmatter backfill (#309) — fill missing required fields, honestly.
+"""Frontmatter backfill — fill missing required fields, honestly.
 
 138 memory files on the reference corpus predate required-field validation and
 are missing ``id`` / ``type`` / ``category`` — the three fields
@@ -494,11 +494,11 @@ def run_backfill(
 ) -> dict[str, Any]:
     """Plan — and optionally apply — the frontmatter backfill.
 
-    Dry-run is the default: ``apply=False`` computes and returns the full plan
-    without opening a file for writing. With ``apply=True`` each planned file is
-    written through the ``git_tools.write_memory_file`` mutation choke point and
-    committed on its own via ``commit_memory_file`` (one mutation, one commit —
-    #567), carrying the derivation of every value in the commit body.
+    Dry-run is the default: ``apply=False`` computes and returns the full plan without
+    opening a file for writing. With ``apply=True`` each planned file is written through
+    the ``git_tools.write_memory_file`` mutation choke point and committed on its own
+    via ``commit_memory_file`` (one mutation, one commit — the memory-file mutation
+    choke point), carrying the derivation of every value in the commit body.
 
     Args:
         base_dir: Memory directory to operate on. Defaults to ``config.memory_dir``.

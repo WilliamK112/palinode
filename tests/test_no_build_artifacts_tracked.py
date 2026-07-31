@@ -1,9 +1,10 @@
-"""Regression guard for #295: build/ and dist/ must not be tracked in git.
+"""Regression guard for the build/dist tracking cleanup: build/ and dist/ must not be
+tracked in git.
 
 These directories are rebuilt fresh by the publish pipeline on tag push,
 so tracking them only causes staleness, bloat, and accidental public leaks
 (they were the largest leak category caught by the 2026-05-01 scrub audit
-that triggered the #292 belt-and-suspenders path scrub).
+that triggered the belt-and-suspenders path scrub).
 """
 from __future__ import annotations
 

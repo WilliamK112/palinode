@@ -4,10 +4,9 @@ The single home for "turn a memory file's content into a one-line
 description/summary, with a fallback chain and deferred-retry semantics."
 
 History: this logic was duplicated verbatim in ``palinode/api/server.py`` and
-``palinode/api/routers/_shared.py`` after the #314 router split — the live
+``palinode/api/routers/_shared.py`` after the router split — the live
 ``/generate-summaries`` backfill straddled both copies (it reached the
-*injectors* via ``_shared`` and the *generators* via the server module). #552
-collapsed both into this module. ``server.py`` and ``_shared.py`` now re-export
+*injectors* via ``_shared`` and the *generators* via the server module). The enrichment-module consolidation collapsed both into this module. ``server.py`` and ``_shared.py`` now re-export
 these names, so:
 
 - ``patch("palinode.api.server._generate_description")`` in tests still rebinds
@@ -17,15 +16,14 @@ these names, so:
 
 The module-level ``_DESCRIPTION_DEFERRED`` sentinel and ``_fallback_state`` dict
 are shared by reference through those re-exports — identity comparisons and
-in-place ``_fallback_state["remaining"] = ...`` mutation both hold across
+in-place ``_fallback_state["remaining"] =...`` mutation both hold across
 surfaces.
 
-Placement note: both ``_generate_description`` and ``_generate_summary`` are
-reached *only* from the watcher-driven ``/generate-summaries`` backfill
-post-#405, never the ``/save`` hot path — that structural fact (not a flag) is
-what keeps Sonnet/shim egress batched to the watcher cadence and ``/save``
-latency untouched (#464, Option B).
-"""
+Placement note: both ``_generate_description`` and ``_generate_summary`` are reached
+*only* from the watcher-driven ``/generate-summaries`` backfill after the async
+auto-summary change, never the ``/save`` hot path — that structural fact (not a flag) is
+what keeps Sonnet/shim egress batched to the watcher cadence and ``/save`` latency
+untouched (Option B). """
 
 import json
 import logging
@@ -83,12 +81,12 @@ _fallback_state = {"remaining": 0}
 
 
 def _chat_fallback_oneliner(prompt: str, max_chars: int) -> "str | None":
-    """Walk ``auto_summary.llm_fallbacks`` via the OpenAI-compat chat path (#464).
+    """Walk ``auto_summary.llm_fallbacks`` via the OpenAI-compat chat path.
 
     Invoked only when the local native ``generate()`` CHAT call browns out
     (OllamaTimeout / OllamaCircuitOpen). Reuses the same
     :meth:`OllamaClient.chat_completions` plumbing consolidation uses, so nothing
-    new is built in the client. ``generate()`` returns ``{"response": ...}`` while
+    new is built in the client. ``generate()`` returns ``{"response":...}`` while
     ``chat_completions()`` returns the content string directly — the prompt is
     wrapped as a single user message to bridge the shape.
 
@@ -97,12 +95,12 @@ def _chat_fallback_oneliner(prompt: str, max_chars: int) -> "str | None":
     fails (callers then keep their existing degrade behavior — deferral for
     description, "" for summary).
 
-    Placement note: both enrichment functions are reached *only* from the
-    watcher-driven ``/generate-summaries`` backfill post-#405, never the ``/save``
-    hot path. That structural fact — not a flag — is what makes this Option B from
-    #464: Sonnet egress is batched to the watcher cadence and ``/save`` latency is
-    untouched whether the local host is healthy or down.
-    """
+    Placement note: both enrichment functions are reached *only* from the watcher-driven
+    ``/generate-summaries`` backfill after the async auto-summary change, never the
+    ``/save`` hot path. That structural fact — not a flag — is what makes this Option B
+    from the OpenAI-compat chat fallback: Sonnet egress is batched to the watcher
+    cadence and ``/save`` latency is untouched whether the local host is healthy or
+    down. """
     fallbacks = config.auto_summary.llm_fallbacks
     if not fallbacks:
         return None
@@ -148,10 +146,10 @@ def _chat_fallback_oneliner(prompt: str, max_chars: int) -> "str | None":
 def _chat_primary_oneliner(prompt: str, max_chars: int, timeout: float) -> str:
     """Call the configured CHAT *primary* and return a cleaned one-liner ("" if empty).
 
-    The wire protocol is selected by ``config.auto_summary.api`` (#464):
+    The wire protocol is selected by ``config.auto_summary.api``:
 
     - ``"ollama"`` (default): Ollama-native ``/api/generate`` against
-      ``auto_summary.model`` on the CHAT host — the #336/#338 behavior.
+      ``auto_summary.model`` on the CHAT host — the behaviour established by the graceful-degrade auto-description work.
     - ``"openai"``: an OpenAI-compatible ``/v1/chat/completions`` endpoint at
       ``auto_summary.ollama_url`` (LM Studio / vLLM / a shim) — e.g. an MLX qwen
       served by LM Studio on a Mac Studio.
@@ -296,10 +294,11 @@ _LLM_PREAMBLE_RE = re.compile(
 
 
 def _clean_llm_oneliner(raw: str, max_chars: int) -> str:
-    """Normalise a one-line LLM description/summary (#338 Phase 2 / auto_summary UX).
+    """Normalise a one-line LLM description/summary (Phase 2 of the Ollama traffic-surface
+hardening / auto_summary UX).
 
     Small instruct models routinely (a) prepend meta-preamble ("The memory
-    describes ...", "Here's the summary:") despite the "no preamble" instruction,
+    describes...", "Here's the summary:") despite the "no preamble" instruction,
     and (b) overshoot the character cap — which the previous hard ``[:max]`` slice
     chopped mid-word. This strips the common preamble and clips to a clean
     sentence/word boundary within ``max_chars`` rather than truncating mid-token.
@@ -408,7 +407,7 @@ def _inject_summary(file_path: str, summary: str) -> None:
 
 
 def _inject_description(file_path: str, description: str) -> None:
-    """Insert a ``description:`` line into a file's YAML frontmatter (#405).
+    """Insert a ``description:`` line into a file's YAML frontmatter.
 
     Mirror of :func:`_inject_summary`. Used by the /generate-summaries backfill
     to land the deferred auto-description after /save returns. Re-reads the file

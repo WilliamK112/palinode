@@ -1,4 +1,4 @@
-"""#693 step 2: the human-curated alias map, resolved at query time.
+"""the entity-canonicalization work step 2: the human-curated alias map, resolved at query time.
 
 Detection (`core.lint.check_entity_aliases`) hands a human candidates. This is
 what a human does with the answer: writes it down once, and lookups widen.

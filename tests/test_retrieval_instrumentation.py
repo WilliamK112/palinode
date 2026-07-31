@@ -1,4 +1,4 @@
-"""Tests for retrieval-event instrumentation — issue #256.
+"""Tests for retrieval-event instrumentation — the retrieval-event instrumentation.
 
 Covers:
 - RetrievalLogger emits JSONL events on record() / record_search_results() / record_file_read()
@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -91,7 +90,7 @@ class TestRetrievalLogger:
     def test_creates_log_directory(self, memory_dir: Path):
         audit_dir = memory_dir / ".audit"
         audit_dir.rmdir()  # remove it so we can test auto-creation
-        rl = RetrievalLogger(str(memory_dir), enabled=True)
+        _rl = RetrievalLogger(str(memory_dir), enabled=True)
         assert audit_dir.is_dir()
 
     def test_record_writes_entry(self, rl: RetrievalLogger, memory_dir: Path):
@@ -278,7 +277,6 @@ class TestRetrievalStatsCLI:
     def test_no_log_shows_helpful_message(self, memory_dir: Path, monkeypatch):
         monkeypatch.setenv("PALINODE_DIR", str(memory_dir))
         # Re-patch config.memory_dir on the module level since config is a singleton
-        import palinode.cli.retrieval_stats as rs_mod
         import palinode.core.config as cfg_mod
         original_dir = cfg_mod.config.memory_dir
         cfg_mod.config.memory_dir = str(memory_dir)

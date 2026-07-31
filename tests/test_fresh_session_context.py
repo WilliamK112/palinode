@@ -1,4 +1,5 @@
-"""#186 — fresh-session context validation, end-to-end (ADR-012 Layer 4).
+"""the validate that context loads correctly work — fresh-session context validation,
+end-to-end (ADR-012 Layer 4).
 
 The cross-session test gap the issue named: unit coverage exists for the
 digest builder, the endpoint, and each surface in isolation
@@ -29,7 +30,6 @@ loop the issue asked to close).
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -98,8 +98,8 @@ def populated_store(tmp_path, monkeypatch):
 
     # Global core memories (not project-scoped — core is a global section).
     _seed(tmp_path, "insights/core-executor.md",
-          {"type": "Insight", "core": True, "title": "Deterministic executor",
-           "description": "Ops applied deterministically, not by the LLM"})
+          {"type": "Insight", "core": True, "title": "Validated operations",
+           "description": "Ops are schema-checked before application"})
     _seed(tmp_path, "decisions/adopt-rrf.md",
           {"type": "Decision", "core": True, "title": "Adopt RRF fusion",
            "description": "Hybrid BM25 + vector fused with RRF"})
@@ -211,7 +211,7 @@ async def test_session_init_renders_real_digest(populated_store, monkeypatch):
     text = result[0].text
 
     assert "## Session context: project/alpha" in text
-    assert "Deterministic executor" in text          # a core memory
+    assert "Validated operations" in text            # a core memory
     assert "Alpha chunk schema v2" in text            # an alpha decision
     assert "Wire the CLI renderer" in text            # the open action item
     assert "Beta-only decision" not in text           # no distractor bleed

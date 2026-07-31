@@ -1,4 +1,4 @@
-"""Tests for the Layer-2 wiki-contract auto-footer in palinode_save (#210).
+"""Tests for the Layer-2 wiki-contract auto-footer in palinode_save.
 
 Covers:
 - entities provided with no body wikilinks → footer appended
@@ -17,11 +17,9 @@ as ``tests/test_reindex_concurrency.py``) and inspect the written file.
 """
 from __future__ import annotations
 
-import re
 from unittest.mock import patch
 
 import pytest
-import yaml
 from fastapi.testclient import TestClient
 
 from palinode.api.server import _WIKI_FOOTER_MARKER, _apply_wiki_footer, app

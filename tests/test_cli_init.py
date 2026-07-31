@@ -13,7 +13,6 @@ from pathlib import Path
 from click.testing import CliRunner
 
 import subprocess
-import tempfile
 
 from palinode.cli import main
 from palinode.cli.init import (
@@ -45,10 +44,9 @@ def test_slugify_falls_back_to_project():
 def test_wrap_command_is_deterministic():
     """/wrap must call palinode_push then palinode_session_end, never palinode_save.
 
-    Since #353, /wrap is a two-step deterministic command: Step 1 push,
-    Step 2 session-end.  The old "Do not call any other tool" invariant no
-    longer holds — /wrap deliberately calls two tools in order.
-    """
+    Since the wrap push-before-archive change, /wrap is a two-step deterministic
+    command: Step 1 push, Step 2 session-end. The old "Do not call any other tool"
+    invariant no longer holds — /wrap deliberately calls two tools in order. """
     body = WRAP_COMMAND_BODY
     assert "palinode_session_end" in body
     assert "palinode_push" in body, "wrap command must include palinode_push step (#353)"
@@ -68,7 +66,7 @@ def test_wrap_command_is_deterministic():
 
 
 def test_wrap_light_has_step0_git_preflight():
-    """#618: the light /wrap opens with a Step 0 git pre-flight that OFFERS to
+    """the light /wrap work: the light /wrap opens with a Step 0 git pre-flight that OFFERS to
     land uncommitted/unmerged work before archiving — offer, never act."""
     body = WRAP_COMMAND_BODY
     # Step 0 is present and precedes the existing push/session-end steps.
@@ -107,12 +105,12 @@ def test_hook_script_uses_slurp_extraction():
     """Both MSG_COUNT and FIRST_PROMPT must use `jq -s` (slurp) extraction.
     The earlier piped patterns (`jq | grep -c '.'` and `jq | head -1 | cut`)
     were fragile under `set -o pipefail`: downstream early-exit triggers
-    SIGPIPE on jq. #151 patched MSG_COUNT with `|| true`; #267 + #257 moved
+    SIGPIPE on jq. The SessionEnd minimum-message fix patched MSG_COUNT with `|| true`; the hook-robustness fix + the transcript-extraction fix moved
     both to slurp, which has no early-exit downstream consumer and thus
     no SIGPIPE class to swallow. Guard against regression.
 
     Asserted on the *slurp + selector* shape rather than one literal string:
-    the FIRST_PROMPT filter grew a harness-markup strip in #682 and is now
+    the FIRST_PROMPT filter grew a harness-markup strip in the tool-envelope validation and is now
     multi-line, but the property this guard exists for — `jq -s`, no piped
     early-exit consumer — is unchanged."""
     # Old fragile patterns must be absent
@@ -175,7 +173,7 @@ def test_hook_script_counts_user_messages_correctly(tmp_path):
 def test_hook_script_first_prompt_extracts_correctly(tmp_path):
     """Multi-message transcript ⇒ FIRST_PROMPT extracts the FIRST user message
     and survives `set -euo pipefail` cleanly (no SIGPIPE because slurp has
-    no early-exit downstream consumer). Regression guard for #267."""
+    no early-exit downstream consumer). Regression guard for the hook-robustness fix."""
     transcript = tmp_path / "multi.jsonl"
     transcript.write_text(
         '{"type":"user","message":{"content":"first message — must surface"}}\n'
@@ -205,7 +203,7 @@ def test_hook_script_has_reason_case_guard():
     no `matcher`, so this script-side guard is the only thing keeping
     unwanted reasons (e.g. `resume`, `bypass_permissions_disabled`) from
     triggering captures. If this assertion breaks because someone removed
-    the guard, you have re-introduced #149."""
+    the guard, you have re-introduced the SessionEnd hook README fix."""
     assert "ALLOWED_REASONS=" in HOOK_SCRIPT
     assert "PALINODE_HOOK_REASONS:-" in HOOK_SCRIPT
     # case-statement word-boundary match on space-padded allowlist
@@ -218,7 +216,7 @@ def test_hook_script_default_reason_allowlist_is_broad():
     Skips `resume` (old session content typically already saved before resume)
     and `bypass_permissions_disabled` (state change, not lifecycle end). If
     you tighten or broaden the default, update both this assertion and the
-    rationale captured in #149's resolution comment."""
+    rationale captured in the resolution comment on the SessionEnd hook README fix."""
     # The default value should appear verbatim in the script
     assert ":-clear logout prompt_input_exit other}" in HOOK_SCRIPT
     # And NOT include the two we deliberately skip
@@ -254,7 +252,7 @@ def _run_hook(tmp_path, transcript_text, *, env=None, reason="clear",
     )
     (stub_dir / "curl").chmod(0o755)
 
-    real_jq = subprocess.run(["command", "-v", "jq"], capture_output=True,
+    _real_jq = subprocess.run(["command", "-v", "jq"], capture_output=True,
                              text=True, executable="/bin/bash").stdout.strip()
     payload = json.dumps({
         "transcript_path": str(transcript),
@@ -379,7 +377,7 @@ def test_init_creates_all_files(tmp_path: Path):
 def test_init_settings_include_worktree_allow_rules(tmp_path: Path):
     """Scaffolded settings.json pre-approves the git-worktree cleanup commands so
     agents don't hit the auto-mode permission classifier reclaiming stale
-    worktrees (#448)."""
+    worktrees."""
     from palinode.cli.init import WORKTREE_ALLOW_RULES
 
     runner = CliRunner()
@@ -504,7 +502,7 @@ def test_init_merges_into_existing_settings_json(tmp_path: Path):
 
 def test_init_registers_both_hooks_idempotently(tmp_path: Path):
     """A double init registers SessionStart + SessionEnd exactly once each
-    (#261: the session-start hook rides the same settings merge as session-end)."""
+    (the ship palinode-session-start.sh hook for claude code work: the session-start hook rides the same settings merge as session-end)."""
     runner = CliRunner()
     runner.invoke(main, ["init", "--dir", str(tmp_path)])
     runner.invoke(main, ["init", "--dir", str(tmp_path)])
@@ -523,7 +521,7 @@ def test_init_registers_both_hooks_idempotently(tmp_path: Path):
 
 
 def test_init_upgrades_sessionend_only_settings(tmp_path: Path):
-    """A settings.json scaffolded by a pre-#261 init (SessionEnd only) gains the
+    """A settings.json scaffolded by a before the ship palinode-session-start.sh hook for claude code work init (SessionEnd only) gains the
     SessionStart registration on re-run without duplicating SessionEnd."""
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -564,7 +562,7 @@ def test_init_scope_flags(tmp_path: Path):
 
 
 def test_init_never_scaffolds_save_or_ps(tmp_path: Path):
-    """#631: /wrap is the sole lifecycle command. Neither the command nor the
+    """the /wrap-only init change: /wrap is the sole lifecycle command. Neither the command nor the
     skill form of /save //ps may be written, in any scope."""
     runner = CliRunner()
     result = runner.invoke(main, [

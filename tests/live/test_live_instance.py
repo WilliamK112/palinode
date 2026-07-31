@@ -18,8 +18,6 @@ Requires: a running palinode-api with Ollama reachable.
 """
 import os
 import time
-import json
-import hashlib
 import pytest
 import httpx
 
@@ -216,7 +214,7 @@ class TestSearch:
         # Poll for up to 30s — watcher needs to detect file, call Ollama
         # for embedding, and upsert into the index
         found = False
-        for attempt in range(6):
+        for _attempt in range(6):
             time.sleep(5)
             resp = client.post("/search", json={"query": unique, "limit": 3})
             results = resp.json()
@@ -290,7 +288,7 @@ class TestRateLimiting:
     def test_search_rate_limit(self):
         """Exceed search rate limit (default 100/min)."""
         blocked = False
-        for i in range(105):
+        for _i in range(105):
             resp = client.post("/search", json={"query": "rate limit test", "limit": 1})
             if resp.status_code == 429:
                 blocked = True

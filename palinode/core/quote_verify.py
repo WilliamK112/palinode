@@ -1,22 +1,22 @@
-"""Source-quote integrity verification (provenance Q2, #459).
+"""Source-quote integrity verification (provenance Q2, the quote-hash source-anchor work).
 
-The deterministic, offline, network-free core of the quote-drift check
-requested in public issue #65 (Q2): given a claim that cites a quote from a
-source, confirm the quote (a) is internally consistent with its recorded hash
-and (b) still appears in the cited source. This is the analog of yopedia's
-Phase C anchor-verifier lint.
+The deterministic, offline, network-free core of the quote-drift check requested in
+public issue the OpenClaw-profile migration plan (Q2): given a claim that cites a quote
+from a source, confirm the quote (a) is internally consistent with its recorded hash and
+(b) still appears in the cited source. This is the analog of yopedia's Phase C
+anchor-verifier lint.
 
-Scope boundary: this module is the *primitive* only — pure verification logic
-plus a thin file reader over the proposed ``sources:`` anchor shape. It does
-NOT define the capture path or commit the live frontmatter schema (that needs
-sign-off; see #459). It is intentionally a plain integrity check — verifying
+Scope boundary: this module is the *primitive* only — pure verification logic plus a
+thin file reader over the proposed ``sources:`` anchor shape. It does NOT define the
+capture path or commit the live frontmatter schema (that needs sign-off; see the
+quote-hash source-anchor work). It is intentionally a plain integrity check — verifying
 that a cited quote still matches its source involves no cryptographic signing or
 attestation, so it has no dependency on the separate memory-attestation work.
 
-Proposed anchor shape (per #459, not yet a captured schema)::
+Proposed anchor shape (per the quote-hash source-anchor work, not yet a captured schema)::
 
     sources:
-      - ref: research/some-paper.md     # path under memory_dir
+      - ref: research/some-paper.md # path under memory_dir
         quote: "the exact cited passage"
         quote_hash: "<md5 of normalize_quote(quote)>"
 """

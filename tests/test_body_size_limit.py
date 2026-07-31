@@ -1,4 +1,5 @@
-"""Tests for the streaming body-size limit middleware (#284 / Tier B #3).
+"""Tests for the streaming body-size limit middleware (the pre-release gate hotfix
+bundle / Tier B #3).
 
 The legacy middleware only inspected the ``Content-Length`` header. The new
 implementation tallies bytes from the ASGI ``receive`` callable so it cannot
@@ -138,7 +139,7 @@ async def test_streaming_body_exceeds_limit_returns_413():
 @pytest.mark.asyncio
 async def test_streaming_stops_reading_once_over_limit():
     """The middleware must short-circuit **mid-stream** — once the running byte
-    total crosses the limit it must NOT keep reading the rest of the body (#297).
+    total crosses the limit it must NOT keep reading the rest of the body.
 
     The 2026-05-01 smoke test only proved a 413 came back; it never proved the
     413 fired *before the full body was received*. Here an instrumented receive
@@ -199,7 +200,7 @@ def live_server(monkeypatch):
     mid-upload — it raises "error parsing the body" when the app answers 413
     before the streamed request finishes. A real socket + genuine
     ``Transfer-Encoding: chunked`` is the only faithful reproduction of the
-    chunked-bypass the smoke test failed to exercise (#297).
+    chunked-bypass the smoke test failed to exercise.
     """
     import uvicorn
 

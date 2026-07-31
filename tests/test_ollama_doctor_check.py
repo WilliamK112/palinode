@@ -1,4 +1,5 @@
-"""Tests for the ollama_circuit_health doctor check (#338 Phase 5).
+"""Tests for the ollama_circuit_health doctor check (Phase 5 of the Ollama
+traffic-surface hardening).
 
 The check reads OllamaClient.metrics() in-process and maps circuit/latency state
 to a CheckResult severity: open circuit → error, p95 > 5s → warn, else info/pass.

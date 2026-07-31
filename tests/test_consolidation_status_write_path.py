@@ -1,4 +1,4 @@
-"""The consolidation **write** path for status documents (#679).
+"""The consolidation **write** path for status documents.
 
 ``test_consolidation_dry_run.py`` covers the preview path only, and the gap
 between preview and write is exactly what shipped the defect: ``--dry-run``
@@ -7,7 +7,7 @@ rendered rationales through ``op_reason()`` while the writer hand-rolled
 previewed correctly and then wrote blank. These are the write-path counterparts.
 
 Every test drives the real runner→executor→status-write path through the
-injectable ``llm_fn`` proposer seam (#554) against a real memory dir + real
+injectable ``llm_fn`` proposer seam against a real memory dir + real
 SQLite under ``tmp_path`` — no mocked store, no mocked ``_consolidate_project``.
 """
 
@@ -83,7 +83,7 @@ def _log_lines(text: str) -> list[str]:
 
 
 def _frontmatter(text: str) -> dict:
-    """Strict parse — the whole point of #470 is that this must not raise."""
+    """Strict parse — the whole point of the status-doc YAML repair is that this must not raise."""
     match = status_doc.FRONTMATTER_RE.match(text)
     assert match is not None, "status doc lost its frontmatter"
     return yaml.safe_load(match.group(1))
@@ -180,7 +180,7 @@ def test_preview_and_write_agree_on_rationale(tmp_path, monkeypatch):
 
 def test_frontmatter_matches_body_after_run(tmp_path, monkeypatch):
     """Stale mem0-backfill counts must be reconciled, and the result must
-    strict-parse (#470)."""
+    strict-parse."""
     target = _seed(tmp_path, monkeypatch)
     ops = [{"op": "UPDATE", "id": "f1", "new_text": "[2026-06-02] Revised fact.",
             "reason": "Daily note supersedes it."}]

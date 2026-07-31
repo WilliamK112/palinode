@@ -67,7 +67,7 @@ def test_template_service_section_keys(template_path: Path) -> None:
 @pytest.mark.parametrize("template_path", TEMPLATES, ids=[t.name for t in TEMPLATES])
 def test_template_install_wantedby(template_path: Path) -> None:
     """[Install] WantedBy is templated so the scope (user→default.target,
-    system→multi-user.target) is chosen by install.sh at render time (#252)."""
+    system→multi-user.target) is chosen by install.sh at render time."""
     raw = template_path.read_text()
     assert "WantedBy=${SYSTEMD_WANTED_BY}" in raw, (
         f"{template_path.name} should template WantedBy via ${{SYSTEMD_WANTED_BY}}"
@@ -241,7 +241,7 @@ def test_install_sh_help_exits_zero() -> None:
 def test_install_sh_documents_watcher_unit_name() -> None:
     """install.sh --help must document WATCHER_UNIT_NAME so an existing deploy
     whose watcher unit is named differently (e.g. palinode-indexer) can be
-    reconciled idempotently rather than duplicated (#252)."""
+    reconciled idempotently rather than duplicated."""
     result = subprocess.run(
         ["bash", str(INSTALL_SH), "--help"],
         capture_output=True,
@@ -267,7 +267,7 @@ def test_install_sh_maps_watcher_unit_name() -> None:
 
 
 def test_readme_documents_watcher_unit_name() -> None:
-    """README must document the WATCHER_UNIT_NAME variable (#252)."""
+    """README must document the WATCHER_UNIT_NAME variable."""
     assert "WATCHER_UNIT_NAME" in README.read_text(), (
         "README.md should document WATCHER_UNIT_NAME"
     )
@@ -276,7 +276,7 @@ def test_readme_documents_watcher_unit_name() -> None:
 # ── 7. system scope ────────────────────────────────────────────────────
 
 def test_install_sh_documents_system_flag() -> None:
-    """install.sh --help must document the --system flag (#252). Production hosts
+    """install.sh --help must document the --system flag. Production hosts
     (e.g. the dedicated palinode host) run system-scope units in
     /etc/systemd/system under multi-user.target; without --system the installer
     could only ever write --user units and so could not reconcile them."""
@@ -292,7 +292,7 @@ def test_install_sh_documents_system_flag() -> None:
 def test_install_sh_system_scope_targets_etc() -> None:
     """In --system scope install.sh must write to /etc/systemd/system, render
     WantedBy=multi-user.target, drop the `--user` arg from systemctl, and require
-    root. User scope must keep ~/.config/systemd/user + default.target (#252)."""
+    root. User scope must keep ~/.config/systemd/user + default.target."""
     raw = INSTALL_SH.read_text()
     assert "/etc/systemd/system" in raw, "system scope must target /etc/systemd/system"
     assert 'SYSTEMD_WANTED_BY="multi-user.target"' in raw, (
@@ -314,7 +314,7 @@ def test_install_sh_system_scope_targets_etc() -> None:
 )
 def test_install_sh_rejects_system_without_root(monkeypatch) -> None:
     """Running --system as a non-root user must fail fast with a root hint,
-    rather than silently writing nothing or erroring obscurely (#252).
+    rather than silently writing nothing or erroring obscurely.
 
     Skips if the test runner is already root (CI containers sometimes are).
     """
@@ -340,7 +340,7 @@ def test_install_sh_rejects_system_without_root(monkeypatch) -> None:
 @pytest.mark.parametrize("template_path", TEMPLATES, ids=[t.name for t in TEMPLATES])
 def test_system_scope_renders_multi_user_target(template_path: Path) -> None:
     """With SYSTEMD_WANTED_BY=multi-user.target the rendered unit must carry
-    WantedBy=multi-user.target and leave no unresolved tokens (#252)."""
+    WantedBy=multi-user.target and leave no unresolved tokens."""
     env = {**os.environ, **SAMPLE_ENV, "SYSTEMD_WANTED_BY": "multi-user.target"}
     result = subprocess.run(
         ["envsubst"],
@@ -367,7 +367,7 @@ def test_api_template_does_not_hardcode_public_bind_intent() -> None:
     Regression guard for the failed 2026-06-27 reconciliation: the hardcoded
     value forced the app's mandatory-token path, so a token-less network-isolated
     host (which binds 0.0.0.0 behind Tailscale with no token) crash-looped on
-    `REFUSING TO START`. Bind-intent must be a parameter (#252)."""
+    `REFUSING TO START`. Bind-intent must be a parameter."""
     raw = API_TEMPLATE.read_text()
     # Target the Environment= directive specifically — the substring also appears
     # in the explanatory comment, which is fine.
@@ -382,7 +382,7 @@ def test_api_template_does_not_hardcode_public_bind_intent() -> None:
 
 def test_install_sh_defaults_bind_intent_empty() -> None:
     """install.sh must default PALINODE_API_BIND_INTENT to empty so a plain
-    install/reconcile does not force the mandatory-token path (#252)."""
+    install/reconcile does not force the mandatory-token path."""
     raw = INSTALL_SH.read_text()
     assert 'export PALINODE_API_BIND_INTENT="${PALINODE_API_BIND_INTENT:-}"' in raw, (
         "install.sh must default PALINODE_API_BIND_INTENT to empty (token-less default)"
@@ -396,7 +396,7 @@ def test_install_sh_defaults_bind_intent_empty() -> None:
 def test_api_template_empty_bind_intent_is_not_public() -> None:
     """With the default empty PALINODE_API_BIND_INTENT, the rendered API unit must
     NOT set bind-intent to public (the app's value-based check treats empty as
-    not-public, so the API starts without requiring a token) (#252)."""
+    not-public, so the API starts without requiring a token)."""
     env = {**os.environ, **SAMPLE_ENV, "PALINODE_API_BIND_INTENT": ""}
     result = subprocess.run(
         ["envsubst"],

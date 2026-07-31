@@ -3,9 +3,6 @@ import json
 from enum import Enum
 from typing import Any, Optional
 from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.syntax import Syntax
 
 console = Console()
 

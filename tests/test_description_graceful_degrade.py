@@ -1,8 +1,9 @@
-"""Tests for palinode_save auto-description graceful degradation — issue #336.
+"""Tests for palinode_save auto-description graceful degradation — issue the
+graceful-degrade auto-description work.
 
 Covers:
 - _DESCRIPTION_DEFERRED sentinel is returned from _generate_description on timeout
-  (now an OllamaTimeout from the centralized client) AND on circuit-open (#338).
+  (now an OllamaTimeout from the centralized client) AND on circuit-open.
 - On non-timeout failure, _generate_description returns the first-line fallback.
 - /save API returns description_pending: True when description was deferred.
 - /save API does NOT return description_pending when description succeeded.
@@ -10,11 +11,12 @@ Covers:
 - config.auto_summary.describe_timeout_seconds controls the timeout passed to the client.
 - PALINODE_DESCRIBE_TIMEOUT_SECONDS env var overrides the config.
 - The INFO→WARNING level fix for Ollama description failures (audit Q2).
-- _clean_llm_oneliner preamble-strip + clean length-clip (#338 Phase 2 auto_summary UX).
+- _clean_llm_oneliner preamble-strip + clean length-clip (Phase 2 of the Ollama traffic-surface hardening auto_summary UX).
 
-As of #338 Phase 2, _generate_description / _generate_summary route through
-palinode.core.ollama_client.get_ollama_client() rather than calling httpx.post
-directly, so these tests patch the client seam (enrichment.get_ollama_client).
+As of Phase 2 of the Ollama traffic-surface hardening, _generate_description /
+_generate_summary route through palinode.core.ollama_client.get_ollama_client() rather
+than calling httpx.post directly, so these tests patch the client seam
+(enrichment.get_ollama_client).
 
 NOTE: test_api_bearer_auth.py calls importlib.reload(palinode.api.server), which
 rebinds _DESCRIPTION_DEFERRED to a new object(). All sentinel access here goes
@@ -73,7 +75,8 @@ def test_timeout_returns_deferred_sentinel():
 
 
 def test_circuit_open_returns_deferred_sentinel():
-    """#338: a known-bad host (circuit open) also defers, like a timeout."""
+    """the Ollama traffic-surface hardening: a known-bad host (circuit open) also defers,
+like a timeout."""
     p, _ = _patch_client(side_effect=OllamaCircuitOpen("circuit open", role="chat"))
     with p:
         result = _server_mod._generate_description("some content to describe")
@@ -105,7 +108,7 @@ def test_success_returns_llm_string():
 
 
 def test_describe_timeout_and_retries_passed_to_client():
-    """The client must be called with the configured timeout and retries=0 (#336)."""
+    """The client must be called with the configured timeout and retries=0."""
     p, fake = _patch_client(side_effect=OllamaTimeout("t", role="chat"))
     with p:
         with patch.object(config.auto_summary, "describe_timeout_seconds", 3.0):
@@ -221,17 +224,16 @@ def _patch_desc_fallback():
 
 
 class TestSaveDescriptionPending:
-    """#405: description generation is fully deferred off the /save hot path.
+    """the async auto-summary change: description generation is fully deferred off the /save hot path.
 
-    /save never calls _generate_description inline — it sets description_pending
-    for eligible files and the watcher-driven /generate-summaries backfill lands
-    the description later. (Pre-#405, /save called the LLM inline with a #336
-    timeout/circuit-breaker, which still blocked up to describe_timeout_seconds
-    on a warm-but-slow model.)
-    """
+    /save never calls _generate_description inline — it sets description_pending for
+    eligible files and the watcher-driven /generate-summaries backfill lands the
+    description later. (Pre-the async auto-summary change, /save called the LLM inline
+    with the graceful-degrade auto-description work timeout/circuit-breaker, which still
+    blocked up to describe_timeout_seconds on a warm-but-slow model.) """
 
     def test_save_does_not_invoke_generate_description(self, client):
-        """The /save hot path must NOT call the description LLM (#405)."""
+        """The /save hot path must NOT call the description LLM."""
         with _patch_scan(), _patch_embed(), \
                 patch("palinode.api.server._generate_description") as mock_desc:
             res = client.post(
@@ -292,7 +294,7 @@ class TestSaveDescriptionPending:
         mock_desc.assert_not_called()
 
     def test_save_still_returns_200_without_blocking_on_llm(self, client):
-        """/save commits the file and returns 200 with no inline LLM call (#405)."""
+        """/save commits the file and returns 200 with no inline LLM call."""
         with _patch_scan(), _patch_embed(), \
                 patch("palinode.api.server._generate_description") as mock_desc:
             res = client.post(

@@ -11,10 +11,10 @@ paragraph in CLAUDE.md telling a human to check afterwards. That instruction was
 correct and it was followed — and it still depended on somebody remembering, on
 every CHANGELOG-touching merge, forever.
 
-It fired for real: merging main into a release branch produced two `### Fixed`
-headings under `## Unreleased`. Caught by hand, one merge before the release
-that would have shipped it. This test is that check, made mechanical, so the
-next one is caught by CI instead of by luck.
+It fired for real on 2026-07-24: merging main into the branch produced two
+`### Fixed` headings under `## Unreleased`. Caught by hand, one merge before the
+release that would have shipped it. This test is that check, made mechanical, so
+the next one is caught by CI instead of by luck.
 
 Also guards the seeding itself. All five headings are permanently present under
 `## Unreleased` precisely so a branch adds its bullet under an existing heading
@@ -92,5 +92,5 @@ def test_every_unreleased_bullet_sits_under_a_heading() -> None:
     assert not orphans, (
         "Bullet(s) under `## Unreleased` but above the first `###` heading — they "
         "belong to no bucket and would be lost when the section becomes release "
-        f"notes:\n  " + "\n  ".join(orphans)
+        "notes:\n  " + "\n  ".join(orphans)
     )

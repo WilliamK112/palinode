@@ -1,6 +1,5 @@
 import pytest
 import os
-import yaml
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 from palinode.api.server import app
@@ -66,7 +65,7 @@ def test_save_with_mcp_source(mock_memory_dir):
         assert "source: mcp" in content
 
 def test_save_defaults_source_to_cli(mock_memory_dir):
-    """ADR-010 / #167: when --source is not passed, the body field is None
+    """ADR-010: when --source is not passed, the body field is None
     (the X-Palinode-Source header carries attribution; the API resolves it).
     """
     runner = CliRunner()
@@ -89,7 +88,7 @@ def test_save_defaults_source_to_cli(mock_memory_dir):
 
 
 def test_cli_client_sends_source_header():
-    """ADR-010 / #167: the CLI httpx Client must carry X-Palinode-Source: cli
+    """ADR-010: the CLI httpx Client must carry X-Palinode-Source: cli
     so saves without explicit body `source` are still attributed correctly.
     """
     from palinode.cli._api import api_client
@@ -100,7 +99,7 @@ def test_cli_client_sends_source_header():
 
 def test_save_uses_header_when_body_source_absent(mock_memory_dir):
     """API resolves source via the X-Palinode-Source header when the body
-    doesn't set one (ADR-010 / #167)."""
+    doesn't set one (ADR-010)."""
     with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
         res = client.post(
             "/save",
@@ -114,7 +113,7 @@ def test_save_uses_header_when_body_source_absent(mock_memory_dir):
 
 
 def test_save_body_source_wins_over_header(mock_memory_dir):
-    """Explicit body `source` beats the header (ADR-010 / #167 precedence)."""
+    """Explicit body `source` beats the header (ADR-010 precedence)."""
     with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
         res = client.post(
             "/save",
@@ -127,7 +126,7 @@ def test_save_body_source_wins_over_header(mock_memory_dir):
         assert "source: explicit" in content
 
 def test_session_end_includes_source(mock_memory_dir):
-    """ADR-010 / #170: CLI now goes through the API. Patch
+    """ADR-010: CLI now goes through the API. Patch
     ``api_client.session_end`` to invoke the in-process API handler so
     the daily-file end-to-end assertion still holds."""
     from palinode.api.server import session_end_api, SessionEndRequest

@@ -1,4 +1,4 @@
-"""Tests for inline embedding on POST /save and watcher index-presence guard (#251).
+"""Tests for inline embedding on POST /save and watcher index-presence guard.
 
 Two failure modes covered:
 
@@ -11,7 +11,7 @@ B. Re-saving identical content was a silent no-op even when the original embed
    presence of both index entries and re-embeds when either is missing,
    regardless of ``content_hash`` equality.
 
-C. Save-side frontmatter omitted ``last_updated`` on initial write (#177).
+C. Save-side frontmatter omitted ``last_updated`` on initial write.
    Fix: ``created_at`` and ``last_updated`` are both written on first save so
    the freshness checker does not flag a brand-new memory as stale.
 
@@ -95,7 +95,7 @@ class TestSaveEmbedsInline:
         The race fix is that /save shouldn't return until these exist —
         no sleep or polling should be required. We assert vec0 presence
         explicitly because vector-search returning zero results is the
-        externally observable symptom in #251.
+        externally observable symptom in the post /save returns 200 before content work.
         """
         with _patch_scan(), _patch_embed_ok():
             res = client.post(
@@ -139,7 +139,7 @@ class TestResaveRecoversFromBrokenIndex:
         Pre-fix behaviour: watcher's ``content_hash`` shortcut hit, said
         "all chunks unchanged", and the vec0 row stayed missing — the
         memory was unsearchable forever via vector recall (the exact
-        symptom in #251).
+        symptom in the post /save returns 200 before content work).
 
         Post-fix: ``index_file`` notices the missing vec0 row and embeds.
         """
@@ -370,15 +370,15 @@ class TestFrontmatterLastUpdatedOnInitialSave:
 
 
 class TestEmbedOutageFailsClosed:
-    """#337 observability + #717 fail-closed on a partial embed outage.
+    """the logging audit observability + the indexer write-path seam fail-closed on a
+partial embed outage.
 
-    Before #337, an embed miss set a bare flag with no log line. Before #717,
-    the write path did a *partial* index on outage — it pruned stale rows and
-    wrote the sections that did embed, leaving the index reflecting a
-    half-applied edit. Now an embed miss in embedding mode rolls the whole
-    reconcile transaction back: nothing is written, the file is retried intact,
-    and one WARNING names the file + failing section so the abort is observable.
-    """
+    Before the logging audit, an embed miss set a bare flag with no log line. Before the
+    indexer write-path seam, the write path did a *partial* index on outage — it pruned
+    stale rows and wrote the sections that did embed, leaving the index reflecting a
+    half-applied edit. Now an embed miss in embedding mode rolls the whole reconcile
+    transaction back: nothing is written, the file is retried intact, and one WARNING
+    names the file + failing section so the abort is observable. """
 
     def _write_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "memory_dir", str(tmp_path))

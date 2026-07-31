@@ -1,5 +1,5 @@
 """
-Tests for palinode_depends — milestone dependency modeling (#97).
+Tests for palinode_depends — milestone dependency modeling.
 
 Covers:
 - traverse_depends: empty deps, chains, unblocked/blocked, orphans
@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from palinode.core.depends import traverse_depends, find_unblocked

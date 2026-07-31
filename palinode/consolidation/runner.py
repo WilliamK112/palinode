@@ -9,11 +9,10 @@ from __future__ import annotations
 import os
 import re
 import json
-import time
 import glob
 import logging
 import shutil
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
 # The propose→apply seam. The nondeterministic half of consolidation is a
@@ -48,7 +47,7 @@ def _git_commit(message: str, files: list[str] | None = None) -> None:
     One-mutation-one-commit: ``files`` is the explicit list of memory files this
     pass mutated; each gets its own per-file commit so a consolidation touching
     N files produces N commits, never a repo-wide ``git add *.md`` sweep that
-    would conflate unrelated working-tree edits under one message (#565). The
+    would conflate unrelated working-tree edits under one message. The
     per-file ``message`` is suffixed with the file basename for blameability.
 
     ``files=None`` is retained only for callers with nothing concrete to stage;
@@ -76,7 +75,7 @@ def _touched_files(target: str) -> list[str]:
     The op target itself plus its ``-history.md`` sibling, which the executor
     appends to on SUPERSEDE/ARCHIVE/RETRACT. Mirrors the path derivation in
     ``executor.append_to_history`` so a history append is committed alongside
-    its parent mutation rather than swept up later (#565).
+    its parent mutation rather than swept up later.
     """
     base = re.sub(r"-status\.md$", "", target)
     base = re.sub(r"\.md$", "", base)
@@ -128,7 +127,7 @@ def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
 
     Returns:
         Tuple of (notes list, skipped_count) where skipped_count is the
-        number of files whose YAML frontmatter failed to parse (#387).
+        number of files whose YAML frontmatter failed to parse.
         Callers surface skipped_count in the consolidation run summary so
         operators know to run ``palinode lint``.
     """
@@ -149,12 +148,11 @@ def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
 
-        meta = {}
         if content.startswith("---"):
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 try:
-                    meta = yaml.safe_load(parts[1]) or {}
+                    _meta = yaml.safe_load(parts[1]) or {}
                     content = parts[2].strip()
                 except Exception as _parse_exc:
                     # Silent pass was hiding corrupt frontmatter — log so
@@ -274,7 +272,7 @@ def _consolidate_project(
         project_id: Project slug.
         notes: Recent daily notes mentioning this project.
         is_nightly: Use the lightweight nightly prompt.
-        llm_fn: The propose seam (#554). ``(system_prompt, user_prompt) ->
+        llm_fn: The propose seam. ``(system_prompt, user_prompt) ->
             (response_text, model_used)``. Defaults to the live fallback-chain
             caller; tests inject a fake returning deterministic op-JSON so the
             real fact-extraction + parse + executor path runs without an LLM.
@@ -354,7 +352,7 @@ def _check_contradictions(
 ) -> list[dict]:
     """Check new items for contradictions against existing knowledge base.
 
-    ``llm_fn`` is the same propose seam (#554) — defaults to the live caller;
+    ``llm_fn`` is the same propose seam — defaults to the live caller;
     tests inject a fake returning a canned contradiction op so the embed/search
     + parse + translate path runs deterministically.
     """
@@ -542,7 +540,7 @@ def _update_status_summary(
     rather than rewriting from scratch. Preserves longitudinal history.
     Inspired by NousResearch/hermes-agent trajectory compressor (MIT).
 
-    The audit contract (#679) lives in :mod:`palinode.consolidation.status_doc`
+    The audit contract lives in :mod:`palinode.consolidation.status_doc`
     and is shared verbatim with ``palinode repair-status``: op fields are read
     through ``op_kind``/``op_reason`` (the dry-run preview's accessors, so the
     write path can no longer disagree with what ``--dry-run`` showed), a missing

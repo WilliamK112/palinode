@@ -11,11 +11,9 @@ fallback path runs; a bug-shape exception escapes to the caller.
 """
 from __future__ import annotations
 
-import json
 import subprocess
 from unittest import mock
 
-import httpx
 import pytest
 
 from palinode.core.ollama_client import OllamaError, OllamaTimeout, OllamaUnreachable
@@ -85,9 +83,9 @@ def test_generate_summary_propagates_attributeerror() -> None:
 def test_status_ollama_probe_catches_connection_error() -> None:
     """Connection failure during ollama probe → ollama_reachable=False.
 
-    #338 Phase 5: liveness goes through OllamaClient.ping() (returns False on a
-    connect error); status_api also reads metrics() for its `ollama` block.
-    """
+    Phase 5 of the Ollama traffic-surface hardening: liveness goes through
+    OllamaClient.ping() (returns False on a connect error); status_api also reads
+    metrics() for its `ollama` block. """
     from palinode.api import server
 
     fake_client = mock.MagicMock(name="OllamaClient")

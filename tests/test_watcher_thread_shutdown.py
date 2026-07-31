@@ -1,4 +1,4 @@
-"""Deterministic shutdown of the watcher's debounce timers (#677).
+"""Deterministic shutdown of the watcher's debounce timers.
 
 The CI signature was ``unit-tests`` aborting with exit 134 *after* the whole
 suite passed:
@@ -142,7 +142,7 @@ _ATEXIT_PROBE = textwrap.dedent(
 def test_process_exit_leaves_no_watcher_timer_threads(tmp_path: Path) -> None:
     """End-to-end: a process with armed timers exits cleanly and promptly.
 
-    This is the #677 guard. Before the fix the child exits with two daemon
+    This is the guard. Before the fix the child exits with two daemon
     timers still armed (the abort is a race on top of that); after it, the
     ``atexit`` hook has stopped them by the time the interpreter finalizes.
     """

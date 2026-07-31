@@ -1,9 +1,9 @@
-"""Regression tests for the project-status one-liner written by session-end (#681).
+"""Regression tests for the project-status one-liner written by session-end.
 
-Before #681 this writer referenced only ``req.summary``: ``decisions[]`` and
-``blockers[]`` were dropped with no log line and no trace in the file, and the
-summary was cut at a bare 200 chars mid-word with no ellipsis — so a reader
-could not tell "the summary ended there" from "the summary was cut".
+Before the session-end array-drop fix this writer referenced only ``req.summary``:
+``decisions[]`` and ``blockers[]`` were dropped with no log line and no trace in the
+file, and the summary was cut at a bare 200 chars mid-word with no ellipsis — so a
+reader could not tell "the summary ended there" from "the summary was cut".
 
 The contract these tests pin:
   1. every array entry survives to every writer that claims to record it —
@@ -155,7 +155,7 @@ def test_singular_counts_read_naturally(tmp_path, monkeypatch):
 
 
 def test_no_arrays_keeps_the_line_clean(tmp_path, monkeypatch):
-    """A caller that passes no arrays gets the pre-#681 shape back: one dated
+    """A caller that passes no arrays gets the before the session-end array-drop fix shape back: one dated
     line, no annotation. The fix must not add noise where nothing was lost."""
     _, status = _run_session_end(tmp_path, monkeypatch, summary="Plain session")
     line = _last_status_line(status)

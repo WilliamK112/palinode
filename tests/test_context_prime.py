@@ -1,4 +1,4 @@
-"""ADR-009 Layer 1 slice 4 — scope semantics on POST /context/prime (#107).
+"""ADR-009 Layer 1 slice 4 — scope semantics on POST /context/prime.
 
 The frozen client contract: the SessionStart hook POSTs ``{cwd, session_id}``
 and discards the body, so a bare hook-shaped request must always 200. The
@@ -8,7 +8,7 @@ post-flip) drops core memories whose explicit ``scope:`` frontmatter is off
 the resolved chain, while unscoped memories always pass (ADR-009 §7).
 
 Note: slice 4's original design returned the raw ``/list`` row shape; the
-shipped ADR-012 Layer 4 endpoint (#262) established the digest response
+shipped ADR-012 Layer 4 endpoint established the digest response
 instead, so the classic↔``/list?core_only`` *shape* equivalence is gone —
 these tests assert the same *selection* semantics on the digest rows.
 """

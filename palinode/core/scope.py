@@ -4,7 +4,7 @@ Build a ScopeChain from config + env + caller-supplied project/session
 (Layer 1), and decide whether a memory's frontmatter permits it on a given
 chain — either scope-only (:func:`chain_allows`, Layer 1) or with the full
 ``visibility``/``access`` semantics (:func:`visible_on_chain`, Layer 2 /
-#108). The context prime endpoint, the shared listing helper, and store
+the ADR-009 layer 2 work). The context prime endpoint, the shared listing helper, and store
 search all consume these. This module stays pure — no I/O, no DB; callers
 own file access and iteration.
 
@@ -51,7 +51,7 @@ class ScopeChain:
         return not self.as_list()
 
     def has_identity(self) -> bool:
-        """True when at least one *identity* level is set (#108).
+        """True when at least one *identity* level is set.
 
         The ``session`` level is deliberately excluded: a session id is
         ADR-007 recall-dedup telemetry, not a scope the memory author can
@@ -104,7 +104,7 @@ def chain_allows(chain: ScopeChain, metadata: dict[str, Any]) -> bool:
     that no session chain ever contains — filtering on it would hide every
     legacy memory. ADR-009 §7 requires the opposite: "no scope = works as
     before". So for the ``inherited`` default the directory default is NOT
-    consulted; #108's :func:`visible_on_chain` activates it only for the
+    consulted; :func:`visible_on_chain`, from the ADR-009 layer 2 work, activates it only for the
     opt-in ``private``/``restricted`` visibilities, where fail-closed is the
     correct default.
 
@@ -123,7 +123,7 @@ def visible_on_chain(
     *,
     file_path: str | None = None,
 ) -> bool:
-    """Layer 2 visibility (#108): does the session chain permit this memory?
+    """Layer 2 visibility: does the session chain permit this memory?
 
     Combines the Layer 1 scope test (:func:`chain_allows`) with the ADR-009
     §3.3-3.4 ``visibility`` / ``access`` semantics. This is the predicate the
@@ -180,7 +180,7 @@ def visible_on_chain(
 
 
 def access_allows(metadata: dict[str, Any], *, file_path: str | None = None) -> bool:
-    """Access control alone — no scope isolation (ADR-009 §3.4, #108).
+    """Access control alone — no scope isolation (ADR-009 §3.4, the ADR-009 layer 2 work).
 
     The rule for recall surfaces that carry **no session scope context**:
     ``GET /list`` (which the SessionStart hook injects from), classic-mode

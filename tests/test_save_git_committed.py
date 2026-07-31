@@ -1,4 +1,5 @@
-"""#386 regression: /save must surface git_committed: false when git auto-commit fails.
+"""the git_committed response fix regression: /save must surface git_committed: false
+when git auto-commit fails.
 
 Previously the git auto-commit block logged at error level but the response
 dict had no ``git_committed`` field — the API returned HTTP 200 with no signal
@@ -10,7 +11,7 @@ The fix:
      completes without raising (does not check subprocess exit code, only
      that the process was spawned; a "nothing to commit" exit code is fine).
   2. Add ``exc_info=True`` to the logger.error call so the stack trace
-     appears in log files for debugging (#386).
+     appears in log files for debugging.
   3. Return ``git_committed`` in the /save response dict so callers can act.
 
 Tests use TestClient + monkeypatch (no real git repo required per CLAUDE.md's
@@ -28,7 +29,6 @@ from fastapi.testclient import TestClient
 
 from palinode.api import server as srv
 from palinode.api.server import app
-from palinode.core import store
 from palinode.core.config import config
 
 

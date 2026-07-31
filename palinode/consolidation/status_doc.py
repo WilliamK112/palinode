@@ -2,7 +2,7 @@
 
 ``projects/<slug>-status.md`` carries a ``## Consolidation Log`` that is supposed
 to be the blame-able record of what the deterministic executor did. It was none
-of those things (#679): rationales were dropped, operation kinds were
+of those things: rationales were dropped, operation kinds were
 misreported, ``fact_id``s were never checked against the file, the log grew
 without bound, and the frontmatter counts were never reconciled with the body.
 
@@ -130,7 +130,7 @@ def _format_label(resolved: list[str], total: int) -> str:
 def render_log_lines(operations: list[Any], known_ids: set[str]) -> list[str]:
     """Render operations as ``- [KIND] id: rationale`` audit lines.
 
-    Contract (#679):
+    Contract:
 
     * kind and rationale come from :func:`op_kind` / :func:`op_reason`, so an op
       carrying only ``rationale`` (ARCHIVE/RETRACT are rationale-first in the
@@ -351,7 +351,7 @@ def merge_log_entry(body: str, date: str, new_lines: list[str],
                 # re-proposes the same operations; logging them twice is the
                 # duplication this guard prevents.
                 existing = set(items[i][2])
-                items[i][2].extend(l for l in new_lines if l not in existing)
+                items[i][2].extend(ln for ln in new_lines if ln not in existing)
                 break
         else:
             items.append(("block", date, [f"### {date}", *new_lines]))
@@ -381,7 +381,7 @@ def _body_dates(body: str) -> list[str]:
 def _lenient_frontmatter(raw: str) -> dict[str, Any] | None:
     """Best-effort recovery of frontmatter YAML that does not strict-parse.
 
-    #470's whole point is that ``yaml.safe_load`` *throws* on these files, so
+    the status-doc YAML repair's whole point is that ``yaml.safe_load`` *throws* on these files, so
     the repair pass cannot get at ``entities:`` through the strict parser. This
     models the narrow subset the corruption produces — top-level ``key: value``
     scalars, ``key:`` followed by ``- item`` list entries taken as raw strings,
@@ -463,7 +463,7 @@ def desired_frontmatter(content: str) -> dict[str, Any] | None:
     No clock, no I/O, no serialization — so a caller can ask *"is this document
     already correct?"* without changing it. That question is unanswerable
     against a function that stamps the time on its way past, which is what
-    made ``repair-status`` report a clean store as 100% dirty (#708).
+    made ``repair-status`` report a clean store as 100% dirty.
 
     ``last_updated`` is passed through untouched. It is a write receipt, not
     derived state: only a caller that decides to write may set it, and it is
@@ -504,8 +504,8 @@ def desired_frontmatter(content: str) -> dict[str, Any] | None:
 def render(meta: dict[str, Any], body: str) -> str:
     """Serialize *meta* and *body* into a document. Deterministic.
 
-    ``safe_dump`` quotes any scalar that would otherwise re-read as YAML
-    syntax — the ``- [2026-05-24] …`` breakage in #470. Key order is preserved.
+    ``safe_dump`` quotes any scalar that would otherwise re-read as YAML syntax — the
+    ``- [2026-05-24] …`` breakage in the status-doc YAML repair. Key order is preserved.
     """
     dumped = yaml.safe_dump(
         meta, default_flow_style=False, allow_unicode=True, sort_keys=False
@@ -636,7 +636,7 @@ def repair_status_doc(content: str, *,
        line;
     4. frontmatter counts/dates are reconciled with the body.
 
-    The report distinguishes two kinds of difference (#708):
+    The report distinguishes two kinds of difference:
 
     ``changed``
         the document is semantically wrong — a counter moved, entities were
@@ -644,7 +644,7 @@ def repair_status_doc(content: str, *,
         a caller should count when asking *"does anything need repair?"*.
     ``noncanonical``
         the document is semantically correct but its YAML is not what
-        ``render`` would emit (quoting, spacing, comments). Reported so #470
+        ``render`` would emit (quoting, spacing, comments). Reported so the status-doc YAML repair
         formatting drift is visible, but it does not mean damage.
     ``unparseable``
         the frontmatter could not be read; the original content is returned

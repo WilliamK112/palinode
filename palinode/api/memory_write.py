@@ -1,4 +1,4 @@
-"""Save-path normalization: entity refs, wiki footers, source attribution (#556).
+"""Save-path normalization: entity refs, wiki footers, source attribution.
 
 Extracted from the former ``routers/_shared.py`` junk drawer. The helpers the
 ``/save`` path runs over a write before it lands on disk: infer category
@@ -154,7 +154,7 @@ def _normalize_entities(entities: list[str], category: str) -> list[str]:
 def _resolve_source(req_source: str | None, request: Request | None) -> str:
     """Resolve the source-surface attribution for a write.
 
-    Precedence (ADR-010 / #167):
+    Precedence (ADR-010):
       1. Explicit ``source`` field in the request body — caller's intent wins.
       2. ``X-Palinode-Source`` HTTP header — set automatically by CLI/MCP.
       3. ``PALINODE_SOURCE`` environment variable — operator override.
@@ -196,7 +196,7 @@ def _is_description_eligible(relpath: str) -> bool:
     """Whether ``relpath`` is a memory file that can persist an auto-description.
 
     The eligibility contract for both the ``pending_descriptions`` count and the
-    ``/generate-summaries`` description worklist (#472). A file is eligible iff
+    ``/generate-summaries`` description worklist. A file is eligible iff
     it lives directly under one of the memory-category directories
     (:data:`_MEMORY_CATEGORY_DIRS`) that ``save_api`` writes to. Structural /
     non-memory files — `daily/`, `archive/`, `specs/`, and top-level docs — are

@@ -1,10 +1,9 @@
 """Tests for parser Layer 3-lite: body [[wikilink]] extraction + entity merge.
 
-Deliverable D of issue #210.
+Deliverable D of issue the Obsidian integration MVP.
 """
 from __future__ import annotations
 
-import pytest
 
 from palinode.core.parser import canonicalize_wikilink, parse_entities, parse_markdown
 

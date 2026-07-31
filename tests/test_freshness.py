@@ -1,5 +1,3 @@
-import pytest
-import os
 import time
 import hashlib
 from palinode.core.store import check_freshness
@@ -102,7 +100,7 @@ def test_multisection_fresh_file_marked_valid(tmp_path, monkeypatch):
     """Multi-section file just indexed → every chunk must report freshness: valid.
 
     Pre-fix behaviour: check_freshness hashed the whole body and compared
-    it to the per-section content_hash → mismatch → all chunks stale (#203).
+    it to the per-section content_hash → mismatch → all chunks stale.
     """
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     content = _make_multisection_content()

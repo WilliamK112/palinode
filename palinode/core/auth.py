@@ -1,6 +1,6 @@
 """Shared bearer-token auth primitives for the API and MCP HTTP servers.
 
-Extracted so the MCP HTTP transport (#289) can share the same middleware,
+Extracted so the MCP HTTP transport can share the same middleware,
 token loader, and startup gate as the API server without duplicating the
 security-sensitive comparison logic.
 

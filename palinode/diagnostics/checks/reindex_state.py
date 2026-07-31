@@ -91,7 +91,7 @@ def reindex_in_progress(ctx: DoctorContext) -> CheckResult:
     stuck = False
     if started_at:
         try:
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timezone
             started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
             now = datetime.now(tz=timezone.utc)
             elapsed = now - started

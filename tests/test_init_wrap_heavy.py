@@ -1,4 +1,4 @@
-"""Tests for Sprint 4 (#419): heavy `/wrap` variant as a per-repo init policy.
+"""Tests for Sprint 4: heavy `/wrap` variant as a per-repo init policy.
 
 Coverage:
 - WRAP_HEAVY_COMMAND_BODY encodes the four-step sequence (merge → push →
@@ -12,7 +12,6 @@ Coverage:
 """
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main
@@ -81,14 +80,14 @@ def test_light_and_heavy_bodies_differ():
 
 
 def test_heavy_body_has_no_step0_preflight():
-    """#618: the Step 0 git courtesy pre-flight is light-only. Heavy already
+    """the light /wrap work: the Step 0 git courtesy pre-flight is light-only. Heavy already
     lands the session's work (merge → push) with halt semantics, so a courtesy
     "offer to land it" step would be redundant — heavy stays four steps."""
     assert "Step 0" not in WRAP_HEAVY_COMMAND_BODY
 
 
 def test_heavy_merge_step_handles_non_github_remote():
-    """#440: the merge step must gracefully skip (not halt) on a non-GitHub
+    """the heavy /wrap is github-first work: the merge step must gracefully skip (not halt) on a non-GitHub
     remote (e.g. Gitea), and must name the non-`gh` filing path."""
     body = WRAP_HEAVY_COMMAND_BODY
     # graceful-skip language for the gh-can't-see-this-host case
@@ -100,7 +99,7 @@ def test_heavy_merge_step_handles_non_github_remote():
 
 
 def test_heavy_push_step_lists_and_can_stop_before_pushing():
-    """#440: the push step must state the all-or-nothing assumption and
+    """the heavy /wrap is github-first work: the push step must state the all-or-nothing assumption and
     stop-and-ask on not-ready commits rather than pushing blind."""
     body = WRAP_HEAVY_COMMAND_BODY
     assert "all-or-nothing" in body or "all** unpushed" in body

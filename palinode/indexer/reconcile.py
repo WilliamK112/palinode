@@ -5,8 +5,8 @@ their vectors, their FTS5 tokens, the ``entities`` table, and the cached
 frontmatter in ``chunks.metadata``. Keeping those five in agreement with the
 file used to be spread across the watcher, this module's predecessor, and a
 handful of ``store`` methods — each of which added rows but only some of which
-removed them, which is the shared root of the rename-orphans-entities (#699)
-and frontmatter-edit-invisible (#698) defects.
+removed them, which is the shared root of the rename-orphans-entities
+and frontmatter-edit-invisible defects.
 
 This module concentrates that knowledge into three stages:
 
@@ -217,7 +217,8 @@ def plan(state: DerivedState) -> Plan:
 
 
 def _vec_present(db: Any, chunk_id: str) -> bool:
-    """True iff the vec0 row exists — the observable symptom of #251.
+    """True iff the vec0 row exists — the observable symptom of the post /save returns 200
+before content work.
 
     The FTS5 ``chunks_fts`` table is external-content, so a row there merely
     tracks the ``chunks`` row and is a useless presence check; ``chunks_vec``

@@ -1,4 +1,4 @@
-"""Tests for /reindex concurrency guard (#200).
+"""Tests for /reindex concurrency guard.
 
 Verifies that:
 - A single reindex call succeeds and returns `files_reindexed`.

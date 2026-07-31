@@ -1,4 +1,4 @@
-"""Tests for the phantom-DB guard (#188).
+"""Tests for the phantom-DB guard.
 
 Verifies that ``get_db()`` / ``_ensure_db()`` correctly disambiguates
 first-run from misconfiguration before SQLite auto-creates an empty DB.

@@ -1,5 +1,5 @@
 """
-Milestone dependency graph traversal — palinode_depends (#97).
+Milestone dependency graph traversal — palinode_depends.
 
 Reads `depends_on`, `blocks`, and `parallel_with` frontmatter fields from
 ProjectSnapshot (and any) memory files, builds a dependency graph, and answers
@@ -22,7 +22,6 @@ from __future__ import annotations
 import glob
 import logging
 import os
-from collections import deque
 from typing import Any
 
 import frontmatter as _frontmatter

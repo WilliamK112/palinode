@@ -1,4 +1,5 @@
-"""Tests for `palinode init --obsidian` — Obsidian vault scaffold (Deliverable A, #210).
+"""Tests for `palinode init --obsidian` — Obsidian vault scaffold (Deliverable A, the
+Obsidian integration MVP).
 
 Coverage:
 - All expected files are created by ``--obsidian``
@@ -14,7 +15,6 @@ Coverage:
 import json
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main

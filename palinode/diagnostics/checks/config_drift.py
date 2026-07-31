@@ -145,7 +145,7 @@ def env_vs_yaml_consistency(ctx: DoctorContext) -> CheckResult:
     summary = "; ".join(f"{ev}↯{lab}" for ev, lab, _, _ in drifts)
 
     remediation_lines = [
-        f"Env always wins after load_config(). To resolve:",
+        "Env always wins after load_config(). To resolve:",
         f"  - Edit {yaml_path} to match the env var, OR",
         f"  - `unset {' '.join(d[0] for d in drifts)}` in the shell that starts palinode.",
         "",

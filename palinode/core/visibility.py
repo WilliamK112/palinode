@@ -1,4 +1,4 @@
-"""The visibility enforcement choke point (ADR-009 Layer 2, #108).
+"""The visibility enforcement choke point (ADR-009 Layer 2).
 
 Every recall surface — ``GET /list``, ``POST /search`` (both the semantic and
 the empty-query recency branch), ``POST /search-associative``, and the
@@ -90,7 +90,7 @@ def is_visible(
     fallback_metadata: dict[str, Any] | None = None,
     cache: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
-    """May a session on ``chain`` see the memory at ``file_path``? (#108)
+    """May a session on ``chain`` see the memory at ``file_path``?
 
     ``chain`` semantics:
 

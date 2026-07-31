@@ -10,7 +10,6 @@ import hashlib
 import logging
 import os
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,7 +88,7 @@ def _infer_category(
     """
     if into_category:
         cat = into_category.rstrip("/")
-        return cat, f"--into-category override"
+        return cat, "--into-category override"
 
     # PARA: check each component of the path (case-insensitive)
     for part in source_rel.parts[:-1]:  # all directory components
@@ -314,7 +313,7 @@ def plan_import(
 
     # Build slug map from the full set of planned destinations (before wikilink rewrite)
     slug_map: dict[str, str] = {}
-    for src_abs, src_rel, metadata, body, category, reason, dest_path in plans_pre:
+    for src_abs, _src_rel, _metadata, _body, _category, _reason, dest_path in plans_pre:
         src_slug = slugify(src_abs.stem)
         dest_rel = dest_path.stem
         slug_map[src_slug] = dest_rel

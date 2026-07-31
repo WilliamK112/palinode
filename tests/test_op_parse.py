@@ -1,4 +1,4 @@
-"""Unit tests for the op-parse/normalize seam (#555).
+"""Unit tests for the op-parse/normalize seam.
 
 The defensiveness that used to be smeared across runner._consolidate_project,
 executor.apply_operations, runner._proposed_changes, and write_time._translate_ops

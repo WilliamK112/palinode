@@ -1,4 +1,4 @@
-"""ADR-009 Layer 2 — visibility + private/restricted scopes (#108).
+"""ADR-009 Layer 2 — visibility + private/restricted scopes.
 
 Covers the pure predicates (``visible_on_chain`` / ``access_allows``), the
 enforcement choke point (``palinode.core.visibility``), and every recall
@@ -624,7 +624,7 @@ def recall_widen_db(tmp_path, monkeypatch):
 
 
 def test_widened_fetch_counts_recall_once(recall_widen_db):
-    """REGRESSION (#667): a single retrieval that trips visibility-widening must
+    """REGRESSION: a single retrieval that trips visibility-widening must
     increment recall_count exactly once for a row present in both passes.
 
     Non-vacuous: the closure records each run() call and the test asserts a

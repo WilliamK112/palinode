@@ -1,4 +1,4 @@
-"""Regression: chunks_fts stays in lockstep with chunks across delete/supersede (#439).
+"""Regression: chunks_fts stays in lockstep with chunks across delete/supersede.
 
 ``chunks_fts`` is an external-content FTS5 table (``content=chunks``). A bare
 ``DELETE FROM chunks_fts WHERE rowid=?`` does NOT remove the inverted-index
@@ -148,7 +148,7 @@ class TestNoBareFtsDeleteIdiom:
     tokens depends on the sqlite build (it did on the ``.85`` prod host; not on
     every dev sqlite), so the runtime tests above can't catch a reintroduction
     everywhere. This one can: the sanctioned FTS5 ``'delete'`` command must stay
-    the ONLY way chunks_fts rows are removed (#439).
+    the ONLY way chunks_fts rows are removed.
     """
 
     def test_delete_paths_use_sanctioned_fts5_delete(self):

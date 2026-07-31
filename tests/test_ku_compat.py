@@ -1,4 +1,4 @@
-"""Tests for IETF KU frontmatter alignment (#106).
+"""Tests for IETF KU frontmatter alignment.
 
 Covers:
 - Parser recognizes ku_version, confidence, lifecycle without breaking
@@ -10,12 +10,11 @@ Covers:
 """
 from __future__ import annotations
 
-import os
 import hashlib
 import yaml
 import pytest
 
-from palinode.core.parser import parse_ku_fields, parse_markdown, VALID_LIFECYCLES
+from palinode.core.parser import parse_ku_fields, parse_markdown
 
 
 # ── Parser tests ────────────────────────────────────────────────���─────────────
@@ -127,7 +126,6 @@ def test_parse_markdown_without_ku_fields_unchanged():
 def _save_and_read_frontmatter(tmp_path, content, confidence=None, ku_compat_enabled=False):
     """Helper: write a memory file as the server save path does and read back frontmatter."""
     import hashlib as _hashlib
-    import time
 
     # Mirror the server's frontmatter construction logic (simplified).
     slug = "test-memory"

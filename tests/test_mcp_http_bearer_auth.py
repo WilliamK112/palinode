@@ -1,4 +1,4 @@
-"""Tests for bearer-token auth on the MCP HTTP transport (#289).
+"""Tests for bearer-token auth on the MCP HTTP transport.
 
 The MCP HTTP server (port 6341) mirrors the API server's auth:
   - Token shared via PALINODE_API_TOKEN / PALINODE_API_TOKEN_FILE

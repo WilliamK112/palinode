@@ -1,4 +1,4 @@
-"""G1 (#459) — source-citation CAPTURE path tests.
+"""G1 — source-citation CAPTURE path tests.
 
 Covers the capture half of the source-citation feature: the ``sources:``
 quote-anchor frontmatter written on save, the auto-computed/validated

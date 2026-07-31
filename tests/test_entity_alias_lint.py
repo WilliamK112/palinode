@@ -1,4 +1,4 @@
-"""#693: detect entity refs that look like aliases of one another.
+"""the entity-canonicalization work: detect entity refs that look like aliases of one another.
 
 Detection only. The check must never merge, and these tests pin that boundary as
 hard as they pin the detection itself — a wrong join is unrecoverable from the
@@ -46,7 +46,7 @@ def test_token_prefix_requires_a_boundary() -> None:
 
 
 def test_detects_the_three_way_split_shape() -> None:
-    """The shape #693 measured: short form, full form, and a concatenation.
+    """The shape the entity-canonicalization work measured: short form, full form, and a concatenation.
 
     A near-even split, not a long tail — looking up either form returns a
     plausible, non-empty, incomplete answer.
@@ -99,7 +99,7 @@ def test_a_clean_store_reports_nothing() -> None:
 def test_output_is_advisory_only_and_never_prescribes_a_merge() -> None:
     """The report hands the operator a question, not an instruction.
 
-    Guards the #693 design constraint: detect -> propose -> human confirms. If a
+    Guards the design constraint: detect -> propose -> human confirms. If a
     future change starts emitting a canonical/winner field, this fails loudly.
     """
     clusters = check_entity_aliases({"person/alpha": 176, "person/alpha-bravo": 129})

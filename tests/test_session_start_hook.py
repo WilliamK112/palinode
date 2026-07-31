@@ -1,11 +1,11 @@
-"""Tests for the SessionStart hook — `palinode-session-start.sh` (#261, ADR-012 Layer 3).
+"""Tests for the SessionStart hook — `palinode-session-start.sh` (ADR-012 Layer 3).
 
 The hook does two fail-silent actions on Claude Code SessionStart:
 
   1. POST /context/prime — forward-compatible server-side context warming
      (a harmless 404 until the endpoint ships).
   2. GET /list?core_only=true — inject a bounded core-memory digest into the
-     session via ``additionalContext`` (the #528 escalation: deterministic
+     session via ``additionalContext`` (the escalation: deterministic
      recall grounding that doesn't depend on the agent remembering to search).
 
 These tests run the canonical script (examples/hooks/) through bash with a

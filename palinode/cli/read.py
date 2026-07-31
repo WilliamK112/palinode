@@ -1,7 +1,7 @@
 """
 ``palinode read`` — fetch a memory file via the API.
 
-Per ADR-010 (#168), this command goes through ``palinode/cli/_api.py``
+Per ADR-010, this command goes through ``palinode/cli/_api.py``
 rather than reading disk directly.  Path validation, traversal
 protection, and ``.md`` extension fallback live server-side in the
 ``/read`` handler — the CLI is now a thin presenter.

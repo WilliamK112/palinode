@@ -16,8 +16,6 @@ No SQLite mocking (project standard: real DBs in tmp_path).
 """
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -26,7 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from palinode.core.config import Config, AuditConfig
+from palinode.core.config import Config
 from palinode.diagnostics.runner import run_one
 from palinode.diagnostics.types import DoctorContext
 
@@ -96,7 +94,7 @@ class TestDbSizeSanity:
         assert result.passed is True
         assert result.severity == "warn"
         assert log_path.exists(), "Baseline log should be created"
-        lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
         assert len(lines) == 1
         # Verify baseline log format: timestamp size_bytes chunks
         parts = lines[0].split()
@@ -184,7 +182,7 @@ class TestDbSizeSanity:
         ctx = _ctx(memory_dir, db)
         run_one(ctx, "db_size_sanity")  # first call
 
-        lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
         assert len(lines) == 2, "Should append one new line per run"
 
     def test_missing_db_warns(self, tmp_path: Path) -> None:

@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import time
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -97,7 +95,7 @@ def generate_files() -> dict:
         content_lines = []
         for m in mems:
             date = m.get("created_at", "")[:10]
-            source = m.get("source_agent", "?")
+            _source = m.get("source_agent", "?")
             text = m["content"].strip()
             if date:
                 content_lines.append(f"- [{date}] {text}")

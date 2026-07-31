@@ -1,4 +1,4 @@
-"""Tests for `palinode worktree-reconcile` — stale dead-PID worktree cleanup (#448).
+"""Tests for `palinode worktree-reconcile` — stale dead-PID worktree cleanup.
 
 Real git + tmp_path (no mocking). A bare repo serves as `origin` so the
 upstream check has something real to resolve against.

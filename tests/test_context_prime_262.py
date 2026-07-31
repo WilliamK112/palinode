@@ -1,4 +1,5 @@
-"""#262 (ADR-012 Layer 4) — session-start context digest across surfaces.
+"""the server-side auto-inject for MCP-only clients work (ADR-012 Layer 4) —
+session-start context digest across surfaces.
 
 Covers the core digest builder (scope resolution precedence, project
 filtering with no cross-project bleed, bounded output, no-project
@@ -13,7 +14,6 @@ design.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest

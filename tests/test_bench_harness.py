@@ -1,4 +1,5 @@
-"""Tests for the ingestion & recall benchmark harness (bench/, #650).
+"""Tests for the ingestion & recall benchmark harness (bench/, the determinism +
+cost-per-fact benchmark vs graph-memory work).
 
 Covers the three things the harness must guarantee:
   * the synthetic corpus generator is deterministic (same seed → same bytes),

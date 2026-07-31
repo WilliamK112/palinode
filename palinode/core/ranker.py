@@ -1,4 +1,4 @@
-"""Pure hybrid-search ranking pipeline (#553).
+"""Pure hybrid-search ranking pipeline.
 
 Extracted from ``store.search_hybrid`` so the scoring stages — RRF fusion,
 demand-decay re-rank, the human-priority nudge, ambient-context boost, daily
@@ -157,7 +157,7 @@ def rank_hybrid(
 
     Stages, in order: Reciprocal Rank Fusion (RRF, k=60) → demand-decay re-rank
     (ADR-007, when ``config.decay.enabled``) → human-priority nudge → ambient
-    context boost (ADR-008) → daily-file penalty (#93) → per-file dedup (#91) →
+    context boost (ADR-008) → daily-file penalty → per-file dedup →
     threshold + top_k → date window. Returns the merged, ranked result dicts
     (each carrying ``score`` and ``raw_score``); recall + freshness are recorded
     by the caller on this output.

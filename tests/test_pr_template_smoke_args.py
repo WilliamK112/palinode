@@ -1,6 +1,6 @@
 """Regression guard: PR template must mention TOOL_SMOKE_ARGS.
 
-Catches accidental removal of the MCP-tool drift-guard reminder added in #346.
+Catches accidental removal of the MCP-tool drift-guard reminder added in the MCP release gate.
 """
 from __future__ import annotations
 

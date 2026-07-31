@@ -1,4 +1,4 @@
-"""End-to-end coverage for the /read → recall-recording path (#479).
+"""End-to-end coverage for the /read → recall-recording path.
 
 ADR-006/007 require that a direct ``GET /read`` call persists access metadata
 (``recall_count`` / ``last_recalled``) back to all SQLite chunks of the read
@@ -22,7 +22,6 @@ Real SQLite in tmp_path (no mocked DB — repo rule).
 from __future__ import annotations
 
 import importlib
-import os
 import sqlite3
 from unittest.mock import patch
 
@@ -88,10 +87,10 @@ def _recall_row(db_path: str, file_path: str) -> tuple[int, str | None]:
 def test_read_stamps_recall_count_e2e(client, tmp_path):
     """POST /save then GET /read: the chunk's recall_count increments in the DB.
 
-    This is the integration seam #479 requires: the FastAPI /read handler calls
-    store.record_recall_for_paths. If that call is removed or the file_path
-    doesn't match any chunks, recall_count stays at 0 and this test fails.
-    """
+    This is the integration seam the ADR-015 MCP-body parity coverage requires: the
+    FastAPI /read handler calls store.record_recall_for_paths. If that call is removed
+    or the file_path doesn't match any chunks, recall_count stays at 0 and this test
+    fails. """
     scan, embed = _patch_io()
     with scan, embed:
         resp = client.post("/save", json={
@@ -100,7 +99,7 @@ def test_read_stamps_recall_count_e2e(client, tmp_path):
             "slug": "recall-e2e-slug",
         })
     assert resp.status_code == 200, resp.text
-    save_data = resp.json()
+    _save_data = resp.json()
     # The relative path the /read endpoint accepts (e.g. "insights/recall-e2e-slug.md")
     rel_path = "insights/recall-e2e-slug.md"
 

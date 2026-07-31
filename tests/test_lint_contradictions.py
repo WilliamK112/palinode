@@ -1,5 +1,5 @@
 """
-Tests for the deep semantic contradiction detection feature (#98).
+Tests for the deep semantic contradiction detection feature.
 
 All LLM calls are mocked via the _llm_caller injection parameter so the
 tests never hit a real HTTP endpoint. Embeddings are injected as plain
@@ -8,13 +8,11 @@ Python lists so the embedder HTTP call is also bypassed.
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import pytest
 
 from palinode.core.config import config
 from palinode.lint.contradictions import (
-    DEFAULT_MAX_LLM_CALLS,
     DEFAULT_SIMILARITY_THRESHOLD,
     _cosine_similarity,
     _parse_llm_verdict,

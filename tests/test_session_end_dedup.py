@@ -1,4 +1,4 @@
-"""Tests for session-end semantic dedup (#126).
+"""Tests for session-end semantic dedup.
 
 Option (a): when ``palinode_session_end`` is called and a recently indexed
 save has near-identical content, skip the individual file write but still
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import math
 import os
-import time
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
@@ -290,5 +289,5 @@ def test_recent_save_embeddings_returns_embedding_data(_isolated_env):
     assert slug == "projects-x"
     assert len(vec) == EMBED_DIM
     # The recovered vector should match the inserted one to within float32 precision
-    delta = max(abs(a - b) for a, b in zip(vec, emb))
+    delta = max(abs(a - b) for a, b in zip(vec, emb, strict=False))
     assert delta < 1e-5

@@ -60,7 +60,7 @@ def _independent_identity(name: str, category: str, names_by_category: dict[str,
 def check_entity_aliases(
     entity_references: dict[str, int],
 ) -> list[dict[str, Any]]:
-    """Flag entity refs that look like aliases of one another (#693).
+    """Flag entity refs that look like aliases of one another.
 
     The problem: refs are free text written per save, with no canonicalization.
     The same subject ends up as several nodes, and every lookup returns a
@@ -116,7 +116,7 @@ def check_entity_aliases(
         for ref, name, count in members:
             buckets.setdefault(_alias_key(name), []).append((ref, name, count))
 
-        for key, bucket in sorted(buckets.items()):
+        for _key, bucket in sorted(buckets.items()):
             if len(bucket) > 1:
                 clusters.append({
                     "kind": "separator",
@@ -141,7 +141,7 @@ def check_entity_aliases(
         # the separator pass already grouped.
         reported: set[frozenset[str]] = set()
         ordered = sorted(members, key=lambda m: len(m[1]))
-        for i, (short_ref, short_name, _) in enumerate(ordered):
+        for i, (_short_ref, short_name, _) in enumerate(ordered):
             for long_ref, long_name, _ in ordered[i + 1:]:
                 if not _is_token_prefix(short_name.lower(), long_name.lower()):
                     continue

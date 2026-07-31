@@ -1,5 +1,5 @@
 """
-Tests for the fts5_sync doctor check (#316).
+Tests for the fts5_sync doctor check.
 
 Verifies that row-count drift between ``chunks`` and ``chunks_fts`` is
 detected and reported correctly.
@@ -11,7 +11,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
 
 from palinode.core.config import Config
 from palinode.diagnostics.runner import run_one

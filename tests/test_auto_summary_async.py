@@ -1,4 +1,4 @@
-"""Tests for async auto_summary — issue #403.
+"""Tests for async auto_summary — the fix for auto_summary blocking the save response.
 
 Covers:
 - /save no longer calls _generate_summary inline (no LLM call in the hot path).
@@ -12,10 +12,8 @@ Covers:
 """
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -171,7 +169,7 @@ class TestGenerateSummariesState:
 
 
 class TestGenerateDescriptionsBackfill:
-    """#405: the /generate-summaries walk fills missing descriptions too —
+    """the async auto-summary change: the /generate-summaries walk fills missing descriptions too —
     the watcher's description-fill route depends on this. Descriptions are not
     core-gated; every file missing one gets it."""
 

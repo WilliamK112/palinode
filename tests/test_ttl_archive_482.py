@@ -1,10 +1,10 @@
-"""TTL / auto-archive for ephemeral monitoring memories (ADR-015 §2.3, #482).
+"""TTL / auto-archive for ephemeral monitoring memories (ADR-015 §2.3, the TTL/auto-archive work).
 
 Covers:
   - duration/expiry parsing (`parse_ttl`, `compute_expires_at`, `normalize_expiry`);
   - `store.set_status_for_path` propagating status to the chunk index;
   - the `archive_expired` sweep end-to-end on real SQLite + tmp_path: an expired
-    memory becomes status: archived and drops out of default recall (ties #485's
+    memory becomes status: archived and drops out of default recall (ties the archived-status recall fix's
     exclude_status) while remaining retrievable on demand; future/already-archived
     memories and daily/ notes are left alone; dry_run writes nothing;
   - the `/save` API resolving `metadata.ttl` → `expires_at` and rejecting

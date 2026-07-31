@@ -1,4 +1,4 @@
-"""CLI commands for the Obsidian embedding-tool MVP (#210, #235).
+"""CLI commands for the Obsidian embedding-tool MVP.
 
 Four commands, mirroring the MCP / API surface:
 
@@ -7,9 +7,9 @@ Four commands, mirroring the MCP / API surface:
 * ``palinode orphan-repair`` — given a broken ``[[wikilink]]``, list files
   semantically near the link target.
 * ``palinode cluster-neighbors`` — given a file path, list semantically
-  related files NOT already wikilinked to or from it (#235).
+  related files NOT already wikilinked to or from it.
 * ``palinode topic-coverage`` — given a topic phrase, check whether any wiki
-  page already covers it (#235).
+  page already covers it.
 
 All commands honor TTY-aware output (text for humans, JSON when piped) per the
 project CLI convention.

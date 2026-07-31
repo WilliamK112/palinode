@@ -1,29 +1,28 @@
-"""Security test suite — OWASP top-10 coverage (issue #123).
+"""Security test suite — OWASP top-10 coverage (the security test suite).
 
-Uses FastAPI TestClient against the real API.  Each test is independent.
+Uses FastAPI TestClient against the real API. Each test is independent.
 Where a control is confirmed to be in place the test asserts the correct
-rejection.  Where a control is not yet hardened the test is marked
+rejection. Where a control is not yet hardened the test is marked
 ``@pytest.mark.xfail`` so CI stays green while the issue is tracked.
 
 Coverage map
 ------------
-- Path traversal      → test_path_traversal_*
-- Null bytes          → test_null_byte_path_rejected
-- Symlink escape      → test_symlink_outside_root_rejected
-- SQL injection       → test_sql_injection_*
-- SSRF                → test_ssrf_*
-- CORS enforcement    → test_cors_*
-- Rate limiting       → test_rate_limit_write / test_rate_limit_search
-- Request size        → test_oversized_request_rejected
-- No stack traces     → test_no_stack_trace_in_500
-- YAML injection      → test_yaml_frontmatter_injection_is_inert
-- CRLF header inj.   → test_crlf_in_source_field_is_safe
-- XSS in content      → test_script_tag_injection_blocked
+- Path traversal → test_path_traversal_*
+- Null bytes → test_null_byte_path_rejected
+- Symlink escape → test_symlink_outside_root_rejected
+- SQL injection → test_sql_injection_*
+- SSRF → test_ssrf_*
+- CORS enforcement → test_cors_*
+- Rate limiting → test_rate_limit_write / test_rate_limit_search
+- Request size → test_oversized_request_rejected
+- No stack traces → test_no_stack_trace_in_500
+- YAML injection → test_yaml_frontmatter_injection_is_inert
+- CRLF header inj. → test_crlf_in_source_field_is_safe
+- XSS in content → test_script_tag_injection_blocked
 """
 from __future__ import annotations
 
 import os
-import time
 from unittest import mock
 
 import pytest

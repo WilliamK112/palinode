@@ -1,4 +1,4 @@
-"""Tests for the path-traversal hardening of `_resolve_memory_path` (#284).
+"""Tests for the path-traversal hardening of `_resolve_memory_path`.
 
 Tied to the marketplace security review (Tier B finding #2). The legacy
 implementation used ``os.path.realpath`` plus ``os.path.commonpath``. Both

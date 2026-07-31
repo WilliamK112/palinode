@@ -1,12 +1,14 @@
-"""Ranking tests for the human-priority nudge weight (#486, follow-up to #259/#478).
+"""Ranking tests for the human-priority nudge weight (follow-up to the human-assigned
+importance frontmatter field work/the human-assigned priority field).
 
 `search_hybrid` applies a bounded priority nudge after RRF normalization:
 
-    score += _PRIORITY_RANK_WEIGHT * (priority - 3)     # priority in 1..5
+    score += _PRIORITY_RANK_WEIGHT * (priority - 3) # priority in 1..5
 
-clamped to [0, 1]. #259 specified the weight should be *tuned against a ranking
-test* rather than asserted as a magic fused score. These tests pin the two
-ordering properties that justify the value:
+clamped to [0, 1]. The report behind the human-assigned importance frontmatter field
+work specified the weight should be *tuned against a ranking test* rather than asserted
+as a magic fused score. These tests pin the two ordering properties that justify the
+value:
 
   1. **Priority must not override clear relevance** — a strong match at normal
      priority (3) still outranks a clearly weaker match at max priority (5).

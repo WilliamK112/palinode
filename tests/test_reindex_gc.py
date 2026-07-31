@@ -1,4 +1,4 @@
-"""Regression tests for reindex garbage-collecting removed files (#308)."""
+"""Regression tests for reindex garbage-collecting removed files."""
 from __future__ import annotations
 
 from pathlib import Path

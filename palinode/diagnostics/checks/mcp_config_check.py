@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 from palinode.cli.mcp_config import (
     ConfigResult,
@@ -141,7 +140,7 @@ def mcp_config_homes(ctx: DoctorContext) -> CheckResult:
         "",
     ]
     for a, b, diff in divergences:
-        remediation_parts.append(f"Differs:")
+        remediation_parts.append("Differs:")
         remediation_parts.append(f"  A: {a.path}")
         remediation_parts.append(f"  B: {b.path}")
         if diff:

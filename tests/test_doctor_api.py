@@ -13,9 +13,7 @@ tmp_path DB, no SQLite mocking).
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
-from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient

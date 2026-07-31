@@ -1,10 +1,9 @@
 """Tests for the wiki_drift lint check.
 
-Deliverable D of issue #210.
+Deliverable D of issue the Obsidian integration MVP.
 """
 from __future__ import annotations
 
-import pytest
 
 from palinode.core.lint import check_wiki_drift, _AUTO_FOOTER_MARKER
 from palinode.core.config import config

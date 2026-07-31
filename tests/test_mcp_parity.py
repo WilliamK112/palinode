@@ -1,4 +1,4 @@
-"""MCP-surface parity for the ADR-015 write-semantics params (#479).
+"""MCP-surface parity for the ADR-015 write-semantics params.
 
 ADR-010 parity requires the MCP surface to expose — and forward to the API — the
 same capabilities as the REST/CLI surfaces. The write-semantics params

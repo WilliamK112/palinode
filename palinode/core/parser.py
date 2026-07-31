@@ -475,7 +475,7 @@ def parse_external_refs(metadata: dict[str, Any]) -> dict[str, str] | None:
 
 
 def parse_sources(metadata: dict[str, Any]) -> list[dict[str, str]]:
-    """Extract the ``sources:`` quote anchors from parsed frontmatter (#459).
+    """Extract the ``sources:`` quote anchors from parsed frontmatter.
 
     Each anchor is a ``{ref, quote, quote_hash}`` dict pointing a memory at the
     exact passage it cites in another file. This is the typed accessor for the

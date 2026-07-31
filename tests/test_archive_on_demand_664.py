@@ -1,4 +1,5 @@
-"""#664 — on-demand ARCHIVE / SUPERSEDE for one named memory.
+"""the no on-demand archive/supersede for a specific work — on-demand ARCHIVE /
+SUPERSEDE for one named memory.
 
 Covers the entry point into the existing archival machinery: the frontmatter
 flip shared with the TTL sweep, the executor's ``{base}-history.md`` audit

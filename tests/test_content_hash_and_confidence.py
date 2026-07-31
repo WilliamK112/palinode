@@ -1,4 +1,5 @@
-"""Tests for #114 (content_hash in frontmatter) and #113 (confidence field)."""
+"""Tests for the content_hash in frontmatter on save work (content_hash in frontmatter)
+and the confidence field work (confidence field)."""
 import hashlib
 import importlib
 import pytest

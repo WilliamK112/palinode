@@ -1,13 +1,13 @@
-"""E2E tests for the MCP tool layer (issue #122).
+"""E2E tests for the MCP tool layer (issue the E2E test suite work).
 
 Each test calls ``_dispatch_tool`` directly — the async dispatcher that
-implements every ``palinode_*`` MCP tool.  The dispatcher makes HTTP calls
+implements every ``palinode_*`` MCP tool. The dispatcher makes HTTP calls
 to the Palinode API, which we redirect in-process via an ``httpx.MockTransport``
 shim over FastAPI's ``TestClient`` (same pattern as
 ``tests/integration/test_session_end_e2e_l1_l3.py``).
 
 This exercises the full MCP → API → SQLite → filesystem path without
-running a real palinode-api process or touching the network.  Only the
+running a real palinode-api process or touching the network. Only the
 embedder and LLM helpers are mocked (no Ollama required).
 
 Coverage:
@@ -96,7 +96,6 @@ def dispatch(api_tc):
     its transport for one that delegates synchronously to the ``TestClient``
     so no real server needs to be running.
     """
-    from palinode.api.server import app as _app
 
     def _mock_transport_handler(request: httpx.Request) -> httpx.Response:
         # Reconstruct path + query string.
@@ -122,7 +121,7 @@ def dispatch(api_tc):
         from palinode.mcp import _dispatch_tool
 
         # Patch AsyncClient to use our in-process transport
-        original_async_client = httpx.AsyncClient
+        _original_async_client = httpx.AsyncClient
 
         class _InProcessAsyncClient(httpx.AsyncClient):
             def __init__(self, **kwargs):

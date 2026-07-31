@@ -126,13 +126,13 @@ def build_context_digest(
     ADR-009 scoped mode: memories not visible on the chain are dropped from
     every digest section — an off-chain explicit ``scope:`` (Layer 1), a
     ``private`` memory whose owner is off-chain, or a ``restricted`` memory
-    whose ``access`` the chain doesn't intersect (#108). Memories without an
+    whose ``access`` the chain doesn't intersect. Memories without an
     explicit scope always pass (ADR-009 §7).
 
     ``None`` = classic mode: scope isolation is off (all ``core: true``
     memories, the pre-slice-4 behavior) but ``private``/``restricted``
     memories are still withheld — classic is a *selection* mode, and it was
-    never meant to be a way around access control (#108).
+    never meant to be a way around access control.
     """
     resolved = resolve_project(cwd=cwd, project=project)
     memories = _scan_memories(config.memory_dir)

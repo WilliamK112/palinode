@@ -107,7 +107,7 @@ def test_project_from_cwd_helper():
 
 def test_session_end_with_full_metadata(tmp_path, monkeypatch):
     """All six metadata fields should land in the daily note AND in the
-    indexed file's frontmatter (#145)."""
+    indexed file's frontmatter."""
     memory_dir = str(tmp_path)
     monkeypatch.setattr(config, "memory_dir", memory_dir)
     monkeypatch.setattr(config.git, "auto_commit", False)
@@ -229,7 +229,7 @@ def _run_session_end_with_push(tmp_path, monkeypatch, *, push, auto_push,
 
 
 def test_session_end_push_true_ships_note(tmp_path, monkeypatch):
-    """push=True invokes the push and reports pushed=True, even with auto_push off (#378)."""
+    """push=True invokes the push and reports pushed=True, even with auto_push off."""
     result, mpush = _run_session_end_with_push(
         tmp_path, monkeypatch, push=True, auto_push=False)
     assert mpush.called, "push=True must invoke git_tools.push (#378)"
@@ -264,7 +264,7 @@ def test_session_end_push_false_overrides_auto_push(tmp_path, monkeypatch):
 
 def test_session_end_push_failure_reported_honestly(tmp_path, monkeypatch):
     """A failed push (no remote/conflict) reports pushed=False so the wrap can
-    tell the user the note is committed-but-not-pushed (#378)."""
+    tell the user the note is committed-but-not-pushed."""
     result, mpush = _run_session_end_with_push(
         tmp_path, monkeypatch, push=True, auto_push=False,
         push_result="Push failed: no configured push destination")
@@ -274,9 +274,9 @@ def test_session_end_push_failure_reported_honestly(tmp_path, monkeypatch):
 
 
 def test_session_end_date_is_wallclock_not_existing_files(tmp_path, monkeypatch):
-    """Regression guard (#577): the daily filename and the `## Session End —` stamp
+    """Regression guard: the daily filename and the `## Session End —` stamp
     must come from wall-clock now() at call time — never from the latest existing
-    daily file or any cached/persisted date. (#577 reported a stale stamp that
+    daily file or any cached/persisted date. (the session-end stale-dating work reported a stale stamp that
     predated the server's own start; current code is wall-clock-correct and this
     pins it so a future refactor can't reintroduce file/state-derived dating.)"""
     from datetime import datetime, timezone
