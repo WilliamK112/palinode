@@ -169,41 +169,131 @@ def commit_memory_file(file_path: str, message: str) -> bool:
     return commit_memory_files([file_path], message)
 
 
+#: Directories the default (caller passed no ``paths``) diff reports on.
+#:
+#: Every category the save path writes to — ``people``/``decisions``/
+#: ``projects``/``insights``/``research``/``inbox`` — plus the ``daily``
+#: journal. ``research/`` and ``inbox/`` were absent from the original list,
+#: which made two real save categories invisible to the "what changed?"
+#: surface; ``inbox/`` is where the ADR-015 deterministic-monitor writers land
+#: their incidents, so the omission hid exactly the telemetry an operator
+#: queries this tool to find. ``tests/test_git_tools_diff.py`` pins this
+#: against the save-path category map so a new category cannot be added
+#: without becoming visible here.
+DEFAULT_DIFF_PATHS: tuple[str, ...] = (
+    "people/",
+    "projects/",
+    "decisions/",
+    "insights/",
+    "research/",
+    "inbox/",
+    "daily/",
+)
+
+
+def _empty_tree() -> str:
+    """The repo's empty-tree object id, derived (not hardcoded).
+
+    Diffing against it yields "everything that currently exists", which is the
+    correct base when the whole history is younger than the requested window.
+    Derived via ``git hash-object`` rather than pinned to the well-known SHA-1
+    constant so the value is right in a SHA-256 repository too.
+    """
+    return _run_git("hash-object", "-t", "tree", os.devnull).stdout.strip()
+
+
+def _diff_window_base(since: str) -> str | None:
+    """Resolve the tree-ish that a ``since`` cutoff should be diffed against.
+
+    Returns the newest commit at or before ``since`` — so ``base..HEAD`` spans
+    exactly the commits inside the window — or the empty tree when every commit
+    in the repo falls inside it. Returns ``None`` when the repo has no commits.
+
+    Anchoring on the *preceding* commit is what makes the lookback mean what it
+    says. Picking a base with ``git log --after=<since> --reverse -1`` does not
+    return the oldest commit in the window: ``-1`` limits the newest-first walk
+    and ``--reverse`` then reverses an already-single-element result. The base
+    therefore came back as HEAD, and every lookback silently collapsed to "the
+    most recent commit" no matter how many days were asked for.
+    """
+    if _run_git("rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
+        return None
+    base = _run_git("rev-list", "-1", f"--before={since}", "HEAD").stdout.strip()
+    return base or _empty_tree()
+
+
+def _changed_files(base: str, filter_paths: list[str] | None = None) -> set[str]:
+    """Paths changed between ``base`` and HEAD, optionally narrowed to ``filter_paths``.
+
+    NUL-separated so a path containing a space or a quote is returned verbatim
+    rather than in git's quoted form.
+    """
+    cmd = ["diff", "--name-only", "-z", base, "HEAD"]
+    if filter_paths:
+        cmd.extend(["--", *filter_paths])
+    result = _run_git(*cmd)
+    return {p for p in result.stdout.split("\x00") if p}
+
+
+def _by_top_level(file_paths: set[str]) -> list[tuple[str, int]]:
+    """Group paths by their top-level directory, most-changed first."""
+    counts: dict[str, int] = {}
+    for path in file_paths:
+        top = f"{path.split('/', 1)[0]}/" if "/" in path else path
+        counts[top] = counts.get(top, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
 def diff(days: int = 7, paths: list[str] | None = None) -> str:
     """Show what memory files changed in the last N days.
 
-    Returns a human-readable summary of additions, modifications,
-    and deletions. Includes both a stat summary and the actual
-    content changes (truncated per file).
+    Returns a human-readable summary of additions, modifications, and
+    deletions: a stat summary, the actual content changes (truncated), and —
+    when the path filter hid anything — an explicit account of what was left
+    out.
+
+    This is a diagnostic surface, so it states its own blind spots. A filter
+    that silently drops changes turns "I have no data" into "I have proof of
+    absence", and a caller asking "did anything change?" acts on the answer.
+    Every exclusion this function applies is therefore reported: never a bare
+    "no changes" when changes existed and were filtered away.
+
+    Note that the filter is by *path* only. Unlike default semantic recall,
+    which hard-excludes ``metadata.kind: telemetry`` under ADR-015 §2.3, this
+    view applies no ``kind`` predicate — machine and monitor writes appear the
+    same as any other change. Recall exclusion protects ranked relevance;
+    provenance must not hide anything it was asked about.
 
     Args:
         days: Look back this many days.
         paths: Optional list of paths to filter (e.g., ['projects/', 'decisions/']).
-            Defaults to all memory directories.
+            Defaults to :data:`DEFAULT_DIFF_PATHS`.
 
     Returns:
-        Formatted diff output. Empty string if no changes.
+        Formatted diff output.
     """
-    # Find the commit closest to N days ago
     since = (_utc_now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    
-    # Get the first commit after the cutoff date
-    result = _run_git("log", "--after", since, "--reverse", "--format=%H", "-1")
-    base_commit = result.stdout.strip()
-    
-    if not base_commit:
+
+    base = _diff_window_base(since)
+    if base is None:
         return f"No commits found in the last {days} days."
 
+    caller_filtered = bool(paths)
+    filter_paths = list(paths) if paths else list(DEFAULT_DIFF_PATHS)
+    filter_label = ", ".join(filter_paths)
+
+    changed_all = _changed_files(base)
+    if not changed_all:
+        return f"No memory files changed in the last {days} days."
+
+    changed_shown = _changed_files(base, filter_paths)
+    hidden = changed_all - changed_shown
+
     # Stat summary
-    cmd = ["diff", "--stat", f"{base_commit}^..HEAD"]
-    filter_paths = paths or ["people/", "projects/", "decisions/", "insights/", "daily/"]
-    cmd.extend(["--", *filter_paths])
-    stat = _run_git(*cmd)
+    stat = _run_git("diff", "--stat", base, "HEAD", "--", *filter_paths)
 
     # Content diff (truncated)
-    cmd_diff = ["diff", "--no-color", "-U2", f"{base_commit}^..HEAD"]
-    cmd_diff.extend(["--", *filter_paths])
-    content = _run_git(*cmd_diff)
+    content = _run_git("diff", "--no-color", "-U2", base, "HEAD", "--", *filter_paths)
 
     # Truncate long diffs
     lines = content.stdout.split("\n")
@@ -214,11 +304,28 @@ def diff(days: int = 7, paths: list[str] | None = None) -> str:
 
     output = f"## Memory Changes (last {days} days)\n\n"
     output += f"### Summary\n```\n{stat.stdout}\n```\n\n"
+
+    if hidden:
+        whose = "your path filter" if caller_filtered else "the default path filter"
+        breakdown = " · ".join(f"{top} {count}" for top, count in _by_top_level(hidden))
+        output += (
+            f"### Not shown\n"
+            f"{len(hidden)} changed file(s) in this window were excluded by "
+            f"{whose} ({filter_label}):\n"
+            f"  {breakdown}\n"
+            f"Re-run with `paths` naming those directories to see them.\n\n"
+        )
+
     if content_text.strip():
         output += f"### Changes\n```diff\n{content_text}\n```"
+    elif hidden:
+        output += (
+            f"No changes under {filter_label} — but {len(hidden)} file(s) did change "
+            f"elsewhere in this window (see 'Not shown' above)."
+        )
     else:
         output += "No content changes in the specified paths."
-    
+
     return output
 
 

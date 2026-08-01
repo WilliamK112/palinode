@@ -11,7 +11,14 @@ people's names, and the content scrub does not catch collaborator surnames
 
 from __future__ import annotations
 
-from palinode.core.lint import _alias_key, _is_token_prefix, check_entity_aliases
+import pytest
+
+from palinode.core.lint import (
+    _alias_key,
+    _is_stray_short_form,
+    _is_token_prefix,
+    check_entity_aliases,
+)
 
 
 def _kinds(clusters):
@@ -148,20 +155,25 @@ def test_a_longer_ref_used_across_categories_is_demoted() -> None:
     assert _conf(clusters, ["project/alpha", "project/alpha-dev"]) == "low"
 
 
-def test_a_longer_ref_seen_nowhere_else_stays_high() -> None:
-    """A straggler spelling: the shape of a genuine short/full split."""
+def test_a_persons_short_and_full_form_stay_high() -> None:
+    """The founding shape: a given name beside the full name, both in real use.
+
+    A person's longer form is nearly always the same person written out, so in a
+    category that names people a prefix match is evidence on its own. Nowhere
+    else is that true — see the repo-family cases below.
+    """
     clusters = check_entity_aliases({"person/bravo": 81, "person/bravo-charlie": 8})
     assert _conf(clusters, ["person/bravo", "person/bravo-charlie"]) == "high"
 
 
-def test_a_lone_straggler_survives_the_demotion() -> None:
+def test_a_stray_short_form_survives_the_demotion() -> None:
     """The demotion asks about the LONGER form; it must not hide a stray SHORT one.
 
     Observed on real data: a 1-file `x` beside an established `x-mcp` was demoted
     purely because `x-mcp` is established — hiding a real one-line merge.
     """
     clusters = check_entity_aliases({
-        "project/echo": 1,             # <- lone straggler, one category
+        "project/echo": 1,             # <- stray short form, one category
         "project/echo-mcp": 17,
         "service/echo-mcp": 1,         # <- longer form IS established
     })
@@ -191,3 +203,184 @@ def test_high_confidence_clusters_sort_first() -> None:
 def test_every_cluster_carries_a_confidence() -> None:
     clusters = check_entity_aliases({"person/hotel": 5, "person/hotel-india": 2})
     assert clusters and all(c["confidence"] in {"high", "low"} for c in clusters)
+
+
+# --- the labelled set -------------------------------------------------------
+#
+# Hand-labelled from a curation pass over a live 700-ref store, where a prefix
+# match on its own had promoted whole repo families to high confidence. Every
+# ref below is SYNTHETIC (see the module docstring); what is real is the SHAPE —
+# the file counts and the cross-category presence are those measured.
+#
+# It holds both directions on purpose. A change that demoted everything would
+# clear the wrong-highs and break the genuine splits, and only the second half
+# of the set can tell the two apart.
+
+_LABELLED_STORE: dict[str, int] = {
+    # (A) Repo/model/milestone families. A sibling adds a qualifier token and
+    # lives under exactly one category, so the cross-category demotion has
+    # nothing to catch and a bare prefix match used to promote all of these.
+    "project/alpha": 528,
+    "project/alpha-os": 19,             # sibling repo, well established
+    "project/alpha-assistant": 2,       # sibling repo, thin
+    "project/bravo": 97,
+    "project/bravo-research": 1,        # sibling repo, referenced once
+    "project/charlie": 495,
+    "project/charlie-public-sync": 6,   # a distinct concern, not a spelling
+    "project/charlie-test": 1,
+    "project/delta": 72,
+    "project/delta-trial": 1,
+    "milestone/m9": 1,
+    "milestone/m9.1": 1,                # a later milestone, not a spelling
+    "model/echo-3": 1,
+    "model/echo-3.1-32b": 1,            # a model variant
+    "model/foxtrot-coder": 1,
+    "model/foxtrot-coder-next": 1,
+
+    # (B) What the cross-category demotion was built for. These were already
+    # correct and must not move: the longer form has an identity of its own.
+    "project/golf": 495,
+    "project/golf-dev": 19,
+    "insight/golf-dev": 1,
+    "project/hotel": 93,
+    "project/hotel-core": 83,
+    "insight/hotel-core": 1,
+    "project/india-core": 107,
+    "project/india": 58,
+    "decision/india-core": 1,
+
+    # (C) Genuine splits. Losing these is the way a fix for (A) fails.
+    "person/juliett": 160,              # given name and full name, both in use
+    "person/juliett-kilo": 95,
+    "person/juliettkilo": 1,
+    "person/lima": 82,
+    "person/lima-mike": 9,
+    "project/november": 1,              # stray short form of an anchor
+    "project/november-mcp": 17,
+    "service/november-mcp": 1,
+    "project/oscar": 1,
+    "project/oscar-council": 23,
+}
+
+# (A) — ranked high before, and every one of them a wrong join.
+_WRONG_HIGHS = [
+    ["project/alpha", "project/alpha-os"],
+    ["project/alpha", "project/alpha-assistant"],
+    ["project/bravo", "project/bravo-research"],
+    ["project/charlie", "project/charlie-public-sync"],
+    ["project/charlie", "project/charlie-test"],
+    ["project/delta", "project/delta-trial"],
+    ["milestone/m9", "milestone/m9.1"],
+    ["model/echo-3", "model/echo-3.1-32b"],
+    ["model/foxtrot-coder", "model/foxtrot-coder-next"],
+]
+
+# (B) — correctly low before, and still low.
+_CORRECT_LOWS = [
+    ["project/golf", "project/golf-dev"],
+    ["project/hotel", "project/hotel-core"],
+    ["project/india", "project/india-core"],
+]
+
+# (C) — correctly high before, and still high.
+_CORRECT_HIGHS = [
+    ["person/juliett", "person/juliett-kilo"],
+    ["person/lima", "person/lima-mike"],
+    ["project/november", "project/november-mcp"],
+    ["project/oscar", "project/oscar-council"],
+]
+
+
+@pytest.mark.parametrize("pair", _WRONG_HIGHS, ids=lambda p: p[1])
+def test_family_siblings_are_not_high_confidence_merges(pair) -> None:
+    """A qualifier token added to a name is how a FAMILY branches.
+
+    `<repo>` and `<repo>-os` are two repos; `m9` and `m9.1` are two milestones.
+    Nothing in the store says so — a sibling lives under one category, so the
+    cross-category demotion sees nothing — and a prefix match alone must not
+    stand in for the evidence that is missing. `confidence` is what an operator
+    sorts and acts on, so a hedge in `detail` does not pay for a wrong high.
+    """
+    assert _conf(check_entity_aliases(_LABELLED_STORE), pair) == "low"
+
+
+@pytest.mark.parametrize("pair", _CORRECT_LOWS, ids=lambda p: p[1])
+def test_the_cross_category_demotion_still_fires(pair) -> None:
+    """The rule this change completes must keep working unchanged."""
+    assert _conf(check_entity_aliases(_LABELLED_STORE), pair) == "low"
+
+
+@pytest.mark.parametrize("pair", _CORRECT_HIGHS, ids=lambda p: p[1])
+def test_genuine_splits_stay_high(pair) -> None:
+    """Demoting everything would pass the wrong-high tests and gut the check."""
+    assert _conf(check_entity_aliases(_LABELLED_STORE), pair) == "high"
+
+
+def test_the_labelled_set_promotes_nothing_else() -> None:
+    """Precision over the whole set, not just the labelled pairs.
+
+    Pins the count as well as the members: a future rule that keeps the four
+    genuine splits high while promoting a dozen bystanders is not an
+    improvement, and per-pair assertions alone would not notice.
+    """
+    high = {
+        frozenset(r["ref"] for r in c["refs"])
+        for c in check_entity_aliases(_LABELLED_STORE)
+        if c["confidence"] == "high"
+    }
+    expected = {frozenset(p) for p in _CORRECT_HIGHS}
+    # ...plus the one separator cluster in the set, which needs no judgement.
+    expected.add(frozenset({"person/juliett-kilo", "person/juliettkilo"}))
+    # The three-ref prefix cluster carries the concatenation too.
+    expected.discard(frozenset({"person/juliett", "person/juliett-kilo"}))
+    expected.add(frozenset({
+        "person/juliett", "person/juliett-kilo", "person/juliettkilo",
+    }))
+    assert high == expected
+
+
+# --- the signal that separates them -----------------------------------------
+
+
+def test_stray_short_form_reads_the_asymmetry_in_one_direction_only() -> None:
+    """Which side is thin is the whole signal.
+
+    A rare SHORT form beside an anchor is somebody abbreviating a name the store
+    already owns. A rare LONG form beside an anchor is the opposite — adding a
+    qualifier is how a new artifact enters the store. Reading the asymmetry
+    without its direction promotes the second as eagerly as the first.
+    """
+    assert _is_stray_short_form(1, 17) is True
+    assert _is_stray_short_form(17, 1) is False, "direction is the signal"
+    assert _is_stray_short_form(2, 6) is True
+    assert _is_stray_short_form(3, 90) is False, "three files is a subject"
+    assert _is_stray_short_form(1, 1) is False, "two thin refs, no anchor"
+    assert _is_stray_short_form(1, 2) is False, "no anchor to have strayed from"
+
+
+def test_the_same_shape_is_high_for_a_person_and_low_for_a_repo() -> None:
+    """The two populations name themselves by opposite conventions.
+
+    Identical counts, identical structure, opposite verdicts — the category is
+    doing the work, and that is the claim this change rests on.
+    """
+    people = check_entity_aliases({"person/papa": 60, "person/papa-quebec": 12})
+    repos = check_entity_aliases({"project/papa": 60, "project/papa-quebec": 12})
+    assert _conf(people, ["person/papa", "person/papa-quebec"]) == "high"
+    assert _conf(repos, ["project/papa", "project/papa-quebec"]) == "low"
+
+
+def test_a_thin_short_form_with_its_own_identity_is_not_a_stray() -> None:
+    """Thin is not the same as stray.
+
+    A ref used once but referenced under other categories is a subject nobody
+    has written up yet, not a slip of the pen — the same evidence the demotion
+    reads on the longer form, read on the shorter one.
+    """
+    clusters = check_entity_aliases({
+        "project/romeo": 1,
+        "project/romeo-space": 9,
+        "insight/romeo": 3,            # <- the short form is its own thing
+        "tool/romeo": 1,
+    })
+    assert _conf(clusters, ["project/romeo", "project/romeo-space"]) == "low"

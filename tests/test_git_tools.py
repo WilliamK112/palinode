@@ -14,14 +14,13 @@ def test_blame_attribution():
             assert "2024-01-01 Line 1" in res
             assert "2024-01-02 Line 2" in res
 
-def test_diff_shows_changes():
-    with patch("palinode.core.git_tools._run_git") as mock_run:
-        mock_res = MagicMock()
-        mock_res.stdout = "1 commit\n+ appended line"
-        mock_run.return_value = mock_res
-        
-        res = git_tools.diff(days=7)
-        assert "appended line" in res
+# ``diff`` is covered by tests/test_git_tools_diff.py, against real git
+# repositories. The mocked test that used to live here returned one canned
+# stdout for every `_run_git` call, so it asserted only that the stdout reached
+# the output string — it could not see which arguments were handed to git. That
+# is where the lookback-window defect lived (a `--reverse -1` base selection
+# that always resolved to HEAD), so the mock reported green the whole time the
+# tool was answering "nothing changed" over a store being written to daily.
 
 def test_rollback_creates_new_commit():
     with patch("palinode.core.git_tools._run_git") as mock_run:

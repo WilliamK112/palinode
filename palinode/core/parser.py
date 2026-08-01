@@ -238,29 +238,46 @@ def parse_markdown(content: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     heading_pattern = re.compile(r'^(#{2,3})\s+(.*)$', re.MULTILINE)
     
     sections = []
-    
+
     parts = heading_pattern.split(body)
-    
+
+    # A section_id becomes a chunk id — ``stable_md5_hexdigest(f"{path}#{id}")``
+    # — so two headings that slugify the same map to one row. The second
+    # overwrites the first under ``ON CONFLICT(id) DO UPDATE``, leaving one
+    # section neither vector- nor keyword-searchable, and the file can never
+    # reach a no-op: ``plan`` compares the first section's hash against a row
+    # holding the second's, sees a mismatch, and rewrites every pass. Measured
+    # at 3% of a 400-file store, all of them repeated ``## See also``.
+    #
+    # The first occurrence keeps its bare slug, so a file without duplicates
+    # produces byte-identical ids and needs no reindex. Only the colliding
+    # sections move.
+    used_section_ids: dict[str, int] = {}
+
+    def _unique_section_id(slug: str) -> str:
+        count = used_section_ids.get(slug, 0) + 1
+        used_section_ids[slug] = count
+        return slug if count == 1 else f"{slug}-{count}"
+
     preamble = parts[0].strip()
     if preamble:
         sections.append({
-            "section_id": "root",
+            "section_id": _unique_section_id("root"),
             "content": preamble
         })
-        
+
     for i in range(1, len(parts), 3):
         if i + 2 >= len(parts):
             break
         level = parts[i]
         heading_text = parts[i+1]
         section_content = parts[i+2]
-        
+
         full_content = f"{level} {heading_text}\n{section_content}".strip()
-        slug = slugify(heading_text)
-        
+
         if full_content:
             sections.append({
-                "section_id": slug,
+                "section_id": _unique_section_id(slugify(heading_text)),
                 "content": full_content
             })
 

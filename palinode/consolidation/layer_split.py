@@ -62,22 +62,23 @@ def split_file(file_path: str) -> dict:
     history_sections = []
     
     # Check for frontmatter layer_hint — overrides ALL keyword heuristics for this file.
-    # Add `layer_hint: status` or `layer_hint: identity` to a file's YAML frontmatter
-    # to force all sections into that layer (useful for files that don't follow
-    # standard heading conventions).
+    # Add `layer_hint: identity`, `layer_hint: status`, or `layer_hint: history` to a
+    # file's YAML frontmatter to force the whole body into that layer (useful for files
+    # that don't follow standard heading conventions). All three hints move the body to
+    # the named layer's file, so `status` and `history` both leave the identity file an
+    # empty shell — that is the point of the hint, not a defect.
     layer_hint = metadata.get("layer_hint", "").lower()
     if layer_hint in ("identity", "status", "history"):
-        # Treat the entire file body as the specified layer — no classification needed
+        # Treat the entire file body as the specified layer — no classification needed.
+        # An already-emptied body contributes nothing, which is what makes a re-split
+        # idempotent rather than appending a blank entry to the history file.
+        hinted = [body] if body.strip() else []
         if layer_hint == "status":
-            status_sections = [body]
+            status_sections = hinted
         elif layer_hint == "history":
-            # KNOWN BUG: history_sections is never read — the writer below only
-            # consumes identity_sections and status_sections, so `layer_hint:
-            # history` silently discards the body. Left as-is deliberately:
-            # choosing the correct behavior is a design call, not a lint fix.
-            history_sections = [body]  # noqa: F841
+            history_sections = hinted
         else:
-            identity_sections = [body]
+            identity_sections = hinted
         # Short-circuit to file writing (skip section classification below)
         sections = []  # Empty sections triggers the fallback path below
     
@@ -152,9 +153,26 @@ def split_file(file_path: str) -> dict:
         git_tools.write_memory_file(status_path, st_content)
         results['status'] = status_path
     
-    # History file (core:false, created empty for now)
+    # History file (core:false). Seeded empty when there is nothing to archive yet,
+    # so the layer always exists.
     history_path = os.path.join(dir_path, f"{name}-history.md")
-    if not os.path.exists(history_path):
+    history_body = "\n\n".join(s for s in history_sections if s.strip())
+    history_exists = os.path.exists(history_path)
+
+    if history_exists:
+        # A history file accumulates archived material, so content is *appended*.
+        # Rewriting it wholesale would destroy the superseded facts the layer
+        # exists to preserve — the same silent data loss this branch is here to
+        # avoid. Existing frontmatter is left untouched: it may carry a
+        # `status: archived` flag written by the consolidation executor.
+        if history_body:
+            with open(history_path) as f:
+                existing = f.read()
+            git_tools.write_memory_file(
+                history_path, existing.rstrip("\n") + "\n\n" + history_body + "\n"
+            )
+            results['history'] = history_path
+    else:
         h_meta = {
             'id': f"{id_meta.get('id', name)}-history",
             'category': metadata.get('category', ''),
@@ -165,12 +183,13 @@ def split_file(file_path: str) -> dict:
         }
         if metadata.get('entities'):
             h_meta['entities'] = metadata['entities']
-        
-        h_content = f"---\n{yaml.dump(h_meta, default_flow_style=False)}---\n\n# {name} — History\n\nArchived statuses and superseded facts.\n"
-        
+
+        h_content = f"---\n{yaml.dump(h_meta, default_flow_style=False)}---\n\n# {name} — History\n\n"
+        h_content += f"{history_body}\n" if history_body else "Archived statuses and superseded facts.\n"
+
         git_tools.write_memory_file(history_path, h_content)
         results['history'] = history_path
-    
+
     return results
 
 

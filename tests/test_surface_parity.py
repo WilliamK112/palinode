@@ -121,7 +121,7 @@ def _mcp_tools() -> dict[str, dict[str, Any]]:
                 os.environ.pop("PALINODE_MCP_SURFACE", None)
             else:
                 os.environ["PALINODE_MCP_SURFACE"] = previous
-        _MCP_TOOL_CACHE = {t.name: t.inputSchema for t in tools}
+        _MCP_TOOL_CACHE = {t.name: t.input_schema for t in tools}
     return _MCP_TOOL_CACHE
 
 

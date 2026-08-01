@@ -14,6 +14,234 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Security
 
+## [0.9.8] — 2026-08-01
+
+Ten fixes, and a theme: nearly every one was a surface that answered
+confidently with the wrong thing rather than failing. A diff that reported
+"nothing changed" for any lookback window. A split that reported success while
+destroying the file it was applied to. A server that instructed clients to call
+a tool it refuses them. A freshness check that said `stale` forever. In three
+cases the tests were green throughout, because they fed the code inputs no real
+caller produces.
+
+Also lifts the `mcp<2` cap by migrating to the 2.x server API. That is
+server-internal: a 1.x client drives a 2.x Palinode unchanged — verified over
+the wire — so it is not a compatibility break for anyone's client.
+
+### Added
+
+- **`dry_run` on session-end**, across all three surfaces it has — MCP
+  (`palinode_session_end`), the API (`POST /session-end`), and the CLI
+  (`palinode session-end --dry-run`). Validates the payload, runs the envelope
+  guard, and renders the entry it *would* write, then returns without touching
+  the daily note, the project status file, the index, git, or the remote.
+
+  A failing session-end was previously only characterisable by issuing real
+  ones: every probe that passed validation appended to the permanent record, so
+  diagnosing a write bug meant damaging the thing being diagnosed. Two separate
+  investigations left junk entries behind for exactly this reason. Deliberately
+  does **not** run the semantic dedup probe, because that needs the embedder and
+  a validation path that fails when Ollama is cold is useless precisely when you
+  are debugging; dedup only ever suppresses the individual indexed file, never
+  the paths a dry run reports.
+
+### Changed
+
+- **Migrated the MCP server to the `mcp` 2.x API; the `<2` cap is lifted
+  (#747).** 2.0 replaced the `@server.list_tools()` / `@server.call_tool()`
+  decorators with `on_list_tools=` / `on_call_tool=` constructor arguments,
+  which take `(ctx, params)` and return result objects rather than bare lists.
+  Two thin adapters absorb that; `list_tools` and `call_tool` keep their
+  previous shapes, so the ~2,300 lines of tool schemas and dispatch — and the
+  tests that drive them directly — are untouched. All 30 tool definitions are
+  unchanged too: `Tool.inputSchema` became `input_schema` but kept its alias,
+  so construction still works. Both transports required no change.
+
+  The new requirement is `mcp>=2,<3`. **The upper bound is deliberate**: the
+  previous range was declared unbounded, pip resolved it to a 2.0 that removed
+  the decorators, and every fresh install got a server that could not start.
+  A major is capped now on principle, not just when one has already broken us.
+
+### Fixed
+
+- **`palinode lint` ranked whole repo families as high-confidence merge
+  candidates (#745).** A prefix match (`a` beside `a-b`) was high by default and
+  only demoted when the longer ref also appeared under another category — the
+  signal that correctly separates a project from its own dev repo. A sibling
+  repo has no such signal to offer: `<repo>-os` lives under exactly one
+  category, so it escaped the demotion and was ranked as a near-certain merge.
+  Measured on a 716-ref store, 68 of 81 clusters came back high, among them nine
+  pairs that would each have been a wrong join — two repos, a model variant, a
+  later milestone. `confidence` is the field an operator sorts and acts on, so
+  the honest hedge in `detail` did not survive contact with a ranked worklist.
+
+  A prefix match now has to *earn* high, on one of two positive signals rather
+  than on the absence of a negative one: the short form is a stray beside an
+  established long one (direction matters — a rare *long* form beside an anchor
+  is how a new artifact enters a store, not how one gets spelled twice), or the
+  category names people (a person's longer form is nearly always the same person
+  written out; a project's is nearly always a different artifact). Everything
+  else is demoted, not hidden. The same store now returns 16 high, keeping every
+  separator cluster, every person split, and the stray-short-form merges the
+  check was built to find; the nine wrong joins are all in the low tier.
+- **The MCP `instructions` no longer open by telling a client to call a tool
+  that will refuse it (#762).** The `initialize` response said "call
+  `palinode_session_init` for project context" to every client, while
+  `auto_inject.harnesses_disabled` defaults to `["claude-code"]` — so Claude
+  Code's first tool call of every session was answered with "auto-inject is
+  suppressed for this client". A wasted round-trip per session, and the *first*
+  thing the server said was a request it then declined. The sentence is now
+  chosen from the same `clientInfo.name` the suppression decision already
+  reads: clients that can collect on the digest get the previous text verbatim,
+  the rest are pointed at `palinode_search` instead. The master switch
+  (`auto_inject.enabled: false`) withdraws the promise from everyone, for the
+  same reason. Applied through server middleware — the seam the SDK reserves
+  for shaping the handshake — so both protocol eras are covered: the
+  `initialize` result and the 2026-era `server/discover` result that replaces
+  it. `instructions_enabled: false` still means silence, because only an
+  instructions field already present on the result is rewritten, never added.
+- **`layer_hint: history` destroyed the file it was applied to (#759).**
+  `split_file` accepts three `layer_hint` values, but only two were wired to a
+  writer: the body assigned to `history_sections` was never read. Because the
+  identity layer is written back over the *source* path, the body was not merely
+  misfiled — the original file was overwritten with an empty frontmatter shell
+  and the content existed nowhere afterwards. No error, no warning, and no
+  recovery path: the split does not commit, so there was no new git object to
+  recover from, and the watcher then pruned the file's now-absent chunks from
+  the index. The body is now routed to the `{name}-history.md` layer, matching
+  what `layer_hint: status` has always done with `{name}-status.md`.
+
+  History files **append**. They accumulate archived material — a wholesale
+  rewrite would have destroyed the superseded facts the layer exists to
+  preserve, which is the same defect one file over. Frontmatter written by
+  another producer (the executor's `status: archived`) survives untouched, and
+  a re-split contributes nothing because the source body is empty by then.
+
+  Reachable only through an explicit `palinode split-layers` / `POST
+  /split-layers` against a `core: true` file under `projects/` or `people/`
+  carrying a hand-written `layer_hint: history`; no automatic path invokes the
+  split, and nothing in Palinode ever writes that key.
+- **`palinode_diff` reported only the most recent commit, whatever lookback you
+  asked for — and said nothing about the changes its path filter dropped
+  (#752).** Two defects, both producing a confident "nothing changed" over a
+  store that was being written to daily. It cost a false HIGH incident: a
+  healthy deterministic monitor was diagnosed as dead for eight days, on the
+  strength of two clean lookbacks (9 and 30 days) that were structurally
+  incapable of seeing its writes.
+
+  The window was the first. The base commit came from
+  `git log --after=<since> --reverse --format=%H -1`, which does not return the
+  oldest commit in the window: `-1` limits the newest-first walk and `--reverse`
+  then reverses an already-single-element result. The base was therefore always
+  HEAD, so `diff(days=N)` reported exactly the last commit for every N — `days`
+  changed the heading and nothing else. The base is now the newest commit *at or
+  before* the cutoff (the empty tree when the whole history is inside the
+  window), so `base..HEAD` spans exactly the window, and a store younger than
+  the lookback is reported in full instead of losing its first commit.
+
+  The filter was the second. `research/` and `inbox/` were missing from the
+  default path list despite being categories the save path really writes to —
+  and `inbox/` is where deterministic-monitor writers land their
+  incidents, so the omission hid precisely the telemetry an operator queries
+  this tool to find. Both are now included, pinned against the save-path
+  category map so a new category cannot be added without becoming visible here.
+
+  Beyond the two fixes, the surface now states its own blind spots: anything
+  excluded — by the default list or by the caller's own `paths` — is reported as
+  a count and a per-directory breakdown, and a window whose every change was
+  filtered away no longer renders as "No content changes". A diagnostic tool
+  that filters silently converts *"I have no data"* into *"I have proof of
+  absence"*, and that is the form of wrong answer people act on.
+
+  Deliberately **not** added: an `include_telemetry` parameter mirroring
+  `palinode_search`. Diff applies no `kind` predicate and should not grow one.
+  The default policy excludes `kind: telemetry` from *recall*, where the goal
+  is clean ranking; provenance answers "what changed?" and must not inherit an
+  exclusion that would hide a monitor's writes from the operator diagnosing that
+  monitor. The reported symptom was real; the mechanism was the window and the
+  path list, not a telemetry filter.
+- **A reciprocal `contradicts` back-link now reaches the index, not just disk
+  (#711).** `contradicts` is symmetric, so declaring that A contradicts B adds
+  A to B's frontmatter — a write to a file whose own save has already finished,
+  which nothing in the originating request reindexes. The back-link therefore
+  sat in the file and never in `chunks.metadata`, invisible to recall and to
+  `lint`, the surfaces the reciprocal write exists to serve. Because the file
+  on disk was correct, inspecting it confirmed the link while the index
+  disagreed; it converged wherever the watcher happened to be running and
+  silently did not in an API-only deployment or with the watcher down. The
+  targets are now reindexed directly. This is cheap only because change
+  detection was recently split into body and metadata hashes — the body is
+  byte-identical here, so it takes the metadata-only path and does not
+  re-embed. Before that split the same call would have hit the
+  unchanged-content fast path and done nothing, which is why the gap was
+  worked around rather than closed.
+
+- **The server could no longer read the client's identity from the handshake,
+  and would not have told anyone.** `_session_init_client_name` reached the
+  live session through `server.request_context` (removed in mcp 2.x) and read
+  `clientInfo` (renamed to `client_info`). Both sat under a bare `except`
+  returning `""` — the same value a genuinely unidentifiable client produces —
+  so auto-inject suppression would simply have stopped applying for every
+  harness, silently, with the whole suite still green. The context now arrives
+  via the request adapter, and the failure path logs instead of swallowing:
+  where a fallback is indistinguishable from a legitimate answer, it has to
+  leave a trace. Covered by a test that drives a real handshake with a known
+  client name, since calling the helper directly returns `""` legitimately.
+
+- **Duplicate section headings no longer collide on `chunk_id`, silently
+  unindexing one of them (#727).** A section id becomes a chunk id via
+  `stable_md5_hexdigest(f"{path}#{section_id}")`, and the id was the bare
+  heading slug — so a file with two headings that slugify the same (measured
+  in the wild as repeated `## See also`, 3% of a 400-file store) produced two
+  sections mapping to one row. The second overwrote the first under
+  `ON CONFLICT(id) DO UPDATE`, leaving one section neither vector- nor
+  keyword-searchable while the file on disk looked perfectly intact. It also
+  made those files unable to converge: `plan` compared the first section's
+  hash against a row holding the second's, saw a mismatch, and rewrote every
+  pass. Repeated slugs now get a numeric suffix (`see-also`, `see-also-2`).
+  The **first** occurrence keeps its bare slug, so files without duplicates
+  produce byte-identical ids and need no reindex; only colliding sections
+  move, and the orphaned row is pruned automatically on the next reconcile.
+
+- **`check_freshness` no longer compares two different hash domains, which
+  reported `stale` unconditionally for pre-column rows (#712).** It fell back
+  to the frontmatter `content_hash:` field when `chunks.content_hash` was
+  NULL. Those are not the same hash: the column covers **one section's body**,
+  while the frontmatter field is a SHA-256 of the **whole submitted request
+  body**. The comparison could never match, so every row predating the column
+  reported stale — the exact bug this function's docstring claims to have
+  fixed, reintroduced through the fallback. A missing hash is genuinely
+  unknowable and now reports `unknown`. The frontmatter field stays on disk as
+  provenance; this was its only reader.
+
+- **The envelope guard's co-occurrence message no longer diagnoses a cause it
+  cannot observe.** It reported missing `decisions`/`blockers` as "the
+  signature of a tool envelope absorbed into the string parameter" — but
+  absence is all the server sees, and "destroyed in transit" and "never sent"
+  arrive identically. Stating one of them as the finding meant readers relayed
+  it back as their own diagnosis: two separate investigations concluded the
+  tool envelope was breaking, citing nothing beyond that sentence, and went
+  looking in the transport while the actual cause sat in the payload. The
+  message now reports what was observed, names both candidates, and says only
+  the caller can tell them apart. The structural and positional signals are
+  unchanged — where the arrays did arrive there is no ambiguity to explain.
+
+- **Session-end's remediation advice no longer names a fix half its readers
+  cannot perform.** "Re-send with `decisions`/`blockers` as real JSON arrays"
+  was sent unconditionally, including to callers who *had* sent them. For those
+  callers it is not merely unhelpful — it reads as the complete remedy, so the
+  rational response is to retry unchanged, which fails identically. One caller
+  followed it three times. The rejection now covers both branches: re-send if
+  you did not send them, and if you did, an identical retry will fail the same
+  way — POST the same payload to `/session-end` on the HTTP API instead, which
+  is the escape that works and was previously undocumented in the error. Where
+  the arrays *did* arrive, the message now says so rather than giving array
+  advice that cannot apply.
+
+### Removed
+
+### Security
+
 ## [0.9.7] — 2026-07-31
 
 A narrow repair release. The session-end envelope guard was rejecting

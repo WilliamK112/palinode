@@ -107,7 +107,25 @@ def _status_line(
 # signature. Save has no parameter of that shape and says so at its call site.
 
 #: What session-end tells a rejected caller to do about it.
-_SESSION_REMEDIATION = "Re-send with `decisions`/`blockers` as real JSON arrays."
+#
+# Two remediations, because the two rejection shapes have different fixes and
+# giving the wrong one is worse than giving none. "Re-send with the arrays"
+# was sent unconditionally, including to callers who *had* sent them — it
+# named a fix they could not perform, and one caller followed it three times,
+# each retry failing identically because the advice addressed a cause that was
+# not the cause. Where the arrays did arrive, the markup is the only problem
+# and array advice is noise.
+_SESSION_REMEDIATION_ARRAYS_MISSING = (
+    "If you did not send them, re-send with `decisions`/`blockers` as real "
+    "JSON arrays. If you did send them, they did not survive the trip: build "
+    "the call fresh rather than editing the one that failed — a retry derived "
+    "from a corrupted call tends to carry the corruption forward — or POST the "
+    "same payload to `/session-end` on the HTTP API. Pass `dry_run: true` to "
+    "check a payload without writing anything."
+)
+_SESSION_REMEDIATION_ARRAYS_PRESENT = (
+    "The arrays arrived; only `summary` is in question here."
+)
 
 
 def _first_envelope_complaint(req: SessionEndRequest) -> str | None:
@@ -124,7 +142,10 @@ def _first_envelope_complaint(req: SessionEndRequest) -> str | None:
         req.summary,
         "summary",
         missing_params=() if arrays_present else ("decisions", "blockers"),
-        remediation=_SESSION_REMEDIATION,
+        remediation=(
+            _SESSION_REMEDIATION_ARRAYS_PRESENT if arrays_present
+            else _SESSION_REMEDIATION_ARRAYS_MISSING
+        ),
     )
     if complaint:
         return complaint
@@ -133,7 +154,8 @@ def _first_envelope_complaint(req: SessionEndRequest) -> str | None:
             # An array entry is self-evidently not an absorbed tail — the arrays
             # arrived. Signals 2 and 3 only.
             complaint = envelope_complaint(
-                item, f"{label}[{i}]", remediation=_SESSION_REMEDIATION
+                item, f"{label}[{i}]",
+                remediation=_SESSION_REMEDIATION_ARRAYS_PRESENT,
             )
             if complaint:
                 return complaint
@@ -175,6 +197,13 @@ class SessionEndRequest(BaseModel):
     trigger: str | None = None  # e.g. "manual", "wrap-slash", "ps-slash", "session-end-hook", "clear-fallback-hook", "sigterm", "exit", "other"
     session_id: str | None = None  # opaque from harness if available
     duration_seconds: int | None = None
+    # Validate and render without writing anything. A failing session-end was
+    # previously only diagnosable by issuing real ones: every probe that got
+    # past the guard appended to the daily note, the project status file and
+    # the index, so characterising a write bug meant vandalising the record to
+    # do it. Two separate investigations left junk entries behind for exactly
+    # this reason.
+    dry_run: bool = False
 
 
 @router.post("/session-end")
@@ -234,6 +263,36 @@ def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str
         parts.append("")
 
     session_entry = "\n".join(parts)
+
+    if req.dry_run:
+        # Everything above this line is pure — parameter validation, the
+        # envelope guard, source and project resolution, and the full render.
+        # Everything below it mutates. Cutting here means a dry run exercises
+        # the entire surface that can reject a call while touching nothing,
+        # which is the property that makes a failure characterisable at all.
+        #
+        # Deliberately does NOT run the semantic dedup probe: that needs the
+        # embedder, and a validation path that fails when Ollama is cold is
+        # useless precisely when you are debugging. Dedup only ever suppresses
+        # the individual indexed file, never the daily note or the status
+        # append, so the paths reported here do not depend on it.
+        status_target = None
+        if project:
+            status_path = os.path.join(
+                _memory_base_dir(), "projects", f"{project}-status.md"
+            )
+            # The real path only appends when the status file already exists.
+            if os.path.exists(status_path):
+                status_target = f"projects/{project}-status.md"
+        return {
+            "dry_run": True,
+            "daily_file": f"daily/{today}.md",
+            "status_file": status_target,
+            "individual_file": None,
+            "entry": session_entry,
+            "committed": False,
+            "pushed": False,
+        }
 
     # Write to daily notes
     daily_dir = os.path.join(_memory_base_dir(), "daily")

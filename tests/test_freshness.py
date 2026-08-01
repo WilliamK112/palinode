@@ -1,3 +1,15 @@
+"""Freshness annotation on search results.
+
+Every fixture supplies the hash through the ``content_hash`` **column**, which
+is the only valid comparand. These tests originally passed it through
+``metadata`` instead — the frontmatter fallback — with a hand-computed
+per-section hash. That combination does not occur in production: the
+frontmatter field holds a hash of the whole submitted request body, not of one
+section, so the fallback compared two different domains and reported ``stale``
+unconditionally for every row with a NULL column. The tests hid it by feeding
+the fallback data it would never really receive.
+
+"""
 import time
 import hashlib
 from palinode.core.store import check_freshness
@@ -12,9 +24,11 @@ def test_fresh_result_marked_valid(tmp_path, monkeypatch):
     full_path = tmp_path / file_path
     full_path.write_text(content)
 
-    # Hash the body only (below frontmatter), matching what check_freshness does
+    # Hash the body only (below frontmatter), matching what check_freshness does.
+    # Truncated to 16 chars deliberately: the comparison still supports legacy
+    # short hashes, and that path deserves to stay covered.
     body_hash = hashlib.sha256("Hello".encode()).hexdigest()[:16]
-    results = [{"file_path": file_path, "metadata": {"content_hash": body_hash}}]
+    results = [{"file_path": file_path, "content_hash": body_hash}]
 
     checked = check_freshness(results)
     assert checked[0]["freshness"] == "valid"
@@ -28,7 +42,7 @@ def test_modified_file_marked_stale(tmp_path, monkeypatch):
     full_path.write_text(content)
     
     db_hash = "wrong1234567890a"
-    results = [{"file_path": file_path, "metadata": {"content_hash": db_hash}}]
+    results = [{"file_path": file_path, "content_hash": db_hash}]
     
     checked = check_freshness(results)
     assert checked[0]["freshness"] == "stale"
@@ -50,7 +64,7 @@ def test_deleted_file_marked_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     file_path = "test_deleted.md"
     # Do not create file
-    results = [{"file_path": file_path, "metadata": {"content_hash": "somehash"}}]
+    results = [{"file_path": file_path, "content_hash": "somehash"}]
     checked = check_freshness(results)
     assert checked[0]["freshness"] == "stale"
 
@@ -64,7 +78,7 @@ def test_freshness_check_performance(tmp_path, monkeypatch):
         content = f"Test content {i}"
         (tmp_path / file_path).write_text(content)
         current_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
-        results.append({"file_path": file_path, "metadata": {"content_hash": current_hash}})
+        results.append({"file_path": file_path, "content_hash": current_hash})
 
     start = time.time()
     checked = check_freshness(results)

@@ -29,6 +29,7 @@ Usage (Claude Code / claude_desktop_config.json):
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import os
@@ -57,13 +58,31 @@ logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
 # the only session-start surface MCP-only harnesses (Claude Desktop, Codex
 # CLI, Gemini CLI) have. Deliberately carries NO memory content (no scope
 # risk); the content digest is the explicit palinode_session_init tool.
+#
+# Assembled from fragments because one sentence — the session-start one —
+# depends on the client. See `_instructions_for_client`.
+_INSTRUCTIONS_OPENING = "Palinode persistent memory is connected. "
+_INSTRUCTIONS_DIGEST_SENTENCE = (
+    "At the start of a conversation, call palinode_session_init for project "
+    "context (recent session snapshots, core memories, recent decisions, open "
+    "action items). "
+)
+_INSTRUCTIONS_SEARCH_SENTENCE = (
+    "At the start of a conversation, call palinode_search for project context "
+    "— the palinode_session_init digest is not served to this client. "
+)
+_INSTRUCTIONS_CLOSING = (
+    "Call palinode_search before answering questions about prior decisions or "
+    "project state. Save decisions and insights with palinode_save (include "
+    "the rationale). Call palinode_session_end before the session ends."
+)
+#: What a client that can actually collect on the digest is told.
 _SERVER_INSTRUCTIONS = (
-    "Palinode persistent memory is connected. At the start of a conversation, "
-    "call palinode_session_init for project context (recent session snapshots, "
-    "core memories, recent decisions, open action items). Call palinode_search before answering "
-    "questions about prior decisions or project state. Save decisions and "
-    "insights with palinode_save (include the rationale). Call "
-    "palinode_session_end before the session ends."
+    _INSTRUCTIONS_OPENING + _INSTRUCTIONS_DIGEST_SENTENCE + _INSTRUCTIONS_CLOSING
+)
+#: What a client the digest is withheld from is told instead.
+_SERVER_INSTRUCTIONS_NO_DIGEST = (
+    _INSTRUCTIONS_OPENING + _INSTRUCTIONS_SEARCH_SENTENCE + _INSTRUCTIONS_CLOSING
 )
 
 #: `version` is not optional in practice. The SDK's fallback when it is omitted
@@ -73,10 +92,48 @@ _SERVER_INSTRUCTIONS = (
 #: and the number silently tracked whatever mcp release happened to be
 #: installed. The /status and /health surfaces were corrected separately; the
 #: handshake is the one users actually see.
+async def _on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
+    """Adapter: mcp 2.x hands the handler ``(ctx, params)`` and wants a result
+    object, where 1.x passed nothing and took a bare list.
+
+    ``list_tools`` and ``call_tool`` keep their 1.x shapes on purpose. They are
+    the module's real surface — called directly by tests and by the parity
+    checks — and rewriting them to the transport's calling convention would
+    push an SDK detail through the whole file for no gain. The adapters are the
+    only thing that knows how this SDK version invokes a handler.
+
+    Both are defined before the handlers they call; Python resolves the names at
+    request time, by which point the module is fully loaded.
+    """
+    return types.ListToolsResult(tools=await list_tools())
+
+
+async def _on_call_tool(ctx: Any, params: Any) -> types.CallToolResult:
+    """Adapter: unpacks ``params.name``/``params.arguments`` and wraps the
+    content list.
+
+    ``is_error`` is deliberately left at its default. In 1.x the decorator
+    wrapped a returned list into a result with ``is_error=False``, and this
+    dispatch reports failures as text rather than raising — so setting the flag
+    here would change client-visible behaviour during a transport migration,
+    which is the wrong place to change semantics. Error text is already
+    classified for the audit log inside ``call_tool``.
+    """
+    token = _request_ctx.set(ctx)
+    try:
+        return types.CallToolResult(
+            content=await call_tool(params.name, params.arguments or {})
+        )
+    finally:
+        _request_ctx.reset(token)
+
+
 server = Server(
     "palinode",
     version=__version__,
     instructions=_SERVER_INSTRUCTIONS if config.auto_inject.instructions_enabled else None,
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
 )
 _audit = AuditLogger(config.memory_dir, config.audit)
 
@@ -92,15 +149,138 @@ def _auto_inject_suppressed_for(client_name: str) -> bool:
     return any(h.lower() in lowered for h in config.auto_inject.harnesses_disabled)
 
 
+def _digest_available_to(client_name: str) -> bool:
+    """Whether ``palinode_session_init`` will actually answer this client.
+
+    The two conditions the tool itself checks, in one place: the master switch
+    and the per-harness suppression policy. What the instructions promise and
+    what the tool delivers are read from here so they cannot disagree.
+    """
+    return config.auto_inject.enabled and not _auto_inject_suppressed_for(client_name)
+
+
+def _instructions_for_client(client_name: str) -> str:
+    """The MCP ``instructions`` text tailored to one client.
+
+    A single static text is wrong for any harness in ``harnesses_disabled``:
+    it opens by telling the agent to call ``palinode_session_init``, and that
+    client's first tool call of the session is then answered with a refusal —
+    a wasted round-trip that the server asked for. The clientInfo name that
+    decides the refusal is on the handshake too, so the promise is only made
+    to clients that can collect on it.
+
+    ``instructions_enabled`` is deliberately not consulted here: it is applied
+    where the server is constructed, and this only ever swaps one text for
+    another.
+    """
+    return (
+        _SERVER_INSTRUCTIONS
+        if _digest_available_to(client_name)
+        else _SERVER_INSTRUCTIONS_NO_DIGEST
+    )
+
+
+#: The in-flight request context, published by the tool adapter.
+#:
+#: mcp 1.x exposed the live context as ``server.request_context``; 2.x removed
+#: that global and hands the context to the handler instead. ``call_tool``
+#: deliberately keeps its 1.x signature, so the adapter parks the context here
+#: rather than threading a parameter through the whole dispatch.
+_request_ctx: ContextVar[Any] = ContextVar("palinode_mcp_request_ctx", default=None)
+
+
 def _session_init_client_name() -> str:
-    """Best-effort clientInfo.name from the initialize handshake."""
+    """Best-effort ``client_info.name`` from the initialize handshake.
+
+    Returns ``""`` outside a request context — tests and tooling call the
+    handlers directly, and an unidentifiable client is simply not suppressed.
+
+    The failure path logs. Both of this function's SDK touchpoints moved in the
+    2.x migration (``server.request_context`` was removed, and ``clientInfo``
+    became ``client_info``), and because the whole body sat under a bare
+    ``except`` returning ``""``, both would have failed *silently* — the client
+    would read as unidentifiable, auto-inject suppression would quietly stop
+    applying, and nothing would say so. A swallowed exception on a path whose
+    fallback is indistinguishable from a legitimate answer needs to leave a
+    trace, or the next rename is invisible too.
+    """
+    ctx = _request_ctx.get()
+    if ctx is None:
+        return ""
+    return _client_name_from_ctx(ctx)
+
+
+def _client_name_from_ctx(ctx: Any) -> str:
+    """``client_info.name`` for a request whose client identity is settled.
+
+    True of every request except the handshake itself: the loop path commits
+    the identity when ``initialize`` completes, and the 2026-era per-request
+    envelope arrives with it already resolved onto the connection.
+    """
     try:
-        client_params = getattr(server.request_context.session, "client_params", None)
-        if client_params is not None and client_params.clientInfo is not None:
-            return client_params.clientInfo.name or ""
-    except Exception:  # noqa: BLE001 — outside a request context (tests, tooling)
-        pass
+        client_params = getattr(ctx.session, "client_params", None)
+        if client_params is not None and client_params.client_info is not None:
+            return client_params.client_info.name or ""
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "could not read clientInfo from the handshake (%s: %s) — the client "
+            "will be treated as unidentifiable and auto-inject suppression will "
+            "not apply", type(e).__name__, e,
+        )
     return ""
+
+
+def _client_name_from_initialize_params(params: Any) -> str:
+    """``clientInfo.name`` from the raw ``initialize`` params.
+
+    The handshake commits the connection's client identity only *after* the
+    middleware chain returns, so while the initialize result is being shaped
+    the wire params are the only place the name exists. Parsed with the SDK's
+    own request model rather than by key, so a field rename fails here loudly
+    instead of quietly reading as an unidentifiable client.
+    """
+    if not params:
+        return ""
+    try:
+        init = types.InitializeRequestParams.model_validate(dict(params), by_name=False)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "could not read clientInfo from the initialize params (%s: %s) — the "
+            "client will be treated as unidentifiable and its instructions will "
+            "not be tailored", type(e).__name__, e,
+        )
+        return ""
+    return init.client_info.name or ""
+
+
+async def _tailor_instructions(ctx: Any, call_next: Any) -> Any:
+    """Rewrite the server ``instructions`` for the client that asked for them.
+
+    ``Server.instructions`` is fixed at construction and the SDK reserves the
+    handshake handler, so middleware is the documented seam for shaping the
+    initialize result. Both protocol eras pass through here: the handshake
+    carries the name in the ``initialize`` params, and the 2026-era wire drops
+    ``initialize`` entirely and puts the same ``instructions`` field on
+    ``server/discover``, by which point the envelope has resolved the client
+    onto the connection.
+
+    Only an ``instructions`` field already present on the result is rewritten —
+    nothing is added or removed. That keeps the wire shape the SDK produced for
+    the negotiated version, and leaves a server built with
+    ``instructions_enabled: false`` silent.
+    """
+    result = await call_next(ctx)
+    if not isinstance(result, dict) or "instructions" not in result:
+        return result
+    client_name = (
+        _client_name_from_initialize_params(ctx.params)
+        if ctx.method == "initialize"
+        else _client_name_from_ctx(ctx)
+    )
+    return {**result, "instructions": _instructions_for_client(client_name)}
+
+
+server.middleware.append(_tailor_instructions)
 
 
 def _coerce_str_array(value: Any) -> Any:
@@ -1124,6 +1304,15 @@ def _all_tools() -> list[types.Tool]:
                         # session note in one call; omitted uses server config.
                         "description": "Push the memory repo after committing the session note.",
                     },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": (
+                            "Validate and render the entry without writing, committing, or "
+                            "pushing anything. Use to check a payload before committing it, "
+                            "or to diagnose a failing session-end without leaving entries "
+                            "behind in the daily note."
+                        ),
+                    },
                 },
                 "required": ["summary"],
             },
@@ -1399,7 +1588,6 @@ def _all_tools() -> list[types.Tool]:
     ]
 
 
-@server.list_tools()
 async def list_tools() -> list[types.Tool]:
     tools = _all_tools()
     if _resolve_tool_surface() == "core":
@@ -1409,7 +1597,6 @@ async def list_tools() -> list[types.Tool]:
 
 # ── Tool handlers ─────────────────────────────────────────────────────────────
 
-@server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     start_time = time.monotonic()
     result = await _dispatch_tool(name, arguments)
@@ -1900,11 +2087,25 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 body["source"] = arguments["source"]
             if arguments.get("push") is not None:
                 body["push"] = bool(arguments["push"])
+            if arguments.get("dry_run") is not None:
+                body["dry_run"] = bool(arguments["dry_run"])
 
             resp = await _post("/session-end", json=body, timeout=_SESSION_END_TIMEOUT)
             if resp.status_code != 200:
                 return _text(f"Session-end failed: {resp.text}")
             data = resp.json()
+            if data.get("dry_run"):
+                # Lead with the fact that nothing was written. A dry run that
+                # reads like a capture is worse than no dry run — the caller
+                # moves on believing the session is recorded.
+                targets = [data["daily_file"]]
+                if data.get("status_file"):
+                    targets.append(data["status_file"])
+                return _text(
+                    "DRY RUN — nothing written, committed, or pushed.\n"
+                    f"Would append to: {', '.join(targets)}\n\n"
+                    f"{data.get('entry', '')}"
+                )
             status_msg = f" + status → {data['status_file']}" if data.get("status_file") else ""
             # Report push outcome so the wrap flow can say "pushed" vs "pending"
             # without a second tool call.

@@ -60,7 +60,7 @@ def captured_post(monkeypatch):
 @pytest.mark.asyncio
 async def test_save_schema_declares_update_policy():
     tools = {t.name: t for t in await list_tools()}
-    props = tools["palinode_save"].inputSchema["properties"]
+    props = tools["palinode_save"].input_schema["properties"]
     assert "update_policy" in props, "palinode_save schema dropped update_policy"
     assert set(props["update_policy"].get("enum", [])) >= {"append", "replace"}, (
         "update_policy enum must offer append + replace"
@@ -70,7 +70,7 @@ async def test_save_schema_declares_update_policy():
 @pytest.mark.asyncio
 async def test_save_schema_declares_epistemic():
     tools = {t.name: t for t in await list_tools()}
-    props = tools["palinode_save"].inputSchema["properties"]
+    props = tools["palinode_save"].input_schema["properties"]
     assert "epistemic" in props, "palinode_save schema dropped epistemic"
     assert set(props["epistemic"].get("enum", [])) >= {
         "fact", "inference", "open_question", "unverified"
@@ -80,7 +80,7 @@ async def test_save_schema_declares_epistemic():
 @pytest.mark.asyncio
 async def test_save_schema_declares_claims():
     tools = {t.name: t for t in await list_tools()}
-    props = tools["palinode_save"].inputSchema["properties"]
+    props = tools["palinode_save"].input_schema["properties"]
     assert "claims" in props, "palinode_save schema dropped claims"
     items = props["claims"].get("items", {})
     assert set(items.get("required", [])) == {"text", "source_id", "span"}, (
@@ -91,7 +91,7 @@ async def test_save_schema_declares_claims():
 @pytest.mark.asyncio
 async def test_blame_schema_declares_claims():
     tools = {t.name: t for t in await list_tools()}
-    props = tools["palinode_blame"].inputSchema["properties"]
+    props = tools["palinode_blame"].input_schema["properties"]
     assert "claims" in props, "palinode_blame schema dropped claims"
     assert props["claims"].get("type") == "boolean"
 
@@ -99,7 +99,7 @@ async def test_blame_schema_declares_claims():
 @pytest.mark.asyncio
 async def test_search_schema_declares_include_telemetry():
     tools = {t.name: t for t in await list_tools()}
-    props = tools["palinode_search"].inputSchema["properties"]
+    props = tools["palinode_search"].input_schema["properties"]
     assert "include_telemetry" in props, "palinode_search schema dropped include_telemetry"
     assert props["include_telemetry"].get("type") == "boolean"
 

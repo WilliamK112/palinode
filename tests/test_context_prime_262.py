@@ -254,7 +254,7 @@ async def test_mcp_schema_declares_session_init():
 
     tools = {t.name: t for t in await list_tools()}
     assert "palinode_session_init" in tools
-    props = tools["palinode_session_init"].inputSchema["properties"]
+    props = tools["palinode_session_init"].input_schema["properties"]
     assert "cwd" in props and "project" in props
 
 

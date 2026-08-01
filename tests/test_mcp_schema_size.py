@@ -33,8 +33,8 @@ async def _schema_semantics() -> dict[str, dict[str, Any]]:
     return {
         tool.name: {
             "description": tool.description,
-            "required": tool.inputSchema.get("required", []),
-            "params": _param_semantics(tool.inputSchema),
+            "required": tool.input_schema.get("required", []),
+            "params": _param_semantics(tool.input_schema),
         }
         for tool in sorted(tools, key=lambda item: item.name)
     }
@@ -54,7 +54,7 @@ async def test_mcp_schema_token_estimate_report(
     monkeypatch.setenv("PALINODE_MCP_SURFACE", "full")
     tools = await list_tools()
     estimates = [
-        (tool.name, len(json.dumps(tool.inputSchema, sort_keys=True)) / 4)
+        (tool.name, len(json.dumps(tool.input_schema, sort_keys=True)) / 4)
         for tool in sorted(tools, key=lambda item: item.name)
     ]
     total = sum(estimate for _, estimate in estimates)

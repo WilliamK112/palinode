@@ -196,6 +196,42 @@ def add_reciprocal_contradicts(
                 target, exc,
             )
 
+    # Reindex what we just rewrote, rather than hoping something else notices.
+    #
+    # This edits *other* files' frontmatter after their own save has finished,
+    # so nothing in the originating request reindexes them. Until now that left
+    # the back-link on disk and absent from the index — visible in the file,
+    # invisible to recall and to `lint`, which is the surface the reciprocal
+    # write exists to serve. It happened to converge wherever the file watcher
+    # was running and silently did not anywhere it was not: an API-only
+    # deployment, or a watcher that is down.
+    #
+    # Cheap, and only recently so. The body is byte-identical here — only
+    # frontmatter changed — so this lands on the metadata-only path and does
+    # not re-embed. Before change detection was split into body and metadata
+    # hashes, this same call would have hit the unchanged-content fast path and
+    # done nothing at all, which is why the gap was worked around rather than
+    # closed.
+    #
+    # Best-effort like the rest of this function: a back-link is a courtesy and
+    # must never fail the save that triggered it.
+    for path in modified:
+        try:
+            from palinode.indexer.index_file import index_file
+
+            outcome = index_file(path)
+            if outcome.get("error"):
+                logger.warning(
+                    "reciprocal contradicts reindex reported %s for %s",
+                    outcome["error"], path,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "reciprocal contradicts reindex failed for %s: %s — the back-link "
+                "is on disk but not in the index until the file is next indexed",
+                path, exc,
+            )
+
     if modified and commit:
         try:
             from palinode.core import git_tools as _gt

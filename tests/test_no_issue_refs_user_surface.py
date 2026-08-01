@@ -101,7 +101,7 @@ async def test_no_issue_refs_in_mcp_tool_schema(
             offenders.append(
                 (f"tool {tool.name} (description)", _ISSUE_REF.findall(tool.description))
             )
-        props = (tool.inputSchema or {}).get("properties", {}) or {}
+        props = (tool.input_schema or {}).get("properties", {}) or {}
         for pname, prop in props.items():
             desc = prop.get("description") if isinstance(prop, dict) else None
             if desc and _ISSUE_REF.search(desc):

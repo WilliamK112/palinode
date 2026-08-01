@@ -390,8 +390,9 @@ class LayerSplitConfig:
     Evolution strategy:
     - After running split-layers, inspect git diff to see what was classified correctly
     - Add/remove keywords based on what you observe  
-    - Use `layer_hint: status` or `layer_hint: identity` in file frontmatter to
-      override the heuristic for specific files
+    - Use `layer_hint: identity`, `layer_hint: status`, or `layer_hint: history`
+      in file frontmatter to override the heuristic for specific files — the whole
+      body moves to that layer's file
     - Over time these will converge on your actual naming conventions
     """
     # Section headings containing these words → Identity layer (slow-changing core facts)
@@ -431,6 +432,12 @@ class AutoInjectConfig:
     that already have instruction-file/skill/hook layers and should not
     double-inject (Claude Code by default — CLAUDE.md, skills, and the
     SessionStart hook already cover it).
+
+    The two interact: the instructions tell a client to call
+    ``palinode_session_init`` only when that client would actually be served
+    the digest. A suppressed harness — or any client, when ``enabled`` is
+    false — is pointed at ``palinode_search`` instead, rather than being asked
+    for a tool call the server then refuses.
     """
     enabled: bool = True
     instructions_enabled: bool = True

@@ -19,9 +19,11 @@ from palinode.cli._format import print_result, get_default_format, OutputFormat
 @click.option("--push/--no-push", "push", default=None,
               help="Push the memory repo after committing the note. "
                    "Default: server's auto_push setting. /wrap passes --push.")
+@click.option("--dry-run", "dry_run", is_flag=True, default=False,
+              help="Validate and render the entry without writing, committing, or pushing.")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None, help="Output format")
 def session_end(summary, decision, blocker, project, source, harness, cwd, model,
-                trigger, session_id, duration_seconds, push, fmt):
+                trigger, session_id, duration_seconds, push, dry_run, fmt):
     """Capture session outcomes to daily notes and project status.
 
     Call at the end of a coding or chat session to persist what was accomplished.
@@ -49,6 +51,7 @@ def session_end(summary, decision, blocker, project, source, harness, cwd, model
             session_id=session_id,
             duration_seconds=duration_seconds,
             push=push,
+            dry_run=dry_run,
         )
     except HTTPStatusError as e:
         raise click.ClickException(f"Session-end failed: {e.response.text}") from e
@@ -70,6 +73,7 @@ def session_end(summary, decision, blocker, project, source, harness, cwd, model
     individual_file = result.get("individual_file")
     entry = result.get("entry", "")
     pushed = result.get("pushed", False)
+    was_dry_run = bool(result.get("dry_run"))
 
     effective_fmt = OutputFormat(fmt) if fmt else get_default_format()
     if effective_fmt == OutputFormat.JSON:
@@ -84,9 +88,20 @@ def session_end(summary, decision, blocker, project, source, harness, cwd, model
             "decisions": decisions,
             "blockers": blockers,
             "pushed": pushed,
+            "dry_run": was_dry_run,
         }
         print_result(out, OutputFormat.JSON)
     else:
+        if was_dry_run:
+            # Lead with the fact that nothing happened. A dry run whose output
+            # reads like a capture is worse than none — the caller walks away
+            # believing the session is recorded.
+            targets = ", ".join(f for f in (daily_file, status_file) if f)
+            click.echo(
+                "DRY RUN — nothing written, committed, or pushed.\n"
+                f"Would append to: {targets}\n\n{entry}"
+            )
+            return
         status_msg = f" + status → {status_file.split('/')[-1]}" if status_file else ""
         # Only annotate push state when a push was requested; on the
         # auto_push default we say nothing to keep the legacy output stable.

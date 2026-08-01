@@ -53,8 +53,59 @@ def _independent_identity(name: str, category: str, names_by_category: dict[str,
     pairs, separating all eight. Eight pairs from one store is a real signal, not
     a proof — which is why this DEMOTES confidence rather than suppressing the
     finding.
+
+    It is also INCOMPLETE on its own, which is why it is no longer the only
+    signal: a sibling repo (`project/alpha-os` beside `project/alpha`) lives
+    under exactly one category, so it has nothing for this to catch. See
+    `_is_stray_short_form` and `_NAME_CATEGORIES` for the other two.
     """
     return sorted(c for c in names_by_category.get(name, set()) if c != category)
+
+
+# Categories whose members are PEOPLE. The distinction earns its place because
+# the two populations name themselves by opposite conventions:
+#
+#   * A person's longer form is nearly always the same person written out in
+#     full — `ada` -> `ada-lovelace`. Adding a token is how a name completes.
+#   * A project's, model's or host's longer form is nearly always a DIFFERENT
+#     artifact in the same family — a repo beside its `-os` sibling, a model
+#     beside its quantized variant, `m9` beside `m9.1`. Adding a token is how a
+#     family branches.
+#
+# So a bare prefix match means opposite things in the two populations, and
+# outside this set it is not on its own evidence of anything. Extend this set
+# only for categories that name individuals the way `person` does.
+_NAME_CATEGORIES = frozenset({"person", "people"})
+
+# At or below this many files, a ref is a straggler rather than a subject.
+_STRAGGLER_MAX_FILES = 2
+
+# ...and the other side has to dwarf it for the asymmetry to mean anything: one
+# file beside one file is two equally thin refs, not a stray beside an anchor.
+_ESTABLISHED_RATIO = 3
+
+
+def _is_stray_short_form(short_files: int, long_files: int) -> bool:
+    """True when the SHORT form looks like a slip of the pen, not a subject.
+
+    The direction is the whole point, and it is the signal that survived contact
+    with a 700-ref store:
+
+    * A rare SHORT form beside an established long one (`project/alpha` in 1
+      file, `project/alpha-mcp` in 17) is somebody abbreviating a name the store
+      already owns — a one-line merge.
+    * A rare LONG form beside an established short one (`project/alpha-trial` in
+      1 file, `project/alpha` in 72) is the opposite: adding a qualifier is
+      precisely how a new, distinct artifact enters the store.
+
+    Reading the asymmetry without its direction promotes the second case as
+    eagerly as the first, which is what turned a repo family into a
+    high-confidence merge candidate.
+    """
+    return (
+        short_files <= _STRAGGLER_MAX_FILES
+        and long_files >= short_files * _ESTABLISHED_RATIO
+    )
 
 
 def check_entity_aliases(
@@ -89,6 +140,15 @@ def check_entity_aliases(
 
     Only refs in the SAME category are compared: ``person/alpha`` and
     ``project/alpha`` are different namespaces, not aliases.
+
+    ``confidence`` is the field an operator sorts and acts on, so a prose
+    disclaimer in ``detail`` does not pay for a wrong ``high``. ``separator``
+    matches are always high; a ``prefix`` match has to EARN it, because on its
+    own it is equally the shape of one subject spelled twice and of two siblings
+    in a family. It is high only when the short form is a stray beside an
+    established long one (`_is_stray_short_form`) or the category names people
+    (`_NAME_CATEGORIES`), and low otherwise — including the case that used to
+    reach high by default, a longer form seen nowhere else.
 
     Returns one entry per candidate cluster, each carrying every member ref with
     its file count so the operator can see the shape of the split (a near-even
@@ -141,7 +201,7 @@ def check_entity_aliases(
         # the separator pass already grouped.
         reported: set[frozenset[str]] = set()
         ordered = sorted(members, key=lambda m: len(m[1]))
-        for i, (_short_ref, short_name, _) in enumerate(ordered):
+        for i, (short_ref, short_name, _) in enumerate(ordered):
             for long_ref, long_name, _ in ordered[i + 1:]:
                 if not _is_token_prefix(short_name.lower(), long_name.lower()):
                     continue
@@ -151,24 +211,40 @@ def check_entity_aliases(
                 if pair in reported:
                     continue
                 reported.add(pair)
-                group = buckets[_alias_key(short_name)] + buckets[_alias_key(long_name)]
+                short_bucket = buckets[_alias_key(short_name)]
+                long_bucket = buckets[_alias_key(long_name)]
+                group = short_bucket + long_bucket
+
+                # A prefix match on its own says almost nothing: it is equally
+                # the shape of one subject spelled two ways and of two siblings
+                # in a family. So `high` has to be EARNED, by one of two
+                # positive signals, and everything else is demoted.
+                short_elsewhere = _independent_identity(
+                    short_name.lower(), category, names_by_category
+                )
                 elsewhere = _independent_identity(
                     long_name.lower(), category, names_by_category
                 )
-                # The demotion asks "is the LONGER form its own thing?" — but that
-                # alone mis-fires when the SHORTER form is the stray one. A ref used
-                # once, in one category, is a straggler whatever the other side looks
-                # like, so it stays high. (Observed: a 1-file `x` beside an
-                # established `x-mcp` was demoted purely because `x-mcp` is
-                # established, hiding a real one-line merge.)
-                counts = {r: c for r, _, c in group}
-                smallest = min(counts.values()) if counts else 0
-                lone = [
-                    n for n in (short_name.lower(), long_name.lower())
-                    if len(names_by_category.get(n, set())) == 1
-                ]
-                straggler = smallest <= 2 and bool(lone)
-                if elsewhere and not straggler:
+                stray_short = not short_elsewhere and _is_stray_short_form(
+                    sum(c for _, _, c in short_bucket),
+                    sum(c for _, _, c in long_bucket),
+                )
+
+                if stray_short:
+                    # Signal 1 — a thin short form with no identity of its own,
+                    # beside an anchor. (Observed: a 1-file `x` beside an
+                    # established `x-mcp` was demoted purely because `x-mcp` is
+                    # established, hiding a real one-line merge.) Deliberately
+                    # ahead of the cross-category demotion: an established
+                    # longer form is what makes the short one look like a slip.
+                    confidence = "high"
+                    detail = (
+                        f"{short_ref!r} is referenced far less than {long_ref!r} and "
+                        f"nowhere outside {category!r} — the shape of a stray short "
+                        f"form of an established name, i.e. a one-line merge. Still a "
+                        f"question: a thin ref can also be a subject nobody wrote up yet."
+                    )
+                elif elsewhere:
                     confidence = "low"
                     detail = (
                         f"{long_ref!r} is also referenced as "
@@ -177,12 +253,26 @@ def check_entity_aliases(
                         "more likely two distinct entries than one split. Demoted, not "
                         "hidden: check it, but expect the answer to be 'leave them'."
                     )
-                else:
+                elif category in _NAME_CATEGORIES:
+                    # Signal 2 — in a category that names people, a longer form
+                    # seen nowhere else is the ordinary short-form/full-form
+                    # split, whatever the file counts look like on either side.
                     confidence = "high"
                     detail = (
-                        f"a short form and a longer form coexist in {category!r} and the "
-                        f"longer one appears nowhere else — the shape of a straggler "
-                        f"spelling. Still a question: two subjects can share a first token."
+                        f"a short form and a longer form of a name coexist in "
+                        f"{category!r} and the longer one appears nowhere else — the "
+                        f"common short-form/full-form split. Still a question: two "
+                        f"people can share a given name."
+                    )
+                else:
+                    confidence = "low"
+                    detail = (
+                        f"{long_ref!r} adds a token to {short_ref!r} and both are in "
+                        f"real use in {category!r} — outside a category that names "
+                        f"people, that is how a FAMILY branches (a sibling repo, a "
+                        f"model variant, a later milestone), not how one subject gets "
+                        f"spelled twice. Demoted, not hidden: merge only if you already "
+                        f"know they are the same thing."
                     )
                 clusters.append({
                     "kind": "prefix",

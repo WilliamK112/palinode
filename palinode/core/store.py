@@ -1054,10 +1054,24 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     to the stored content_hash for that chunk.
 
     The stored content_hash is computed over a single section's content (see
-    ``palinode/indexer/index_file.py``), so comparing a whole-file body hash
+    ``palinode/indexer/reconcile.py``), so comparing a whole-file body hash
     against it always mismatched for multi-section files.  The fix is to
     locate the matching section by section_id, hash only that section, and
     compare.
+
+    **Only ``chunks.content_hash`` is a valid comparand.** There used to be a
+    fallback to the frontmatter ``content_hash:`` field when the column was
+    NULL, and the two are different hash domains: the column hashes one
+    section's body, while the frontmatter field is a SHA-256 of the whole
+    request body as submitted. Comparing them can never match, so every row
+    with a NULL column — anything predating the column's introduction —
+    reported ``stale`` unconditionally. That is the exact bug this function's
+    own docstring claims to have fixed, reintroduced through the fallback.
+
+    A missing hash is genuinely unknowable, so it now reports ``unknown``.
+    Saying "I cannot tell" is the honest answer and does not send a caller
+    chasing a staleness that isn't there. (The frontmatter field stays on
+    disk as provenance; this was its only reader.)
 
     Returns results with added 'freshness' key: 'valid' | 'stale' | 'unknown'
     """
@@ -1067,7 +1081,7 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     for result in results:
         file_path = result.get("file_path", "")
-        stored_hash = result.get("content_hash") or result.get("metadata", {}).get("content_hash")
+        stored_hash = result.get("content_hash")
 
         if not stored_hash:
             result["freshness"] = "unknown"

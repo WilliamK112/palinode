@@ -1,6 +1,6 @@
 """Mechanical, untyped cross-linking between memory files.
 
-The code-managed complement to the model-generated ``[[wikilinks]]`` /
+The deterministic complement to the LLM-generated ``[[wikilinks]]`` /
 ``entities`` machinery (PROGRAM.md wiki-maintenance contract). During indexing,
 the watcher scans a memory's body for mentions of OTHER memory files — by their
 path ref (``category/slug``), distinctive slug, or distinctive title — and

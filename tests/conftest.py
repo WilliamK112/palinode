@@ -120,6 +120,34 @@ def _default_db_path() -> pathlib.Path | None:
     return pathlib.Path(config.db_path) if config.db_path else None
 
 
+_TESTS_ROOT = pathlib.Path(__file__).resolve().parent
+
+# Suite directories under ``tests/`` where the process default database is the
+# subject of the test, not an accident — exempt from the guard below.
+#
+# ``tests/live/`` drives a *running* server against the memory dir the harness
+# just exported as ``PALINODE_DIR``, so ``config.db_path`` resolves to exactly
+# the database those tests are supposed to fill. Every live save therefore
+# trips a guard whose premise — "touching the resolved default means you forgot
+# to redirect" — only holds for suites that run against ``tmp_path``. There is
+# nothing to redirect to here: the real directory *is* the fixture.
+#
+# Named here rather than shadowed from a ``tests/live/conftest.py`` so the
+# exemption sits one screen from the guard it narrows. It should read as
+# deliberate, because it is, and it must stay exactly this wide: any other
+# suite that finds the guard inconvenient is the offender the guard is for.
+_DEFAULT_DB_GUARD_EXEMPT_DIRS = ("live",)
+
+
+def _exempt_from_default_db_guard(item: pytest.Item) -> bool:
+    """True when *item* lives under an exempt suite directory."""
+    try:
+        relative = item.path.resolve().relative_to(_TESTS_ROOT)
+    except (AttributeError, ValueError):
+        return False
+    return bool(relative.parts) and relative.parts[0] in _DEFAULT_DB_GUARD_EXEMPT_DIRS
+
+
 @pytest.fixture(autouse=True)
 def _no_writes_to_the_default_db(request, _default_db_path):
     """Fail the test that opens a store at the *process default* db path.
@@ -139,8 +167,12 @@ def _no_writes_to_the_default_db(request, _default_db_path):
     Guarding the resolved default rather than the repo root catches both. The
     check is mtime-based because the file usually already exists — absence is
     not the signal, mutation is.
+
+    Scoped away from ``_DEFAULT_DB_GUARD_EXEMPT_DIRS``, where writing the
+    resolved default is the whole point of the suite. ``tests/`` and
+    ``tests/integration/`` stay guarded; see that constant for why.
     """
-    if _default_db_path is None:
+    if _default_db_path is None or _exempt_from_default_db_guard(request.node):
         yield
         return
 

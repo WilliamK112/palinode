@@ -186,9 +186,9 @@ def lint(fmt, deep_contradictions, max_llm_calls, similarity_threshold):
             _emit(cluster)
         if lo:
             console.print(
-                f"  [dim]— {len(lo)} lower-confidence candidate(s): the longer ref is "
-                f"referenced under other categories too, so the store already treats it "
-                f"as its own subject —[/dim]"
+                f"  [dim]— {len(lo)} lower-confidence candidate(s): the store's own "
+                f"usage says these are probably two subjects, not one split. Each "
+                f"cluster's detail says why —[/dim]"
             )
             for cluster in lo:
                 _emit(cluster)

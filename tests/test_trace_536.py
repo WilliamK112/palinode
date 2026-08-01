@@ -457,7 +457,7 @@ async def test_mcp_trace_tool_registered_full_not_core(monkeypatch):
     monkeypatch.setenv("PALINODE_MCP_SURFACE", "full")
     full = {t.name: t for t in await list_tools()}
     assert "palinode_trace" in full
-    assert full["palinode_trace"].inputSchema["required"] == ["file_path"]
+    assert full["palinode_trace"].input_schema["required"] == ["file_path"]
 
     monkeypatch.setenv("PALINODE_MCP_SURFACE", "core")
     core = {t.name for t in await list_tools()}

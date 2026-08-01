@@ -2,10 +2,10 @@
 
 Before this seam, the only way to test the runner→executor path was to mock
 ``_consolidate_project`` wholesale (see test_consolidation_dry_run), which skips
-the real fact-extraction, prompt-building, JSON parse/repair, and operation
+the real fact-extraction, prompt-building, JSON parse/repair, and executor
 application — the parts most likely to harbour bugs. The injectable ``llm_fn``
-separates the planning call from the application stage, so a fake adapter
-returning canned op-JSON drives the real pipeline end to end.
+splits the nondeterministic half (the LLM call) from the deterministic half, so
+a fake adapter returning canned op-JSON drives the real pipeline end to end.
 
 Live adapter = the default ``_call_llm_with_fallback`` (covered by test_fallback);
 fake adapter = the ``_FAKE_*`` callables below. Two adapters → a real seam.

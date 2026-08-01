@@ -249,13 +249,18 @@ class PalinodeAPI:
         session_id: str | None = None,
         duration_seconds: int | None = None,
         push: bool | None = None,
+        dry_run: bool = False,
     ):
         """Capture session outcomes via the API. ADR-010 (the project-slug derivation work
 fields, the session-end hook audit push)."""
         payload: dict = {"summary": summary}
-        if decisions:
+        # `is not None`, not truthiness. An empty list means "considered, none
+        # to report"; eliding it makes the server read a parameter the caller
+        # did send as one that never arrived, which is the signature its
+        # envelope guard treats as a corrupted call.
+        if decisions is not None:
             payload["decisions"] = list(decisions)
-        if blockers:
+        if blockers is not None:
             payload["blockers"] = list(blockers)
         if project:
             payload["project"] = project
@@ -275,6 +280,8 @@ fields, the session-end hook audit push)."""
             payload["duration_seconds"] = duration_seconds
         if push is not None:
             payload["push"] = push
+        if dry_run:
+            payload["dry_run"] = True
         response = self.client.post("/session-end", json=payload, timeout=SESSION_END_TIMEOUT_SECONDS)
         response.raise_for_status()
         return response.json()

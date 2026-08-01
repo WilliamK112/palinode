@@ -118,14 +118,32 @@ def envelope_complaint(
 
     if missing_params:
         named = "/".join(f"`{p}`" for p in missing_params)
+        # State the observation, not the mechanism. Absorption is the *reason*
+        # this signal exists, but the server cannot distinguish "the parameter
+        # was destroyed in transit" from "the caller did not send one" — both
+        # arrive as absence. Naming absorption here read as a finding rather
+        # than a hypothesis, and readers relayed it back as their diagnosis:
+        # twice now an investigation has concluded "the tool envelope broke"
+        # on no evidence beyond this sentence, and gone looking in the
+        # transport while the real cause sat in the payload. An error message
+        # is read far more often than the code that emits it, and whatever
+        # explanation it offers is the one that ends up in the issue tracker.
         offender, why = (unmatched or trailing or matches[-1]), (
-            f"and no {named} arrived with it — the signature "
-            "of a tool envelope absorbed into the string parameter"
+            f"and no {named} arrived with it"
+        )
+        cause = (
+            f"Two things look identical from here and only you can tell them "
+            f"apart: a malformed tool call whose tail was absorbed into "
+            f"`{field}`, swallowing the parameters that followed it — or an "
+            f"ordinary call that quoted markup and simply did not send "
+            f"{named}."
         )
     elif unmatched is not None:
         offender, why = unmatched, "as a closing tag with no matching opener"
+        cause = ""
     elif trailing is not None:
         offender, why = trailing, "at the very end of the value, where an absorbed envelope lands"
+        cause = ""
     else:
         return None
 
@@ -144,6 +162,8 @@ def envelope_complaint(
         "Palinode fails loud here rather than indexing an envelope as if it "
         "were memory.",
     ]
+    if cause:
+        sentences.append(cause)
     if remediation:
         sentences.append(remediation)
     sentences.append(

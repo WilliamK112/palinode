@@ -257,6 +257,72 @@ def test_rejection_message_can_be_quoted_back_without_re_rejecting(tmp_path, mon
     assert result["daily_file"]
 
 
+def test_cooccurrence_message_offers_both_causes_and_asserts_neither(tmp_path, monkeypatch):
+    """The message must report the observation, not diagnose the mechanism.
+
+    Absence is all the server sees. "The parameters were destroyed in transit"
+    and "the caller did not send them" arrive identically, so a message that
+    names absorption states a hypothesis in the grammar of a finding. Readers
+    relay it back: two separate investigations have concluded "the tool
+    envelope broke" citing nothing but this sentence, and gone looking in the
+    transport while the cause sat in the payload. Whatever the message
+    explains is what reaches the issue tracker, so it has to explain only what
+    is known.
+    """
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch, summary="Wrapped it</invoke>")
+
+    detail = exc.value.detail
+    # Reports what was observed.
+    assert "no `decisions`/`blockers` arrived with it" in detail, detail
+    # Names both candidates and hands the discrimination to the caller.
+    assert "only you can tell them apart" in detail, detail
+    assert "did not send" in detail, detail
+    # Does not present absorption as the established cause.
+    assert "the signature of" not in detail, detail
+
+
+def test_structural_signal_does_not_speculate_about_cause(tmp_path, monkeypatch):
+    """When the arrays *did* arrive there is no ambiguity to explain, and the
+    both-causes sentence would be noise. It must not appear."""
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch, summary="Fixed the ranker</parameter> then moved on",
+              decisions=["d"], blockers=["b"])
+
+    assert "only you can tell them apart" not in exc.value.detail, exc.value.detail
+
+
+def test_remediation_covers_the_caller_who_did_send_the_arrays(tmp_path, monkeypatch):
+    """"Re-send with the arrays" is unactionable for half the callers who see it.
+
+    When the arrays were sent and lost, that instruction names a fix the caller
+    cannot perform — and it reads as the whole remedy, so the rational response
+    is to retry unchanged. One caller followed it three times, each attempt
+    failing identically. The message must cover both branches and name the
+    escape that works when retrying cannot.
+    """
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch, summary="Wrapped the session</summary>")
+
+    detail = exc.value.detail
+    assert "If you did not send them" in detail, detail
+    assert "build the call fresh rather than editing the one that failed" in detail, detail
+    assert "/session-end" in detail and "HTTP API" in detail, detail
+    assert "dry_run" in detail, detail
+
+
+def test_no_array_advice_when_the_arrays_arrived(tmp_path, monkeypatch):
+    """Telling a caller to re-send arrays it already sent is the noise that
+    made the other message misleading. Where they arrived, say so instead."""
+    with pytest.raises(HTTPException) as exc:
+        _call(tmp_path, monkeypatch, summary="Fixed it</parameter> then moved on",
+              decisions=["d"], blockers=["b"])
+
+    detail = exc.value.detail
+    assert "The arrays arrived" in detail, detail
+    assert "re-send with" not in detail.lower(), detail
+
+
 def test_mcp_forwards_empty_arrays_instead_of_eliding_them(tmp_path, monkeypatch):
     """The MCP surface dropped falsy arrays before the request left the client,
     manufacturing the absorption signature server-side."""
@@ -356,3 +422,70 @@ def test_hook_still_captures_a_plain_session(tmp_path):
 
     payload = _run_hook(tmp_path, plain)
     assert "refactor the wrap bug" in payload["summary"], payload
+
+
+# ── dry_run: characterise a failure without paying for it ────────────────────
+
+
+def _dry(tmp_path, monkeypatch, **kwargs):
+    kwargs["dry_run"] = True
+    return _call(tmp_path, monkeypatch, **kwargs)
+
+
+def test_dry_run_writes_absolutely_nothing(tmp_path, monkeypatch):
+    """The whole point. Diagnosing a session-end failure previously required
+    issuing real ones, so characterising a write bug meant vandalising the
+    record to do it — twice, in practice."""
+    os.makedirs(os.path.join(str(tmp_path), "projects"))
+    status_path = os.path.join(str(tmp_path), "projects", "palinode-status.md")
+    with open(status_path, "w") as f:
+        f.write("# palinode status\n")
+
+    result = _dry(tmp_path, monkeypatch, summary="A perfectly valid summary",
+                  decisions=["d"], blockers=["b"], project="palinode")
+
+    assert result["dry_run"] is True
+    assert result["committed"] is False and result["pushed"] is False
+    # Nothing on disk moved.
+    assert not os.path.exists(os.path.join(str(tmp_path), "daily"))
+    assert open(status_path).read() == "# palinode status\n"
+
+
+def test_dry_run_renders_the_entry_it_would_write(tmp_path, monkeypatch):
+    """Validate-only is useless if it does not show you the result."""
+    result = _dry(tmp_path, monkeypatch, summary="Landed hybrid search",
+                  decisions=["kept RRF"], blockers=["smoke the rig"])
+
+    entry = result["entry"]
+    assert "Landed hybrid search" in entry
+    assert "kept RRF" in entry and "smoke the rig" in entry
+    assert result["daily_file"].startswith("daily/")
+
+
+def test_dry_run_still_rejects_a_corrupt_payload(tmp_path, monkeypatch):
+    """A dry run that skipped validation would report success on exactly the
+    payloads it exists to diagnose. The guard runs before the dry-run exit."""
+    with pytest.raises(HTTPException) as exc:
+        _dry(tmp_path, monkeypatch, summary="Wrapped it</invoke>",
+             decisions=["d"], blockers=["b"])
+    assert exc.value.status_code == 400
+
+
+def test_dry_run_reports_status_file_only_when_it_exists(tmp_path, monkeypatch):
+    """The real path appends to the project status file only if it is already
+    there, so the dry run must not promise a write that would not happen."""
+    absent = _dry(tmp_path, monkeypatch, summary="s", project="palinode")
+    assert absent["status_file"] is None
+
+    os.makedirs(os.path.join(str(tmp_path), "projects"), exist_ok=True)
+    with open(os.path.join(str(tmp_path), "projects", "palinode-status.md"), "w") as f:
+        f.write("# palinode status\n")
+    present = _dry(tmp_path, monkeypatch, summary="s", project="palinode")
+    assert present["status_file"] == "projects/palinode-status.md"
+
+
+def test_default_is_not_dry_run(tmp_path, monkeypatch):
+    """Absent the flag, session-end must still actually capture."""
+    result = _call(tmp_path, monkeypatch, summary="Landed it", decisions=["d"])
+    assert not result.get("dry_run")
+    assert os.path.exists(os.path.join(str(tmp_path), "daily"))

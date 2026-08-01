@@ -50,7 +50,7 @@ def _wire_size(tool) -> int:
     return len(json.dumps(
         {"name": tool.name,
          "description": tool.description,
-         "inputSchema": tool.inputSchema},
+         "inputSchema": tool.input_schema},
         separators=(",", ":"),
     ))
 
