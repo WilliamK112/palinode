@@ -79,7 +79,9 @@ Singular variants (`person`, `project`, etc.) are **entity-ref prefixes**, not c
 PersonMemory, Decision, ProjectSnapshot, Insight, ResearchRef, ActionItem
 ```
 
-Stored at `palinode/core/parity.py:MEMORY_TYPES`. The plugin's `palinode_save` schema declares `type` (it accepts the enum values as a free-form string today; tightening to a TypeBox `Union` of literal types is the remaining slice of #166).
+Stored at `palinode/core/parity.py:MEMORY_TYPES`. The Python surfaces import
+that tuple directly; the plugin mirrors it as a TypeBox literal union, with the
+cross-language parity test guarding against drift.
 
 ### Prompt tasks — exact set
 

@@ -63,6 +63,12 @@ reader before writing new records with v0.10.0.
 
 ### Fixed
 
+- **Surface enums now stay aligned with the canonical parity registry** (#69).
+  CLI, MCP, and REST schemas import the category, memory-type, and prompt-task
+  lists from `palinode/core/parity.py`; the OpenClaw plugin mirrors those values
+  with a cross-language drift test. This restores plural category names,
+  includes `ResearchRef`, and exposes `nightly-consolidation` through the API.
+
 - **`quote_hash` is now algorithm-prefixed, so citation anchors can outlive their hash
   function.** Anchors were written as a bare MD5 hex digest, inherited from the dedup
   hasher. A bare digest records no algorithm, so there was no way to tell MD5 from

@@ -136,6 +136,24 @@ function pluginParamNames(tool: CapturedTool | undefined): Set<string> {
   return new Set(Object.keys(tool.parameters.properties));
 }
 
+function schemaEnum(schema: any): string[] | null {
+  if (!schema || typeof schema !== "object") return null;
+  if (Array.isArray(schema.enum)) return schema.enum.map(String);
+  if (schema.type === "array") return schemaEnum(schema.items);
+
+  const values: string[] = [];
+  for (const branch of schema.anyOf ?? []) {
+    if (branch?.type === "null") continue;
+    if (Object.prototype.hasOwnProperty.call(branch ?? {}, "const")) {
+      values.push(String(branch.const));
+      continue;
+    }
+    const nested = schemaEnum(branch);
+    if (nested) values.push(...nested);
+  }
+  return values.length > 0 ? values : null;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -247,6 +265,15 @@ describe("ADR-010 plugin canonical params", () => {
           `known_drift[("plugin", "${param.name}")] = <issue> on the ` +
           `Operation in palinode/core/parity.py.`,
       ).toBe(true);
+
+      if (param.enum !== null) {
+        const schema = (tool!.parameters.properties as Record<string, any>)[param.name];
+        expect(
+          schemaEnum(schema),
+          `${op.name}/plugin/${param.name}: enum must exactly match ` +
+            `palinode/core/parity.py`,
+        ).toEqual(param.enum);
+      }
     });
   }
 });

@@ -3,6 +3,7 @@ import click
 from palinode.cli._api import api_client
 from palinode.cli._format import print_result, console, OutputFormat, get_default_format
 from palinode.core.config import config
+from palinode.core.parity import CATEGORIES, MEMORY_TYPES
 
 
 def _cli_resolve_context() -> list[str] | None:
@@ -28,7 +29,7 @@ def _cli_resolve_context() -> list[str] | None:
 @click.option("--limit", default=3, help="Number of results (default: 3)")
 @click.option(
     "--category",
-    type=click.Choice(["people", "projects", "decisions", "insights", "research"]),
+    type=click.Choice(CATEGORIES),
     help="Filter by memory directory (people, projects, decisions, insights, research)",
 )
 @click.option(
@@ -44,6 +45,7 @@ def _cli_resolve_context() -> list[str] | None:
 @click.option(
     "--types",
     "types",
+    type=click.Choice(MEMORY_TYPES),
     multiple=True,
     help=(
         "Filter by memory type (PersonMemory, Decision, ProjectSnapshot, Insight, "

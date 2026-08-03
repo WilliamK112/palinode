@@ -202,7 +202,7 @@ REGISTRY: tuple[Operation, ...] = (
                 default_key="SEARCH_THRESHOLD_DEFAULT",
             ),
             CanonicalParam(name="since_days", type="integer"),
-            CanonicalParam(name="types", type="array"),
+            CanonicalParam(name="types", type="array", enum=MEMORY_TYPES),
             CanonicalParam(name="min_priority", type="integer"),
             CanonicalParam(name="date_after", type="string"),
             CanonicalParam(name="date_before", type="string"),
