@@ -128,9 +128,25 @@ async def _on_call_tool(ctx: Any, params: Any) -> types.CallToolResult:
         _request_ctx.reset(token)
 
 
+# Display metadata announced in the ``initialize`` response. These must stay
+# identical to ``server.json``, which is what the MCP Registry listing renders —
+# a client connecting directly and a client finding Palinode in the registry
+# should not see two different descriptions of it. They are duplicated here
+# rather than read at runtime because ``server.json`` is a repo-root registry
+# manifest, not a packaged file, so it is absent from an installed wheel.
+# ``tests/test_mcp_server_metadata.py`` pins the two together.
+SERVER_TITLE = "Palinode"
+SERVER_DESCRIPTION = (
+    "Git-versioned markdown memory for AI agents: save, search, compact, lint, and audit."
+)
+SERVER_WEBSITE_URL = "https://github.com/phasespace-labs/palinode"
+
 server = Server(
     "palinode",
     version=__version__,
+    title=SERVER_TITLE,
+    description=SERVER_DESCRIPTION,
+    website_url=SERVER_WEBSITE_URL,
     instructions=_SERVER_INSTRUCTIONS if config.auto_inject.instructions_enabled else None,
     on_list_tools=_on_list_tools,
     on_call_tool=_on_call_tool,

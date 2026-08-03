@@ -1,8 +1,8 @@
 import click
-import json
 from rich.console import Console
 
 from palinode.cli._api import HTTPStatusError, RequestError, api_client
+from palinode.cli._format import emit_json
 from palinode.lint.contradictions import (
     DEFAULT_MAX_LLM_CALLS,
     DEFAULT_SIMILARITY_THRESHOLD,
@@ -51,7 +51,7 @@ def lint(fmt, deep_contradictions, max_llm_calls, similarity_threshold):
         data = run_lint_pass()
 
     if fmt == "json" and not deep_contradictions:
-        console.print(json.dumps(data, indent=2))
+        emit_json(data)
         return
 
     console.print("\n[bold green]Palinode Memory Lint Report[/bold green]\n")
@@ -245,7 +245,7 @@ def _run_deep_contradictions_output(
     contradictions = result["contradictions"]
 
     if fmt == "json":
-        console.print(json.dumps(result, indent=2))
+        emit_json(result)
         return
 
     console.print(

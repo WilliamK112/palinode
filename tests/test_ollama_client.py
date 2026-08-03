@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import time
 
 import httpx
 import pytest
@@ -244,26 +243,34 @@ def test_circuit_opens_after_threshold_consecutive_failures():
 
 
 def test_open_circuit_fast_fails_without_network_io():
+    """An open circuit must return without touching the transport or waiting.
+
+    "Fast" is asserted structurally rather than with a stopwatch. This test used to
+    carry ``elapsed_ms < 10.0``, which measured machine load as much as behaviour and
+    so failed under full-suite runs while passing in isolation and on CI. It was also
+    redundant: a call that performs no network I/O and no sleep cannot be waiting on a
+    timeout, and both of those are observable exactly. The injected ``sleeps`` list is
+    what makes the second one checkable.
+    """
     calls = {"n": 0}
 
     def handler(request):
         calls["n"] += 1
         raise httpx.ConnectError("down", request=request)
 
-    client, _, _ = make_client(handler, retries=0)
+    client, _, sleeps = make_client(handler, retries=0)
     for _ in range(5):
         with pytest.raises(OllamaUnreachable):
             client.generate("p", retries=0)
     assert client.circuit_state(OllamaRole.CHAT) is CircuitState.OPEN
     calls_before = calls["n"]
+    sleeps_before = list(sleeps)
 
     # Next call must fast-fail with the typed circuit error and do NO network I/O.
-    t0 = time.perf_counter()
     with pytest.raises(OllamaCircuitOpen):
         client.generate("p", retries=0)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert calls["n"] == calls_before  # transport never touched
-    assert elapsed_ms < 10.0  # fast-fail, not a timeout wait
+    assert sleeps == sleeps_before  # no backoff or timeout wait
 
 
 def test_circuit_half_opens_after_cooldown_and_closes_on_success():

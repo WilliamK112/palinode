@@ -10,7 +10,6 @@ unconditionally for every row with a NULL column. The tests hid it by feeding
 the fallback data it would never really receive.
 
 """
-import time
 import hashlib
 from palinode.core.store import check_freshness
 from palinode.core import parser as _parser
@@ -68,25 +67,70 @@ def test_deleted_file_marked_stale(tmp_path, monkeypatch):
     checked = check_freshness(results)
     assert checked[0]["freshness"] == "stale"
 
-def test_freshness_check_performance(tmp_path, monkeypatch):
-    """100 results checked in <50ms (just file reads + hash)"""
+def test_freshness_parses_each_file_once_regardless_of_result_count(tmp_path, monkeypatch):
+    """Work is proportional to distinct *files*, not to result count.
+
+    This replaces a ``duration < 0.05`` wall-clock assertion. That threshold was a
+    proxy for an algorithmic regression — something turning 100 checks into 100 x N
+    work — but it also measured how busy the machine was, so it passed in isolation
+    and on CI and failed under full-suite load. The cost of that was never the flake
+    itself; it was the adjudication, since a red timing assertion cannot tell a
+    contributor whether they caused it.
+
+    Worse, the old fixture could not detect the regression it was guarding: 100
+    results across 100 *distinct* files parse 100 times with or without
+    ``check_freshness``'s ``_sections_cache``. The cache only pays off when several
+    chunks share a file, which is the normal case for a multi-section memory — so
+    that is the shape asserted here, by counting parses instead of timing them.
+    """
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
 
-    results = []
-    for i in range(100):
+    FILE_COUNT = 10
+    RESULT_COUNT = 100
+    content = _make_multisection_content()
+
+    # Hash each section exactly as the indexer does, by parsing the real file —
+    # a wrong hash here would report `stale` and skip nothing, quietly making the
+    # parse count meaningless.
+    chunks = []
+    for i in range(FILE_COUNT):
         file_path = f"test_perf_{i}.md"
-        content = f"Test content {i}"
         (tmp_path / file_path).write_text(content)
-        current_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
-        results.append({"file_path": file_path, "content_hash": current_hash})
+        _, sections = _parser.parse_markdown(content)
+        for section in sections:
+            chunks.append({
+                "file_path": file_path,
+                "section_id": section["section_id"],
+                "content_hash": hashlib.sha256(section["content"].encode()).hexdigest(),
+            })
 
-    start = time.time()
+    assert len(chunks) > FILE_COUNT, "fixture must put several chunks in each file"
+
+    # Cycle the chunks up to RESULT_COUNT so results repeatedly revisit the same
+    # files — without repeats the cache is never exercised.
+    results = [dict(chunks[i % len(chunks)]) for i in range(RESULT_COUNT)]
+
+    parse_calls = []
+    real_parse = _parser.parse_markdown
+
+    def counting_parse(raw):
+        parse_calls.append(raw)
+        return real_parse(raw)
+
+    monkeypatch.setattr(_parser, "parse_markdown", counting_parse)
+
     checked = check_freshness(results)
-    duration = time.time() - start
 
-    assert duration < 0.05  # <50ms
-    assert len(checked) == 100
-    assert all(r["freshness"] == "valid" for r in checked)
+    assert len(checked) == RESULT_COUNT
+    assert all(r["freshness"] == "valid" for r in checked), (
+        "every chunk must verify, or the parse count below proves nothing"
+    )
+    # The invariant: one parse per distinct file. Dropping the cache makes this
+    # RESULT_COUNT; any per-result re-read makes it worse.
+    assert len(parse_calls) == FILE_COUNT, (
+        f"expected {FILE_COUNT} parses (one per file), got {len(parse_calls)} "
+        f"for {RESULT_COUNT} results — the per-file section cache is not holding"
+    )
 
 
 # ---------------------------------------------------------------------------

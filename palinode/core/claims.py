@@ -11,7 +11,7 @@ justifies this claim," not just "when was this line written"::
         source_id: research/some-paper.md # a sources[].ref-style path
         span:
           quote: "the exact passage cited from the source"
-          quote_hash: "<md5 of normalize_quote(quote)>"
+          quote_hash: "sha256:<hex of normalize_quote(quote)>"
         anchor_id: "optional-opaque-pointer" # interop; carried verbatim
 
 This layer COMPOSES with the existing identity/integrity layers — it
@@ -22,7 +22,8 @@ replaces neither:
   absence-is-neutral (mirrors how ``sources:`` and ``contradicts``/
   ``backed_by`` were added).
 - ``span`` reuses the ``sources:`` quote anchor exactly
-  (``quote_verify.normalize_quote`` / ``quote_hash``). quote_hash is the
+  (``quote_verify.normalize_quote`` / ``quote_hash``, algorithm-prefixed
+  since 0.9.9). quote_hash is the
   *integrity* half (does the cited text still hash-match); claim_id is the
   *addressing* half (a stable name for the claim→span binding).
 
@@ -47,8 +48,10 @@ from typing import Any
 
 from palinode.core.quote_verify import (
     QuoteStatus,
+    UnsupportedHashAlgorithm,
     normalize_quote,
     quote_hash,
+    quote_hash_matches,
     verify_quote,
 )
 
@@ -132,11 +135,17 @@ def normalize_claims(raw: Any, memory_ref: str) -> list[dict[str, Any]]:
         computed_hash = quote_hash(quote)
         supplied_hash = span.get("quote_hash")
         if supplied_hash is not None and str(supplied_hash).strip():
-            if str(supplied_hash).strip() != computed_hash:
-                raise ClaimError(
-                    f"{label} span quote_hash does not match its quote "
-                    "(inconsistent anchor)"
-                )
+            # Validate the supplied hash under ITS OWN algorithm — a legacy bare
+            # MD5 anchor is still a valid anchor. Then store the canonical
+            # prefixed form, which upgrades the anchor in place on re-save.
+            try:
+                if not quote_hash_matches(quote, str(supplied_hash)):
+                    raise ClaimError(
+                        f"{label} span quote_hash does not match its quote "
+                        "(inconsistent anchor)"
+                    )
+            except UnsupportedHashAlgorithm as exc:
+                raise ClaimError(f"{label} span {exc}") from exc
 
         derived = derive_claim_id(memory_ref, text)
         supplied_id = entry.get("claim_id")
@@ -253,11 +262,13 @@ def resolve_memory_claims(file_path: str, memory_dir: str) -> list[dict[str, Any
         if not os.path.exists(src_path):
             span_status = QuoteStatus.SOURCE_MISSING.value
             span_detail = f"cited source not found: {source_id}"
+            span_partial = False
         else:
             with open(src_path, encoding="utf-8") as sf:
                 result = verify_quote(quote, expected_hash, sf.read(), source_id)
             span_status = result.status.value
             span_detail = result.message
+            span_partial = result.partial
 
         stored_id = claim.get("claim_id", "")
         derived = derive_claim_id(memory_ref, claim["text"])
@@ -267,6 +278,10 @@ def resolve_memory_claims(file_path: str, memory_dir: str) -> list[dict[str, Any
             **claim,
             "span_status": span_status,
             "span_detail": span_detail,
+            # True when the stored anchor had no hash, so only drift was
+            # checkable — an auditor must be able to tell "verified" from
+            # "verified as far as was possible".
+            "span_partial": span_partial,
             "claim_id_status": claim_id_status,
             "source_declared": source_id in declared_refs,
         }

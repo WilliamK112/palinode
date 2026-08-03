@@ -14,6 +14,112 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Security
 
+## [0.10.0] — 2026-08-02
+
+**Compatibility:** v0.10.0 introduces a forward-compatibility break. New records
+write `quote_hash` as algorithm-prefixed values such as `sha256:…`; readers at
+v0.9.8 and earlier compare the raw string and can misreport those anchors as
+`anchor_tampered`. In mixed-version deployments that share a store, upgrade every
+reader before writing new records with v0.10.0.
+
+### Added
+
+- **`AUTHORS.md`** at the repo root, plus a "Built by Paul Kyle at phasespace-labs"
+  byline in `README.md`, for clear maintainer attribution and a named place for
+  contributors to be listed once a PR merges.
+- **`docs/DATA-LIFECYCLE.md` — the documented answer to "how does an immutable
+  git-backed memory honour a right to erasure?"** (#804). Names the tension
+  plainly instead of dodging it: supersession is not erasure, `rm` is not
+  erasure in a git-backed store, and a complete erasure must cover the file,
+  the derived index, git history (rewrite), audit logs, and every mirror. Ships
+  the full procedure, the tombstone convention that keeps the audit property
+  honest, and a plain statement that scoped crypto-shredding is a direction,
+  not a shipped feature. Written now because it is a first-meeting question
+  from any regulated buyer, and cheaper to answer in a document than live.
+- **Verification results now say when they were only partial.** A citation anchor
+  with no stored `quote_hash` can only be checked for source drift — the
+  anchor-integrity axis is undecidable, and `anchor_tampered` is unreachable.
+  `VerifyResult` (and each claim's resolution as `span_partial`) now carries a
+  `partial` flag so an auditor can tell "verified" from "verified as far as was
+  possible" instead of reading a hash-less `ok` as the stronger claim.
+- **The MCP server now announces its display metadata** — `title`, `description`, and
+  `website_url` in the `initialize` response (#779, item 4). `server.json` already
+  published these to the MCP Registry, but a client connecting directly saw only the
+  name and version, so the same server described itself two different ways depending
+  on where you found it. A drift test pins the constants to `server.json`, which stays
+  the single source of truth for the listing.
+
+### Changed
+
+- **The README leads with the auditability position instead of the file format.**
+  The old headline led with "git-versioned and file-native" — the differentiator
+  the August 2026 competitive scan found most eroded (model vendors ship
+  file-based memory natively) — and addressed "AI coding agents," the segment
+  the market analysis found least monetizable. The headline now leads with what
+  no surveyed competitor claims: explicit epistemic status, typed evidence
+  links, and verifiable quote-level citation, applied by a deterministic
+  executor (#809). Files-as-truth remains, one sentence later, as the mechanism
+  rather than the pitch.
+
+### Fixed
+
+- **`quote_hash` is now algorithm-prefixed, so citation anchors can outlive their hash
+  function.** Anchors were written as a bare MD5 hex digest, inherited from the dedup
+  hasher. A bare digest records no algorithm, so there was no way to tell MD5 from
+  anything else after the fact — which meant the store could never move off MD5
+  without invalidating every existing anchor at once. Hashes are now written as
+  `<algorithm>:<hex>` (defaulting to `sha256`), and every comparison recomputes under
+  the *stored* hash's own algorithm rather than the current default. Existing bare
+  digests are resolved by length — 32 hex characters is MD5 (the only bare form
+  ever written), 64 is SHA-256, and any other length is rejected rather than
+  guessed at — and keep verifying unchanged; they are upgraded to the prefixed
+  form in place the next time the record is saved. Without the
+  algorithm-aware comparison this change would have reported `anchor_tampered` on
+  every pre-existing citation in every store — a silent, total false positive on
+  exactly the integrity signal the feature exists to provide. Surfaced while
+  extracting the record format into a portable specification.
+
+- **CLI JSON output is no longer corrupted by the display renderer** (#799). Every
+  command that emits JSON through the shared `print_result` helper — plus `lint` and
+  `review` — rendered it via `rich.Console`, which damaged it three ways: it wrapped
+  lines at the console's 80-column non-TTY fallback, injecting newlines *inside*
+  string literals; it interpreted `[...]` as style markup and **silently deleted**
+  those substrings from the data; and it could emit ANSI escapes. The piped path — the
+  one the "JSON when piped" contract exists for — was the affected one, because
+  not-a-TTY is both what selects JSON and what triggers the 80-column fallback.
+  JSON now goes through a single `emit_json` helper using `click.echo`, matching the
+  commands that were always correct. Note that merely widening the console would have
+  left the markup deletion in place, turning an unparseable document into a parseable
+  one with content missing.
+- **Two wall-clock test assertions no longer flake under load** (#783).
+  `test_freshness_check_performance` (`duration < 0.05`) and
+  `test_open_circuit_fast_fails_without_network_io` (`elapsed_ms < 10.0`) passed in
+  isolation and on CI but failed on a loaded machine running the full suite, handing
+  every runner an ambiguous signal to adjudicate. Both now assert on work done rather
+  than time elapsed: the freshness guard counts parses (one per distinct file,
+  proving the per-file section cache holds), and the circuit-breaker guard asserts no
+  transport call and no sleep. The freshness rewrite also closes a coverage gap — the
+  old fixture used 100 distinct files, which parses 100 times with or without the
+  cache, so it could not have detected the regression it was guarding.
+- **A malformed `layer_hint` no longer aborts the whole layer-split sweep** (#786).
+  YAML parses a bare `layer_hint:` as `None`, and `.lower()` on it raised inside the
+  loop over files — so one typo stopped a batch mutation partway through, leaving
+  some files rewritten and others untouched with nothing marking the boundary. The
+  hint is an optimization over a heuristic that classifies correctly without it, so
+  an unreadable one now degrades to "no hint" for that file and the sweep carries on.
+  Frontmatter that parses to a scalar rather than a mapping is handled the same way,
+  for the same reason.
+- **An unrecognized `layer_hint` is no longer silently ignored** (#786). A typo like
+  `layer_hint: histroy` matched no branch and fell through to the heuristic with no
+  signal, leaving the author believing an override was in effect. It now logs a
+  warning naming the file, the offending value, and the accepted set, reports
+  `layer_hint_ignored` in the `split_file` result, and counts `hints_ignored` in the
+  sweep's stats — so a run that fell back to heuristics no longer reports as clean.
+
+### Removed
+
+### Security
+
 ## [0.9.8] — 2026-08-01
 
 Ten fixes, and a theme: nearly every one was a surface that answered

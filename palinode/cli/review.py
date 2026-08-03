@@ -1,9 +1,9 @@
-import json
 
 import click
 from rich.console import Console
 
 from palinode.cli._api import HTTPStatusError, RequestError, api_client
+from palinode.cli._format import emit_json
 
 console = Console()
 
@@ -29,7 +29,7 @@ def review(project, fmt):
         data = run_review(project=project)
 
     if fmt == "json":
-        console.print(json.dumps(data, indent=2))
+        emit_json(data)
         return
 
     scope = data.get("project") or "whole store"

@@ -1,0 +1,14 @@
+# Authors
+
+Palinode is built and maintained by [Paul Kyle](https://github.com/Paul-Kyle) at [phasespace-labs](https://github.com/phasespace-labs).
+
+## Contributors
+
+Contributions welcome via pull request. Names appear here once a PR is merged.
+
+## Acknowledgements
+
+- The [Model Context Protocol](https://modelcontextprotocol.io) team for the protocol Palinode speaks.
+- The [BGE-M3](https://github.com/FlagOpen/FlagEmbedding) team for the embedding model that makes local-first semantic search practical.
+- [SQLite](https://sqlite.org), [sqlite-vec](https://github.com/asg017/sqlite-vec), and [FTS5](https://sqlite.org/fts5.html) — the durable, boring foundations.
+- Andrej Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (April 2026) for the clearest public articulation of a pattern Palinode was already shipping. Convergent design is its own validation.

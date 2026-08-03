@@ -10,12 +10,20 @@ Identity and Status get core:true. History gets core:false.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import yaml
 from datetime import UTC, datetime
 from palinode.core import git_tools
 from palinode.core.config import config
+
+logger = logging.getLogger("palinode.consolidation.layer_split")
+
+#: The complete set of accepted ``layer_hint`` values. Author-supplied and finite,
+#: which is what makes an unrecognized one a typo worth naming rather than a
+#: caller's free choice to ignore.
+LAYER_HINTS = ("identity", "status", "history")
 
 
 def _utc_now() -> datetime:
@@ -52,6 +60,17 @@ def split_file(file_path: str) -> dict:
                 metadata = yaml.safe_load(parts[1]) or {}
             except Exception:
                 pass
+            # Frontmatter that parses to a scalar or list (``---\nplain text\n---``)
+            # yields a non-dict here, and every ``metadata.get`` below would raise.
+            # Same failure shape as a malformed hint: one bad file kills the sweep.
+            if not isinstance(metadata, dict):
+                logger.warning(
+                    "%s: frontmatter parsed as %s, not a mapping — ignoring it "
+                    "and classifying by heuristic",
+                    file_path,
+                    type(metadata).__name__,
+                )
+                metadata = {}
             body = parts[2].strip()
     
     # Split body into sections by ## headings
@@ -67,8 +86,18 @@ def split_file(file_path: str) -> dict:
     # that don't follow standard heading conventions). All three hints move the body to
     # the named layer's file, so `status` and `history` both leave the identity file an
     # empty shell — that is the point of the hint, not a defect.
-    layer_hint = metadata.get("layer_hint", "").lower()
-    if layer_hint in ("identity", "status", "history"):
+    #
+    # The hint is an *optimization over a heuristic* that works fine without it, so an
+    # unreadable one degrades to "no hint" for this file rather than raising. A bare
+    # ``layer_hint:`` parses as ``None``, and ``None.lower()`` used to abort the whole
+    # sweep mid-run — the worst shape for a batch mutation, since some files are
+    # already written and others are not, with no obvious boundary between them.
+    raw_hint = metadata.get("layer_hint")
+    layer_hint = "" if raw_hint is None else str(raw_hint).strip().lower()
+    # A bare ``layer_hint:`` gives ``raw_hint is None``, so the value alone cannot say
+    # whether a hint was ignored — track that separately.
+    hint_ignored = False
+    if layer_hint in LAYER_HINTS:
         # Treat the entire file body as the specified layer — no classification needed.
         # An already-emptied body contributes nothing, which is what makes a re-split
         # idempotent rather than appending a blank entry to the history file.
@@ -81,6 +110,19 @@ def split_file(file_path: str) -> dict:
             identity_sections = hinted
         # Short-circuit to file writing (skip section classification below)
         sections = []  # Empty sections triggers the fallback path below
+    elif "layer_hint" in metadata:
+        # Present but unusable: a bare key (``None``), an empty value, or a typo like
+        # ``histroy``/``archive``. Falling through silently would leave the author
+        # believing an override is in effect when it is not — the same class of defect
+        # the hint is meant to resolve. Name the file and the accepted set.
+        hint_ignored = True
+        logger.warning(
+            "%s: unrecognized layer_hint %r — falling back to heuristic "
+            "classification for this file. Accepted values: %s",
+            file_path,
+            raw_hint,
+            ", ".join(LAYER_HINTS),
+        )
     
     # Load from config — these are tunable in palinode.config.yaml
     # under compaction.layer_split.identity_keywords / status_keywords
@@ -116,7 +158,11 @@ def split_file(file_path: str) -> dict:
     dir_path = os.path.dirname(file_path)
     
     results = {}
-    
+    if hint_ignored:
+        # Reported alongside the written paths so a caller that only inspects the
+        # return value still learns the hint did not apply.
+        results['layer_hint_ignored'] = raw_hint
+
     # Identity file (original name, core:true)
     id_meta = dict(metadata)
     id_meta['core'] = True
@@ -202,7 +248,16 @@ def split_all_core_files() -> dict:
     from palinode.core import store
     from palinode.core import embedder
     
-    stats = {"files_split": 0, "status_created": 0, "history_created": 0, "triggers_registered": 0}
+    # ``hints_ignored`` keeps a sweep from reporting a clean run when it quietly
+    # classified files by heuristic that asked to be classified by hint.
+    stats = {
+        "files_split": 0,
+        "status_created": 0,
+        "history_created": 0,
+        "triggers_registered": 0,
+        "hints_ignored": 0,
+        "files_with_ignored_hints": [],
+    }
     
     for d in ["projects", "people"]:
         full_dir = os.path.join(config.memory_dir, d)
@@ -222,6 +277,13 @@ def split_all_core_files() -> dict:
             
             results = split_file(f)
             stats["files_split"] += 1
+            if "layer_hint_ignored" in results:
+                stats["hints_ignored"] += 1
+                stats["files_with_ignored_hints"].append(
+                    # Stringified for the wire: this is a diagnostic, and the raw YAML
+                    # scalar can be any type the parser produced.
+                    {"file": f, "value": str(results["layer_hint_ignored"])}
+                )
             if "status" in results:
                 stats["status_created"] += 1
             if "history" in results:

@@ -44,7 +44,9 @@ def _normalize_sources(raw: list[dict[str, Any]]) -> list[dict[str, str]]:
     rejected. Raises ``HTTPException(400)`` on any malformed input; returns the
     normalized list of ``{ref, quote, quote_hash}`` dicts otherwise.
     """
+    from palinode.core.quote_verify import UnsupportedHashAlgorithm
     from palinode.core.quote_verify import quote_hash as _quote_hash
+    from palinode.core.quote_verify import quote_hash_matches as _quote_hash_matches
 
     if not isinstance(raw, list):
         raise HTTPException(status_code=400, detail="sources must be a list")
@@ -69,14 +71,22 @@ def _normalize_sources(raw: list[dict[str, Any]]) -> list[dict[str, str]]:
         computed = _quote_hash(quote)
         supplied = entry.get("quote_hash")
         if supplied is not None and str(supplied).strip():
-            if str(supplied).strip() != computed:
+            # Validate under the supplied hash's OWN algorithm so legacy bare-MD5
+            # anchors still round-trip; `computed` (canonical prefixed form) is
+            # what gets stored, upgrading the anchor in place.
+            try:
+                if not _quote_hash_matches(quote, str(supplied)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"sources[{i}] quote_hash does not match its quote "
+                            "(inconsistent anchor)"
+                        ),
+                    )
+            except UnsupportedHashAlgorithm as exc:
                 raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"sources[{i}] quote_hash does not match its quote "
-                        "(inconsistent anchor)"
-                    ),
-                )
+                    status_code=400, detail=f"sources[{i}] {exc}"
+                ) from exc
         normalized.append({"ref": ref, "quote": quote, "quote_hash": computed})
     return normalized
 

@@ -8,13 +8,15 @@
 └────────────┘
 ```
 
-**Audit-grade memory for AI coding agents. Git-versioned and file-native — every fact your agent recalls, you can `blame`, `diff`, and `rollback`. MCP-first, so one memory works in every editor.**
+**Audit-grade memory for AI agents. Every stored claim can carry an explicit epistemic status (`fact` / `inference` / `open_question` / `unverified`), typed links to the evidence that backs or contradicts it, and a verifiable quote-level citation to its source — applied by a deterministic executor the model cannot bypass. MCP-first, so one memory works in every editor.**
 
-Agent memory is becoming a commodity. *Auditable* agent memory is not: Palinode is the memory layer where every remembered fact is a line in a git-versioned markdown file — readable, diffable, attributable to the commit that recorded it, and revertible when it's wrong. No black-box vector store you have to trust.
+Agent memory is becoming a commodity. *Auditable* agent memory is not: Palinode is the memory layer where a remembered fact says how strongly it is believed and what evidence backs it — and where every fact is a line in a git-versioned markdown file, readable, diffable, attributable to the commit that recorded it, and revertible when it's wrong. An unmarked memory is unmarked, never silently promoted to fact. No black-box vector store you have to trust.
 
 Your agent's memory is a folder of markdown files. Palinode indexes them with hybrid search, compacts them with an LLM, and serves them through MCP — so the same memory works in Claude Code, Cursor, Windsurf, Zed, VS Code (Continue/Cline), and any other MCP-compatible editor. Bring your own Obsidian vault, or use Palinode as one: `palinode init --obsidian /path/to/vault` scaffolds a full vault with graph defaults, daily-notes wiring, and an LLM-maintained wiki contract. Enterprises can govern AI memory the same way they govern code. If every service crashes, `cat` still works.
 
 *A palinode is a poem that retracts what was said before and says it better. That's what memory compaction does.*
+
+Built by [Paul Kyle](https://github.com/Paul-Kyle) at [phasespace-labs](https://github.com/phasespace-labs). See [AUTHORS](AUTHORS.md).
 
 ---
 
@@ -45,7 +47,7 @@ Index (SQLite-vec vectors + FTS5 keywords, single .db file)
   ↓ queried by
 Interfaces (MCP server, REST API, CLI, OpenClaw plugin)
   ↓ compacted by
-Planner (returns operation JSON → Palinode validates and applies → git commits)
+LLM (proposes ops → deterministic executor applies them → git commits)
 ```
 
 That's the whole architecture. One directory of `.md` files, one SQLite database, one API server. No Postgres, no Redis, no cloud dependency.
@@ -85,7 +87,7 @@ That's the entire client config. Works with Claude Code, Claude Desktop, Cursor,
 
 **Search** — Hybrid BM25 + vector search merged with Reciprocal Rank Fusion. Keyword precision when you need exact terms, semantic recall when you don't. Optional associative entity graph and prospective triggers.
 
-**Compact** — Weekly consolidation turns model output into validated operations that Palinode applies through its normal write path. Every compaction is a git commit you can review, blame, or revert.
+**Compact** — Weekly consolidation where an LLM returns structured operations and Palinode's executor validates and applies them. The LLM never touches your files directly. Every compaction is a git commit you can review, blame, or revert.
 
 **Audit** — `git blame` any fact. `git diff` any change. `rollback` any mistake. These aren't just git-compatible files — `palinode_diff`, `palinode_blame`, and `palinode_rollback` are first-class tools your agent can call.
 
@@ -413,7 +415,7 @@ When exposing the API beyond loopback, set `PALINODE_API_TOKEN` — see [SECURIT
 - **Your data, your files** — No accounts, no cloud dependency, no vendor lock-in. Your memory is markdown files in a directory you control. Export is `cp`. Backup is `git push`. Whatever happens to any tool in this ecosystem, your data is plain text on your filesystem.
 - **Cross-IDE memory** — Your memory lives in one place. Connect from Claude Code, Cursor, Windsurf, Zed, or any MCP-compatible editor. Switch IDEs without losing context.
 - **Git operations as agent tools** — `diff`, `blame`, `rollback`, `push` exposed via MCP. No other system makes git ops callable by the agent.
-- **Operation-based compaction** — Structured operations are schema-checked and applied as reviewable git commits.
+- **Operation-based compaction** — Structured operations are schema-checked and applied by the executor as reviewable git commits.
 - **Per-fact addressability** — `<!-- fact:slug -->` IDs inline in markdown, invisible in rendering, preserved by git, targetable by compaction.
 - **4-phase injection** — Core (always) + Topic (per-turn search) + Associative (entity graph) + Triggered (prospective recall).
 - **Multi-transport MCP** — stdio for local, Streamable HTTP for remote. One server, any IDE on any machine.
