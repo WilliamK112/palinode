@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import typing
+from pathlib import Path
 from typing import Any
 
 import click
@@ -400,6 +402,32 @@ def test_prompt_task_enum_matches(surface: Surface) -> None:
     assert actual == PROMPT_TASKS, (
         f"prompt/{surface}/task: enum drift; "
         f"expected {PROMPT_TASKS}, found {actual}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("constant_name", "expected"),
+    [
+        ("PALINODE_CATEGORIES", CATEGORIES),
+        ("PALINODE_MEMORY_TYPES", MEMORY_TYPES),
+    ],
+)
+def test_plugin_enum_matches(
+    constant_name: str, expected: tuple[str, ...]
+) -> None:
+    """The plugin's TypeScript literals mirror Python's canonical tuples."""
+    source = (
+        Path(__file__).resolve().parents[1] / "plugin" / "index.ts"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        rf"const\s+{re.escape(constant_name)}\s*=\s*\[(?P<body>.*?)\]\s*as const;",
+        source,
+        re.DOTALL,
+    )
+    assert match is not None, f"plugin/index.ts is missing {constant_name}"
+    actual = tuple(re.findall(r'"([^"]+)"', match.group("body")))
+    assert actual == expected, (
+        f"plugin/{constant_name}: enum drift; expected {expected}, found {actual}"
     )
 
 

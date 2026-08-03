@@ -14,7 +14,7 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 // Keep these literals aligned with palinode/core/parity.py. The plugin cannot
-// import Python; plugin/test/parity.test.ts enforces exact cross-language drift.
+// import Python; tests/test_surface_parity.py enforces exact cross-language drift.
 const PALINODE_CATEGORIES = [
   "people",
   "projects",
