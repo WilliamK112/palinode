@@ -2,7 +2,8 @@
 #
 # This replaces the previous ci.yml / main-ci.yml / test.yml trio, whose
 # private-runner jobs could never run here and left every run queued until it
-# expired. All jobs below run on GitHub-hosted ubuntu-latest.
+# expired. All jobs below run on GitHub-hosted runners; unit tests cover Linux
+# plus one macOS lane for filesystem and platform compatibility.
 #
 # All embeddings / LLM calls are mocked in the unit suite — no external
 # services are needed.
@@ -18,11 +19,17 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v4
