@@ -3,10 +3,17 @@ import json as _json
 import click
 from palinode.cli._api import api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
+from palinode.core.parity import MEMORY_TYPES
 
 @click.command()
 @click.argument("content", required=False)
-@click.option("--type", "memory_type", required=False, help="Memory type (e.g. PersonMemory, Decision, Insight, ProjectSnapshot)")
+@click.option(
+    "--type",
+    "memory_type",
+    type=click.Choice(MEMORY_TYPES),
+    required=False,
+    help="Memory type (e.g. PersonMemory, Decision, Insight, ProjectSnapshot)",
+)
 @click.option("--ps", "is_ps", is_flag=True, help="Shorthand for --type ProjectSnapshot (Palinode Save a mid-session snapshot)")
 @click.option("--entity", "entities", multiple=True, help="Entity tag (e.g. person/X, project/X)")
 @click.option(

@@ -13,7 +13,7 @@ import hashlib
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from palinode.core import git_tools
 from palinode.core.config import config
 from palinode.core.envelope import envelope_complaint
+from palinode.core.parity import PROMPT_TASKS
 
 from palinode.api._util import _project_from_cwd, _utc_now
 from palinode.api.path_safety import _memory_base_dir
@@ -415,9 +416,6 @@ def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
-PROMPT_TASKS = {"compaction", "extraction", "update", "classification"}
-
-
 def _prompts_dir() -> str:
     return os.path.join(_memory_base_dir(), "prompts")
 
@@ -444,7 +442,9 @@ def _read_prompt_file(file_path: str) -> dict[str, Any]:
 
 
 @router.get("/prompts")
-def list_prompts_api(task: str | None = None) -> list[dict[str, Any]]:
+def list_prompts_api(
+    task: Literal[*PROMPT_TASKS] | None = None,
+) -> list[dict[str, Any]]:
     """List all prompt files, optionally filtered by task."""
     prompts_dir = _prompts_dir()
     if not os.path.exists(prompts_dir):

@@ -4,6 +4,7 @@ from rich.table import Table
 
 from palinode.cli._api import HTTPStatusError, api_client
 from palinode.cli._format import console, get_default_format, OutputFormat, print_result
+from palinode.core.parity import PROMPT_TASKS
 
 
 @click.group()
@@ -13,7 +14,7 @@ def prompt():
 
 
 @prompt.command(name="list")
-@click.option("--task", type=click.Choice(["compaction", "extraction", "update", "classification", "nightly-consolidation"]),
+@click.option("--task", type=click.Choice(PROMPT_TASKS),
               help="Filter by task type")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None)
 def prompt_list(task: str | None, fmt: str | None) -> None:

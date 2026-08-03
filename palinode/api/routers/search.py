@@ -2,11 +2,12 @@ from __future__ import annotations
 import os
 import re
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from palinode.core import store, embedder
 from palinode.core.config import config
+from palinode.core.parity import CATEGORIES, MEMORY_TYPES
 from palinode.api._util import _retrieval_logger, _safe_500
 from palinode.api.rate_limit import _RATE_LIMIT_SEARCH, _check_rate_limit
 from palinode.api.search_helpers import (
@@ -119,7 +120,7 @@ def _fetch_visible(
 
 class SearchRequest(BaseModel):
     query: str
-    category: str | None = None
+    category: Literal[*CATEGORIES] | None = None
     limit: int | None = config.search.default_limit
     threshold: float | None = config.search.api_threshold
     hybrid: bool | None = None
@@ -134,7 +135,7 @@ class SearchRequest(BaseModel):
     # ProjectSnapshot, Insight, ResearchRef, ActionItem). Independent of `category`
     # which filters by directory. Applied as a post-fetch filter; pass multiple
     # types to OR them.
-    types: list[str] | None = None
+    types: list[Literal[*MEMORY_TYPES]] | None = None
     # deny-list complement to `types`. Results whose `type` is in this list
     # are excluded after fetch. Takes precedence: a result present in both `types`
     # and `type_deny` is dropped.

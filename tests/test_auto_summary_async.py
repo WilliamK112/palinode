@@ -94,7 +94,7 @@ class TestSaveDoesNotCallSummary:
         with _patch_scan(), _patch_embed(), _patch_desc_success():
             res = client.post(
                 "/save",
-                json={"content": big_content, "type": "Note",
+                json={"content": big_content, "type": "Insight",
                       "slug": "not-core", "core": False},
             )
         assert res.status_code == 200, res.text

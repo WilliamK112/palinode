@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import typing
+from pathlib import Path
 from typing import Any
 
 import click
@@ -32,8 +34,10 @@ from pydantic import BaseModel
 
 from palinode.cli import main as cli_root
 from palinode.core.parity import (
+    CATEGORIES,
     INVENTORY_BACKLOG,
     INVENTORY_INFRA,
+    MEMORY_TYPES,
     REGISTRY,
     CanonicalParam,
     Operation,
@@ -94,6 +98,17 @@ def _cli_param_names(cmd: click.Command) -> set[str]:
     return names
 
 
+def _cli_param_enum(cmd: click.Command, param_name: str) -> tuple[str, ...] | None:
+    """Return a Click option's choices, normalized to the canonical name."""
+    aliases = {"type": "memory_type"}
+    click_name = aliases.get(param_name, param_name)
+    for param in cmd.params:
+        if param.name != click_name or not isinstance(param.type, click.Choice):
+            continue
+        return tuple(str(choice) for choice in param.type.choices)
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MCP extraction
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,6 +146,32 @@ def _mcp_param_names(tool_name: str) -> set[str]:
         return set()
     props = schema.get("properties", {}) or {}
     return set(props.keys())
+
+
+def _schema_enum(schema: dict[str, Any]) -> tuple[str, ...] | None:
+    """Extract an exact string enum from scalar or array JSON Schema."""
+    if "enum" in schema:
+        return tuple(str(value) for value in schema["enum"])
+    if schema.get("type") == "array":
+        return _schema_enum(schema.get("items", {}) or {})
+
+    values: list[str] = []
+    for branch in schema.get("anyOf", []) or []:
+        if branch.get("type") == "null":
+            continue
+        if "const" in branch:
+            values.append(str(branch["const"]))
+            continue
+        nested = _schema_enum(branch)
+        if nested is not None:
+            values.extend(nested)
+    return tuple(values) if values else None
+
+
+def _mcp_param_enum(tool_name: str, param_name: str) -> tuple[str, ...] | None:
+    schema = _mcp_tools().get(tool_name, {})
+    prop = (schema.get("properties", {}) or {}).get(param_name, {})
+    return _schema_enum(prop)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +226,38 @@ def _api_param_names(method: str, path: str) -> set[str]:
     return set()
 
 
+def _resolve_openapi_schema(
+    document: dict[str, Any], schema: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve the local component refs FastAPI emits for request models."""
+    ref = schema.get("$ref")
+    if not ref:
+        return schema
+    node: Any = document
+    for part in ref.removeprefix("#/").split("/"):
+        if not part:
+            continue
+        node = node[part]
+    return node
+
+
+def _api_param_enum(method: str, path: str, param_name: str) -> tuple[str, ...] | None:
+    """Read a query/body parameter enum from the generated OpenAPI schema."""
+    from palinode.api.server import app  # lazy
+
+    document = app.openapi()
+    operation = document["paths"][path][method.lower()]
+    for parameter in operation.get("parameters", []) or []:
+        if parameter.get("name") == param_name:
+            return _schema_enum(parameter.get("schema", {}) or {})
+
+    body = operation.get("requestBody", {}).get("content", {})
+    schema = body.get("application/json", {}).get("schema", {})
+    schema = _resolve_openapi_schema(document, schema)
+    prop = (schema.get("properties", {}) or {}).get(param_name, {})
+    return _schema_enum(prop)
+
+
 def _is_request_helper(annotation: Any) -> bool:
     """Best-effort check for FastAPI ``Request``/``Response`` helpers."""
     try:
@@ -220,6 +293,31 @@ def _surface_param_names(op: Operation, surface: Surface) -> set[str]:
     if surface == "plugin":
         # Plugin parity is documented in PARITY.md, not asserted in v0.
         return set()
+    raise AssertionError(f"unknown surface {surface!r}")
+
+
+def _surface_param_enum(
+    op: Operation, surface: Surface, param_name: str
+) -> tuple[str, ...] | None:
+    if surface == "cli":
+        if op.cli_command is None:
+            return None
+        cmd = _resolve_cli_command(op.cli_command)
+        return _cli_param_enum(cmd, param_name) if cmd is not None else None
+    if surface == "mcp":
+        return (
+            _mcp_param_enum(op.mcp_tool, param_name)
+            if op.mcp_tool is not None
+            else None
+        )
+    if surface == "api":
+        return (
+            _api_param_enum(*op.api_endpoint, param_name)
+            if op.api_endpoint is not None
+            else None
+        )
+    if surface == "plugin":
+        return None
     raise AssertionError(f"unknown surface {surface!r}")
 
 
@@ -266,6 +364,70 @@ def test_canonical_param_present(case: tuple[Operation, Surface, CanonicalParam]
         f"(found: {sorted(surface_params)}). "
         f"If this is intentional drift, add `known_drift[(\"{surface}\", "
         f"\"{cp.name}\")] = <issue>` on the Operation."
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        case
+        for case in _flatten_cases()
+        if case[2].enum in (CATEGORIES, MEMORY_TYPES)
+    ],
+    ids=_case_id,
+)
+def test_canonical_enum_matches(case: tuple[Operation, Surface, CanonicalParam]) -> None:
+    """Every category/type enum exposes the exact canonical values."""
+    op, surface, cp = case
+    expected = tuple(cp.enum or ())
+    actual = _surface_param_enum(op, surface, cp.name)
+    assert actual == expected, (
+        f"{op.name}/{surface}/{cp.name}: enum drift; "
+        f"expected {expected}, found {actual}"
+    )
+
+
+@pytest.mark.parametrize("surface", ["cli", "mcp", "api"])
+def test_prompt_task_enum_matches(surface: Surface) -> None:
+    """Prompt tasks stay aligned even while prompt remains registry backlog."""
+    from palinode.core.parity import PROMPT_TASKS
+
+    if surface == "cli":
+        cmd = _resolve_cli_command("prompt list")
+        actual = _cli_param_enum(cmd, "task") if cmd is not None else None
+    elif surface == "mcp":
+        actual = _mcp_param_enum("palinode_prompt", "task")
+    else:
+        actual = _api_param_enum("GET", "/prompts", "task")
+    assert actual == PROMPT_TASKS, (
+        f"prompt/{surface}/task: enum drift; "
+        f"expected {PROMPT_TASKS}, found {actual}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("constant_name", "expected"),
+    [
+        ("PALINODE_CATEGORIES", CATEGORIES),
+        ("PALINODE_MEMORY_TYPES", MEMORY_TYPES),
+    ],
+)
+def test_plugin_enum_matches(
+    constant_name: str, expected: tuple[str, ...]
+) -> None:
+    """The plugin's TypeScript literals mirror Python's canonical tuples."""
+    source = (
+        Path(__file__).resolve().parents[1] / "plugin" / "index.ts"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        rf"const\s+{re.escape(constant_name)}\s*=\s*\[(?P<body>.*?)\]\s*as const;",
+        source,
+        re.DOTALL,
+    )
+    assert match is not None, f"plugin/index.ts is missing {constant_name}"
+    actual = tuple(re.findall(r'"([^"]+)"', match.group("body")))
+    assert actual == expected, (
+        f"plugin/{constant_name}: enum drift; expected {expected}, found {actual}"
     )
 
 

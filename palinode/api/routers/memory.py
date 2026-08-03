@@ -6,11 +6,12 @@ import re
 import subprocess
 import time
 import yaml
-from typing import Any
+from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from palinode.core import store, git_tools
 from palinode.core.config import config
+from palinode.core.parity import CATEGORIES, MEMORY_TYPES
 from palinode.core.envelope import envelope_complaint
 from palinode.core.scope import ScopeChain
 from palinode.core.visibility import is_visible
@@ -186,7 +187,7 @@ def read_api(file_path: str, meta: bool = False) -> dict[str, Any]:
 
 class SaveRequest(BaseModel):
     content: str
-    type: str
+    type: Literal[*MEMORY_TYPES]
     slug: str | None = None
     entities: list[str] | None = None
     metadata: Any | None = None
@@ -348,7 +349,9 @@ def collect_memory_files(
 
 
 @router.get("/list")
-def list_api(category: str | None = None, core_only: bool = False) -> list[dict[str, Any]]:
+def list_api(
+    category: Literal[*CATEGORIES] | None = None, core_only: bool = False
+) -> list[dict[str, Any]]:
     """Browse memories, newest first.
 
     Never scope-filters (no session chain here — that's /context/prime's job),

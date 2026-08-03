@@ -49,6 +49,7 @@ from palinode.core.defaults import (
     SESSION_END_TIMEOUT_SECONDS as _SESSION_END_TIMEOUT,
     _SESSION_END_TIMEOUT_SENTINEL as _SENTINEL,
 )
+from palinode.core.parity import CATEGORIES, MEMORY_TYPES, PROMPT_TASKS
 
 logger = logging.getLogger("palinode.mcp")
 logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
@@ -613,7 +614,7 @@ def _all_tools() -> list[types.Tool]:
                     "category": {
                         "type": "string",
                         "description": "Filter by category: people, projects, decisions, insights, research",
-                        "enum": ["people", "projects", "decisions", "insights", "research"],
+                        "enum": list(CATEGORIES),
                     },
                     "core_only": {
                         "type": "boolean",
@@ -674,7 +675,7 @@ def _all_tools() -> list[types.Tool]:
                     "category": {
                         "type": "string",
                         "description": "Filter by category (memory directory name): people, projects, decisions, insights, research",
-                        "enum": ["people", "projects", "decisions", "insights", "research"],
+                        "enum": list(CATEGORIES),
                     },
                     "limit": {
                         "type": "integer",
@@ -713,14 +714,7 @@ def _all_tools() -> list[types.Tool]:
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": [
-                                "PersonMemory",
-                                "Decision",
-                                "ProjectSnapshot",
-                                "Insight",
-                                "ResearchRef",
-                                "ActionItem",
-                            ],
+                            "enum": list(MEMORY_TYPES),
                         },
                         "description": "Filter by memory type (matches frontmatter `type`).",
                     },
@@ -767,7 +761,7 @@ def _all_tools() -> list[types.Tool]:
                     "type": {
                         "type": "string",
                         "description": "Memory type. Required unless `ps=true` is given.",
-                        "enum": ["PersonMemory", "Decision", "ProjectSnapshot", "Insight", "ResearchRef", "ActionItem"],
+                        "enum": list(MEMORY_TYPES),
                     },
                     "ps": {
                         "type": "boolean",
@@ -1559,7 +1553,7 @@ def _all_tools() -> list[types.Tool]:
                     "task": {
                         "type": "string",
                         "description": "For 'list': filter by task type",
-                        "enum": ["compaction", "extraction", "update", "classification", "nightly-consolidation"],
+                        "enum": list(PROMPT_TASKS),
                     },
                 },
                 "required": ["action"],

@@ -13,6 +13,31 @@ import * as path from "path";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
+// Keep these literals aligned with palinode/core/parity.py. The plugin cannot
+// import Python; tests/test_surface_parity.py enforces exact cross-language drift.
+const PALINODE_CATEGORIES = [
+  "people",
+  "projects",
+  "decisions",
+  "insights",
+  "research",
+] as const;
+const PALINODE_MEMORY_TYPES = [
+  "PersonMemory",
+  "Decision",
+  "ProjectSnapshot",
+  "Insight",
+  "ResearchRef",
+  "ActionItem",
+] as const;
+
+function literalUnion(
+  values: readonly string[],
+  options?: { description?: string },
+) {
+  return Type.Union(values.map((value) => Type.Literal(value)), options);
+}
+
 // ============================================================================
 // Config
 // ============================================================================
@@ -335,9 +360,9 @@ const palinodePlugin = {
         parameters: Type.Object({
           query: Type.String({ description: "Natural language search query" }),
           category: Type.Optional(
-            Type.String({
+            literalUnion(PALINODE_CATEGORIES, {
               description:
-                "Filter by category: person, project, decision, insight, research",
+                `Filter by category: ${PALINODE_CATEGORIES.join(", ")}`,
             }),
           ),
           limit: Type.Optional(
@@ -350,7 +375,9 @@ const palinodePlugin = {
             Type.Number({ description: "Only return memories from the last N days." }),
           ),
           types: Type.Optional(
-            Type.Array(Type.String(), { description: "Filter by memory type (e.g. Decision, Insight)." }),
+            Type.Array(literalUnion(PALINODE_MEMORY_TYPES), {
+              description: "Filter by memory type (e.g. Decision, Insight).",
+            }),
           ),
           date_after: Type.Optional(
             Type.String({ description: "Filter results after an ISO date (e.g. 2024-01-01)." }),
@@ -443,9 +470,9 @@ const palinodePlugin = {
           "Save a memory to Palinode. Use for decisions, insights, person context, or project updates worth remembering across sessions.",
         parameters: Type.Object({
           content: Type.String({ description: "What to remember" }),
-          type: Type.String({
+          type: literalUnion(PALINODE_MEMORY_TYPES, {
             description:
-              "Memory type: PersonMemory, Decision, ProjectSnapshot, Insight, ActionItem",
+              `Memory type: ${PALINODE_MEMORY_TYPES.join(", ")}`,
           }),
           entities: Type.Optional(
             Type.Array(Type.String(), {

@@ -1,9 +1,10 @@
 import click
 from palinode.cli._api import api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
+from palinode.core.parity import CATEGORIES
 
 @click.command()
-@click.option("--category", type=click.Choice(["people", "projects", "decisions", "insights", "research"]))
+@click.option("--category", type=click.Choice(CATEGORIES))
 @click.option("--core", "core_only", is_flag=True, help="Only show core memory files")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]))
 def list_cmd(category, core_only, fmt):
