@@ -34,11 +34,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }} (Linux)
+        if: runner.os == 'Linux'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
+
+      - name: Set up Python 3.12 (macOS — extension-loading build)
+        if: runner.os == 'macOS'
+        run: |
+          brew install python@3.12
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+
+      - name: Verify loadable SQLite extensions (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -c 'import sqlite3; assert hasattr(sqlite3.connect(":memory:"), "enable_load_extension")'
 
       - name: Install dependencies
         run: |
