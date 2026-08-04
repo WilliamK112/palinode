@@ -45,7 +45,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install python@3.12
-          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix python@3.12)/bin/python3.12" -m venv "$RUNNER_TEMP/palinode-venv"
+          echo "$RUNNER_TEMP/palinode-venv/bin" >> "$GITHUB_PATH"
 
       - name: Verify loadable SQLite extensions (macOS)
         if: runner.os == 'macOS'
