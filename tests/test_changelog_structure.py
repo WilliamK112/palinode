@@ -94,3 +94,38 @@ def test_every_unreleased_bullet_sits_under_a_heading() -> None:
         "belong to no bucket and would be lost when the section becomes release "
         "notes:\n  " + "\n  ".join(orphans)
     )
+
+
+# --- released sections are immutable ---------------------------------------
+#
+# Twice in one week a backflowed contributor bullet was filed into the
+# PUBLISHED [0.10.0] section instead of ## Unreleased. That
+# retroactively edits released notes and diverges the repo from the GitHub
+# release body captured at publish time. The Unreleased-heading guards above
+# cannot see it: a bullet inside a released section trips nothing. So the most
+# recent released section is frozen by hash. A legitimate change to it (there
+# is exactly one: cutting a NEW release, which adds a new section above and
+# freezes it here) updates this constant as part of the release roll.
+
+_FROZEN_RELEASED = {
+    "0.10.1": "8378af087cdf738d0ff1e15afc325e36531e06f1e97bba695aa630d45b9bd50b",
+    "0.10.0": "aeff282e906646ecd99578eee3350f4b1fada01dc107e9b7131e80241f35f5e2",
+}
+
+
+def test_released_sections_are_immutable():
+    import hashlib
+
+    text = CHANGELOG.read_text(encoding="utf-8")
+    for version, expected in _FROZEN_RELEASED.items():
+        m = re.search(
+            rf"(## \[{re.escape(version)}\].*?)(?=\n## \[)", text, re.S
+        )
+        assert m, f"released section [{version}] not found"
+        actual = hashlib.sha256(m.group(1).encode()).hexdigest()
+        assert actual == expected, (
+            f"released section [{version}] was modified after publication. "
+            "Released notes are immutable — a post-release bullet belongs under "
+            "## Unreleased. If this is a deliberate release cut, update "
+            "_FROZEN_RELEASED as part of the roll."
+        )

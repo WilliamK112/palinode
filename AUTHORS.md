@@ -6,6 +6,11 @@ Palinode is built and maintained by [Paul Kyle](https://github.com/Paul-Kyle) at
 
 Contributions welcome via pull request. Names appear here once a PR is merged.
 
+- [Felipe Probst](https://github.com/fprobstv)
+- [Ching Wei Kang](https://github.com/WilliamK112)
+- [Guan Tong](https://github.com/happykawayigt)
+- [Nolan Efe Elbirlik](https://github.com/nolanefe)
+
 ## Acknowledgements
 
 - The [Model Context Protocol](https://modelcontextprotocol.io) team for the protocol Palinode speaks.

@@ -50,6 +50,7 @@ from palinode.core.defaults import (
     _SESSION_END_TIMEOUT_SENTINEL as _SENTINEL,
 )
 from palinode.core.parity import CATEGORIES, MEMORY_TYPES, PROMPT_TASKS
+from palinode.core.typed_links import parse_link_refs
 
 logger = logging.getLogger("palinode.mcp")
 logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
@@ -497,6 +498,30 @@ def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
             "unverified": " [unverified]",
         }.get(epi, "")
 
+        # Surface typed relationship links, for the same reason the epistemic
+        # marker above is surfaced: a reader needs to see at a glance that a hit
+        # is contested.
+        #
+        # `contradicts` records a conflict with no winner picked, and its entire
+        # value is at read time — the store knowing two memories disagree is
+        # worth nothing if the surface that answers questions never says so.
+        # The API has always returned these inside `metadata`, so a direct HTTP
+        # caller could reach them, but this renderer is what an agent actually
+        # sees and it dropped them. That made the feature write-only in
+        # practice: links could be recorded and never acted on.
+        #
+        # Rendered as refs rather than resolved bodies. Resolving would multiply
+        # the tool-result budget by the link count, and the ref is enough for a
+        # caller to decide whether to `palinode_read` the other side.
+        contradicts = parse_link_refs(meta, "contradicts")
+        backed_by = parse_link_refs(meta, "backed_by")
+        _link_bits = []
+        if contradicts:
+            _link_bits.append("⚠ contradicts: " + ", ".join(contradicts))
+        if backed_by:
+            _link_bits.append("backed by: " + ", ".join(backed_by))
+        links_label = " [" + " | ".join(_link_bits) + "]" if _link_bits else ""
+
         # pick body — snippet (default) or capped content (full=True).
         if full:
             body = (r.get("content") or "")[:_FULL_CONTENT_HARD_CAP]
@@ -513,7 +538,7 @@ def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
                 any_truncated = True
 
         parts.append(
-            f"[{rel}] ({score_pct}% match){fresh_label}{epi_label}{refs_label}\n{(body or '').strip()}"
+            f"[{rel}] ({score_pct}% match){fresh_label}{epi_label}{links_label}{refs_label}\n{(body or '').strip()}"
         )
 
     rendered = "\n\n---\n\n".join(parts)
@@ -1032,6 +1057,14 @@ def _all_tools() -> list[types.Tool]:
                             "default write-time pass."
                         ),
                         "default": False,
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Memory directories to consolidate, e.g. "
+                            "`[\"insights\"]`.  Defaults to `daily` only."
+                        ),
                     },
                 },
             },
@@ -1878,6 +1911,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 body["dry_run"] = True
             if arguments.get("nightly"):
                 body["nightly"] = True
+            if arguments.get("sources"):
+                body["sources"] = _coerce_str_array(arguments["sources"])
             resp = await _post("/consolidate", json=body, timeout=300.0)
             if resp.status_code != 200:
                 return _text(f"Consolidation failed: {resp.text}")

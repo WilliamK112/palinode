@@ -122,9 +122,12 @@ escape the memory directory. This is user data on a real filesystem.
 2. Write a test that fails before your change and passes after it.
 3. Run `pytest`, `ruff`, and `bandit` locally — CI runs all three.
 4. **Add a CHANGELOG entry.** Put a bullet under the existing `## Unreleased` heading
-   in `docs/CHANGELOG.md`, in the right Added / Changed / Fixed / Removed / Security
-   bucket. Add it under an existing heading — please do not create a new one, as the
-   file uses a union merge strategy and duplicate headings survive merges silently.
+   in `docs/CHANGELOG.md` — the topmost section — in the right Added / Changed / Fixed /
+   Removed / Security bucket. Add it under an existing heading — please do not create a
+   new one, as the file uses a union merge strategy and duplicate headings survive
+   merges silently. And never add it to an already-released version's section, even if
+   similar bullets there look like the natural place: released sections are immutable
+   records, they are hash-frozen, and CI will fail the PR.
    Genuinely non-shipping PRs (docs, CI) can note `skip-changelog` instead.
 5. Describe *why* in the PR body, not just what. The diff shows what.
 

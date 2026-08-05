@@ -10,7 +10,86 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
-- **`palinode_save` MCP schema size regression now gates compact `inputSchema` (#72).** v0.9.7 trimmed description prose and added a per-tool wire-size budget (#765), but that gate measured name + description + inputSchema together. The new `test_palinode_save_input_schema_fits_budget` enforces a ~3.5 KB (3,584 B) limit on the compact serialized `inputSchema` itself — the form clients cap — so schema growth is caught before a client silently replaces the contract with `{}`.
+### Removed
+
+### Security
+
+## [0.10.1] — 2026-08-05
+
+### Added
+- **Search results now surface typed relationship links to the agent.** A hit
+  carrying `contradicts` or `backed_by` renders them inline, alongside the existing
+  epistemic marker — `⚠ contradicts: insights/foo`. The links were always in the
+  API's `metadata`, so a direct HTTP caller could read them, but the MCP renderer
+  dropped them, which made the feature write-only in practice: a conflict the store
+  already knew about could never reach the surface that answers questions. Refs are
+  rendered rather than resolved bodies, so a result's token cost does not scale with
+  its link count. Memories without links render exactly as before.
+
+- **Homebrew installation** — `brew install phasespace-labs/palinode/palinode` taps
+  and installs the CLI in one command, via the new `phasespace-labs/homebrew-palinode`
+  tap (public #8). The formula installs the full package; the `palinode` CLI lands on
+  PATH, with service binaries reachable via the source or Docker paths for now.
+### Changed
+
+### Fixed
+- **Compaction now sees the decisions governing a project.**
+  `_get_decisions_for_project` had existed since the original runner and was never
+  called — one occurrence in the package, the `def` itself. So the compactor
+  proposed operations against a project's status doc with no knowledge of that
+  project's decisions, and could propose an UPDATE or SUPERSEDE contradicting a
+  live one with nothing to catch it: the executor validates operation *shape*, not
+  agreement with the decision record. Active decisions are now rendered into an
+  `ACTIVE_DECISIONS` section of the compaction prompt, and `specs/prompts/compaction.md`
+  documents them as **constraints, not material to compact** — no operation ever
+  targets a decision. Superseded decisions are excluded (the lookup already filtered
+  them), decisions are supplied without a lookback because a decision does not stop
+  governing when nobody edits its file, the section is omitted entirely when a
+  project has none, and the context is budgeted so a long decision record cannot
+  crowd out the notes being compacted. An unreadable `decisions/` logs a warning and
+  compaction continues — context improves a proposal, it is not a precondition for one.
+
+- **Consolidation can now reach memories that are not daily notes.** The
+  runner scanned `daily/*.md` and nothing else, so the deterministic op executor —
+  the architecture's headline differentiator — was triggerable for exactly one
+  directory. A store built the documented way, with typed saves through `/save` or
+  MCP, consolidated to `{"status": "no notes found"}` no matter how many Insights it
+  held. `consolidate` now takes a corpus selector on every surface: `sources` on the
+  API and MCP tool, repeatable `--source` on the CLI.
+
+  **The weekly default is now `daily/` + `insights/`.** A store built the documented
+  way keeps its durable findings in `insights/`, so leaving them opt-in would have
+  left the executor unreachable for exactly the memories most worth consolidating.
+  The existing 7-day lookback bounds each pass to recently touched files rather than
+  the whole corpus — on a store with 893 insights, a weekly pass sees the 76 touched
+  in the window, not all of them. Preview with `--dry-run` before the first real pass
+  if your `insights/` is large. The **nightly** pass is pinned to `daily/` and is
+  unchanged: "today's activity" is its contract.
+
+  A date-named file older than the cutoff is still rejected without being opened.
+  Memories outside `daily/` take their date from frontmatter
+  (`last_updated`/`created_at`, then mtime) rather than from a filename compared
+  against the cutoff as a string, and their `entities:` refs now count toward
+  project grouping alongside body mentions.
+
+- **Rate-limit rejections no longer consume rate-limit budget.** The limiter
+  incremented its counter before comparing against the limit, so it tallied *attempts*
+  rather than *admissions* — ten requests against a limit of five left `count == 10`.
+  Accept/reject behaviour was unaffected, because the window is fixed and resets
+  wholesale, so the inflated value was never read back; there was no livelock in
+  shipped behaviour. It is fixed anyway for the change it was waiting to break: under
+  a sliding window, or for any `Retry-After` or metric derived from `count`, a counter
+  that includes rejections starves a client that is backing off correctly — silently,
+  and looking like a client bug. Regression tests pin that `count` tracks admissions,
+  that sustained overload cannot inflate it, and that the limit is still enforced.
+
+- **Surface enums now stay aligned with the canonical parity registry** (#69).
+  CLI, MCP, and REST schemas import the category, memory-type, and prompt-task
+  lists from `palinode/core/parity.py`; the OpenClaw plugin mirrors those values
+  with a cross-language drift test. This restores plural category names,
+  includes `ResearchRef`, and exposes `nightly-consolidation` through the API.
+- **Display** `(partial — no stored hash)` marker for claims with `span_partial=True` in `format_claims_resolution` (#66).
+- **`palinode_save` MCP schema size regression now gates compact `inputSchema` (#72).** v0.9.7 trimmed description prose and added a per-tool wire-size budget, but that gate measured name + description + inputSchema together. The new `test_palinode_save_input_schema_fits_budget` enforces a ~3.5 KB (3,584 B) limit on the compact serialized `inputSchema` itself — the form clients cap — so schema growth is caught before a client silently replaces the contract with `{}`.
 
 ### Removed
 

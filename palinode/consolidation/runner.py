@@ -12,6 +12,7 @@ import json
 import glob
 import logging
 import shutil
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
@@ -119,11 +120,121 @@ def _get_decisions_for_project(project_id: str) -> list[dict]:
                     continue
     return active_decisions
 
+#: Prompt budget for the decision context. Decisions are supplied in full-ish
+#: because a truncated constraint is worse than none — the model would see half
+#: a rule and treat it as the whole rule — but a project with a long decision
+#: record still must not crowd out the notes it is meant to compact.
+MAX_DECISIONS_CHARS = 2000
+_MAX_DECISION_CHARS = 500
+
+
+def _format_active_decisions(project_id: str) -> str:
+    """Render this project's active decisions for the compaction prompt.
+
+    Returns an empty string when there are none, so the caller can omit the
+    section entirely rather than send an empty heading.
+
+    The lookup itself (``_get_decisions_for_project``) already excludes
+    superseded decisions — a superseded decision is exactly the thing the
+    compactor must NOT treat as binding.
+    """
+    try:
+        decisions = _get_decisions_for_project(project_id)
+    except Exception as exc:  # pragma: no cover — defensive
+        # Context is an improvement to the proposal, never a precondition for
+        # it. A malformed decisions/ directory must not stop a compaction pass.
+        logger.warning(
+            "palinode.consolidation: could not load decisions for %r "
+            "(compacting without decision context): %s",
+            project_id, exc,
+        )
+        return ""
+
+    parts: list[str] = []
+    total = 0
+    for d in decisions:
+        title = d.get("name") or d.get("id") or "decision"
+        body = (d.get("content") or "").strip()
+        if len(body) > _MAX_DECISION_CHARS:
+            body = body[:_MAX_DECISION_CHARS].rstrip() + " …[truncated]"
+        entry = f"- **{title}**: {body}" if body else f"- **{title}**"
+        if total + len(entry) > MAX_DECISIONS_CHARS:
+            parts.append(
+                f"- …and {len(decisions) - len(parts)} more decision(s) not shown"
+            )
+            break
+        parts.append(entry)
+        total += len(entry)
+
+    return "\n".join(parts)
+
+
 _CONSOLIDATION_SKIP_DIRS = {"daily", "archive", "inbox", "logs", "prompts", "specs"}
 
 
-def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
-    """Collect recent daily notes from the daily directory.
+#: Default corpus for the weekly consolidation pass.
+#:
+#: ``daily/`` is the ephemeral capture stream consolidation was built for.
+#: ``insights/`` is included because a store built the documented way puts its
+#: durable findings there, and leaving them out meant the executor never saw
+#: the memories most worth consolidating — the whole defect this default is
+#: correcting. The weekly lookback (7 days) bounds each pass to recently
+#: touched files rather than the whole corpus.
+#:
+#: The nightly pass deliberately does NOT use this — see ``run_nightly``.
+DEFAULT_CONSOLIDATION_SOURCES: tuple[str, ...] = ("daily", "insights")
+
+#: What the nightly pass reads. Nightly is the lightweight "what happened
+#: today" sweep; insights are not a daily activity stream, so widening the
+#: weekly default must not silently widen this one too.
+NIGHTLY_CONSOLIDATION_SOURCES: tuple[str, ...] = ("daily",)
+
+#: Filenames shaped ``YYYY-MM-DD.md``. Daily notes carry their date in the
+#: filename; every other memory carries it in frontmatter.
+_DATED_FILENAME = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
+def _note_date(filepath: str, meta: dict) -> str:
+    """The date a note is filed under, as ``YYYY-MM-DD``.
+
+    Daily notes are named for their date, and that is authoritative — reading
+    frontmatter for them would change long-standing behaviour. Typed memories
+    (Insight, Decision, ProjectSnapshot…) are not date-named, so their date
+    comes from frontmatter, falling back to mtime.
+
+    Without this, a typed memory's filename fails the cutoff's string
+    comparison in whichever direction its first characters happen to sort —
+    silently including or excluding it rather than honouring the lookback.
+    """
+    stem = os.path.basename(filepath)
+    dated = _DATED_FILENAME.match(stem)
+    if dated:
+        return dated.group(1)
+
+    for key in ("last_updated", "created_at", "date"):
+        value = meta.get(key)
+        if value:
+            text = str(value)
+            if _DATED_FILENAME.match(text):
+                return text[:10]
+
+    return datetime.fromtimestamp(os.path.getmtime(filepath), UTC).strftime("%Y-%m-%d")
+
+
+def _collect_daily_notes(
+    lookback_days: int, sources: Sequence[str] | None = None
+) -> tuple[list[dict], int]:
+    """Collect recent notes from the selected corpora.
+
+    ``sources`` names directories under ``memory_dir`` to scan. This function
+    previously scanned ``daily/`` unconditionally, which made the deterministic
+    executor — the architecture's headline differentiator — unreachable for
+    memories saved the documented way: a store full of typed Insights
+    consolidated to ``{"status": "no notes found"}`` because none of them live
+    in ``daily/``.
+
+    The default is now ``DEFAULT_CONSOLIDATION_SOURCES``, which includes
+    ``insights/``; pass ``sources`` explicitly to narrow or widen it.
 
     Returns:
         Tuple of (notes list, skipped_count) where skipped_count is the
@@ -131,18 +242,31 @@ def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
         Callers surface skipped_count in the consolidation run summary so
         operators know to run ``palinode lint``.
     """
-    daily_dir = os.path.join(config.memory_dir, "daily")
-    if not os.path.exists(daily_dir):
-        return [], 0
+    selected = tuple(sources) if sources else DEFAULT_CONSOLIDATION_SOURCES
 
     cutoff_date = (_utc_now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     notes = []
     skipped = 0
+    candidates: list[str] = []
 
-    for filepath in glob.glob(os.path.join(daily_dir, "*.md")):
-        filename = os.path.basename(filepath)
-        date_str = filename.replace(".md", "")
-        if date_str < cutoff_date:
+    for source in selected:
+        source_dir = os.path.join(config.memory_dir, source)
+        if not os.path.exists(source_dir):
+            continue
+        candidates.extend(glob.glob(os.path.join(source_dir, "*.md")))
+
+    if not candidates:
+        return [], 0
+
+    for filepath in candidates:
+        meta: dict = {}
+
+        # Fast path, and the reason daily behaviour is unchanged: a date-named
+        # file older than the cutoff is rejected without being opened, exactly
+        # as before. Only files whose date must come from frontmatter get read
+        # in order to be filtered.
+        named = _DATED_FILENAME.match(os.path.basename(filepath))
+        if named and named.group(1) < cutoff_date:
             continue
 
         with open(filepath, "r", encoding="utf-8") as f:
@@ -152,7 +276,9 @@ def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 try:
-                    _meta = yaml.safe_load(parts[1]) or {}
+                    meta = yaml.safe_load(parts[1]) or {}
+                    if not isinstance(meta, dict):
+                        meta = {}
                     content = parts[2].strip()
                 except Exception as _parse_exc:
                     # Silent pass was hiding corrupt frontmatter — log so
@@ -169,7 +295,24 @@ def _collect_daily_notes(lookback_days: int) -> tuple[list[dict], int]:
                     # than silently drop the note.
                     content = parts[2].strip() if len(parts) >= 3 else content
 
-        mentions = list(set(re.findall(r"(project/[\w-]+|person/[\w-]+)", content)))
+        date_str = _note_date(filepath, meta)
+        if date_str < cutoff_date:
+            continue
+
+        # Frontmatter `entities:` is the reliable signal for a typed memory —
+        # it is what `palinode_save` records, whereas the regex below only sees
+        # refs a human happened to write into the body. Daily notes rarely carry
+        # it, so the two are unioned rather than one replacing the other.
+        declared = meta.get("entities") or []
+        if isinstance(declared, str):
+            declared = [declared]
+        mentions = {
+            str(e)
+            for e in declared
+            if isinstance(e, (str, int)) and str(e).startswith(("project/", "person/"))
+        }
+        mentions.update(re.findall(r"(project/[\w-]+|person/[\w-]+)", content))
+        mentions = list(mentions)
 
         # Fallback: detect projects by keyword if no entity refs found
         if not any(m.startswith("project/") for m in mentions):
@@ -325,11 +468,22 @@ def _consolidate_project(
         total += len(entry)
     notes_parts.reverse()
     notes_text = "\n\n".join(notes_parts)
-    
+
+    # Active decisions for this project, as *constraints* on what may be
+    # proposed — not as material to compact. Supplied without a lookback:
+    # a decision does not stop governing because nobody touched its file this
+    # week, which is the opposite of how a note ages.
+    decisions_text = _format_active_decisions(project_id)
+    decisions_section = (
+        f"\n## ACTIVE_DECISIONS (governing this project)\n\n{decisions_text}\n"
+        if decisions_text
+        else ""
+    )
+
     user_prompt = f"""## EXISTING_FACTS ({len(facts)} facts from {os.path.basename(target_file)})
 
 {facts_text}
-
+{decisions_section}
 ## RECENT_NOTES (last {config.consolidation.lookback_days} days)
 
 {notes_text}
@@ -617,12 +771,25 @@ def _proposed_changes(target: str, operations: list[dict]) -> list[dict[str, str
     ]
 
 
-def run_consolidation(lookback_days: int | None = None, dry_run: bool = False, llm_fn: LlmFn | None = None) -> dict[str, Any]:
-    """Orchestrator for the entire memory consolidation process."""
+def run_consolidation(
+    lookback_days: int | None = None,
+    dry_run: bool = False,
+    llm_fn: LlmFn | None = None,
+    sources: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Orchestrator for the entire memory consolidation process.
+
+    ``sources`` selects which directories under ``memory_dir`` to consolidate,
+    defaulting to ``daily/``. Grouping and targeting are unchanged: notes
+    are grouped by the ``project/`` refs they carry and compacted into that
+    project's status file, so a source whose memories name no project
+    contributes nothing — which the run summary reports as
+    ``projects_compacted: 0`` rather than silently.
+    """
     from palinode.consolidation.executor import apply_operations
-    
+
     lookback = lookback_days or config.consolidation.lookback_days
-    notes, yaml_skipped = _collect_daily_notes(lookback)
+    notes, yaml_skipped = _collect_daily_notes(lookback, sources=sources)
     if not notes:
         if dry_run:
             return {
@@ -731,11 +898,18 @@ def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn:
 
     Restricted to UPDATE and SUPERSEDE ops. No ARCHIVE or MERGE (those
     are weekly concerns). Smaller LLM context = better JSON output.
+
+    Pinned to ``NIGHTLY_CONSOLIDATION_SOURCES`` rather than inheriting the
+    weekly default: "today's daily notes only" is this function's contract, and
+    an unpinned call would have widened it silently the moment the weekly
+    default grew.
     """
     from palinode.consolidation.executor import apply_operations
-    
+
     lookback = lookback_days or config.consolidation.nightly.lookback_days
-    notes, yaml_skipped = _collect_daily_notes(lookback)
+    notes, yaml_skipped = _collect_daily_notes(
+        lookback, sources=NIGHTLY_CONSOLIDATION_SOURCES
+    )
     if not notes:
         if dry_run:
             return {

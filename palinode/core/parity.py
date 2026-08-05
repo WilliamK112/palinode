@@ -282,6 +282,10 @@ REGISTRY: tuple[Operation, ...] = (
         canonical_params=(
             CanonicalParam(name="dry_run", type="boolean"),
             CanonicalParam(name="nightly", type="boolean"),
+            # Which corpora to consolidate; defaults to daily/ on every surface.
+            # Without it the deterministic executor was reachable only for
+            # daily notes, never for typed memories.
+            CanonicalParam(name="sources", type="array"),
         ),
         cli_command="consolidate",
         mcp_tool="palinode_consolidate",

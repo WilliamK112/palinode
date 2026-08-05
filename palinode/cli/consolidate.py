@@ -5,11 +5,20 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
 @click.command()
 @click.option("--nightly", is_flag=True, help="Run lightweight nightly pass (today only, UPDATE/SUPERSEDE)")
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying")
+@click.option(
+    "--source",
+    "sources",
+    multiple=True,
+    metavar="DIR",
+    help="Memory directory to consolidate; repeatable. Defaults to daily/.",
+)
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
-def consolidate(nightly, dry_run, fmt):
+def consolidate(nightly, dry_run, sources, fmt):
     """Run or preview memory compaction (weekly full or --nightly lightweight)."""
     try:
-        data = api_client.consolidate(dry_run=dry_run, nightly=nightly)
+        data = api_client.consolidate(
+            dry_run=dry_run, nightly=nightly, sources=list(sources) or None
+        )
         
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()
         

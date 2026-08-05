@@ -282,9 +282,9 @@ consolidation:
     allowed_ops: ["UPDATE", "SUPERSEDE", "MERGE"]
 
   # Write-time contradiction check (Tier 2a — ADR-004)
-  # When enabled, every palinode_save schedules a background LLM check against
-  # the top-k most similar existing memories. If a contradiction is found, the
-  # deterministic executor applies an UPDATE/SUPERSEDE op in a separate commit.
+  # When enabled, every palinode_save schedules a background contradiction check
+  # against the top-k most similar existing memories. Validated updates are
+  # applied in a separate commit.
   # Runs asynchronously — never blocks the save caller.
   #
   # Default: disabled. Flip to true after validating in a dev environment.

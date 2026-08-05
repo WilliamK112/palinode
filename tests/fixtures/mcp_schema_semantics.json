@@ -42,7 +42,8 @@
     "description": "Run a manual knowledge consolidation pass.  Set `dry_run=true` to preview the proposed operations without applying them.",
     "params": {
       "dry_run": {},
-      "nightly": {}
+      "nightly": {},
+      "sources": {}
     },
     "required": []
   },

@@ -22,6 +22,13 @@ Its ``inputSchema`` is gated at :data:`SAVE_INPUT_SCHEMA_BUDGET_BYTES` (~3.5 KB)
 to leave headroom below the observed 4,096-byte client cap as the contract
 evolves.  Other tools are checked against the full wire size
 (name + description + inputSchema) at :data:`SCHEMA_BUDGET_BYTES`.
+
+**When either gate fails, split the tool — do not compress prose.** Shrinking
+descriptions buys a few hundred bytes and leaves the next field to re-break it;
+moving a cohesive parameter cluster to its own tool fixes the class. The
+provenance cluster on ``palinode_save`` (``claims``/``sources``/``backed_by``/
+``contradicts``) is the standing candidate: ~1.4 KB for structures a typical
+save never sends.
 """
 from __future__ import annotations
 
@@ -79,8 +86,8 @@ def test_palinode_save_input_schema_fits_budget():
         f"palinode_save inputSchema serializes to {size} B, over the "
         f"{SAVE_INPUT_SCHEMA_BUDGET_BYTES} B budget by "
         f"{size - SAVE_INPUT_SCHEMA_BUDGET_BYTES} B. Clients may drop the "
-        f"schema entirely. Trim description prose or split a parameter cluster "
-        f"onto its own tool — see the module docstring."
+        f"schema entirely. Split a parameter cluster onto its own tool rather "
+        f"than compressing prose — see the module docstring."
     )
 
 

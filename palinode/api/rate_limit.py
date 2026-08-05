@@ -53,7 +53,28 @@ def _prune_rate_counters(now: float) -> None:
 
 
 def _check_rate_limit(client_ip: str, category: str, limit: int) -> bool:
-    """Return True if request is within rate limit, False if exceeded."""
+    """Return True if request is within rate limit, False if exceeded.
+
+    ``count`` tracks **admitted** requests only. A rejected request does not
+    consume budget: it never had any.
+
+    The previous version incremented before comparing, so a client sending far
+    over the limit drove the counter to arbitrary values — 10 requests against a
+    limit of 5 left ``count == 10``. Accept/reject behaviour was identical
+    because this is a *fixed* window that resets wholesale, so the inflated
+    value was never read back. It was still wrong in two ways worth fixing:
+
+    * ``count`` did not mean what its name says, so any future metric, log line,
+      or ``Retry-After`` hint derived from it would have been quietly wrong.
+    * It is a trap for the obvious next change. Converting this to a sliding
+      window while rejections still consume budget produces genuine starvation:
+      a client at the limit keeps topping up the very counter it is waiting to
+      drain, and correct exponential backoff never recovers.
+
+    Verified before changing: the fixed window rolls at ``_RATE_LIMIT_WINDOW``
+    regardless of rejected traffic, and a client that backs off past the window
+    is admitted. There was no livelock in the shipped behaviour.
+    """
     now = time.time()
     _prune_rate_counters(now)
     key = f"{client_ip}:{category}"
@@ -61,5 +82,7 @@ def _check_rate_limit(client_ip: str, category: str, limit: int) -> bool:
     if not entry or now - entry["window_start"] > _RATE_LIMIT_WINDOW:
         _rate_counters[key] = {"window_start": now, "count": 1}
         return True
+    if entry["count"] >= limit:
+        return False
     entry["count"] += 1
-    return entry["count"] <= limit
+    return True

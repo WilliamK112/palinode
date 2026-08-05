@@ -295,8 +295,18 @@ fields, the session-end hook audit push)."""
         response.raise_for_status()
         return response.json()
 
-    def consolidate(self, dry_run: bool = False, nightly: bool = False):
-        response = self.client.post("/consolidate", json={"dry_run": dry_run, "nightly": nightly})
+    def consolidate(
+        self,
+        dry_run: bool = False,
+        nightly: bool = False,
+        sources: list[str] | None = None,
+    ):
+        body: dict = {"dry_run": dry_run, "nightly": nightly}
+        # Omitted rather than sent as null so the server's default stays the
+        # single definition of "which corpus".
+        if sources:
+            body["sources"] = list(sources)
+        response = self.client.post("/consolidate", json=body)
         response.raise_for_status()
         return response.json()
 

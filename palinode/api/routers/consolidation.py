@@ -13,6 +13,11 @@ router = APIRouter()
 class ConsolidateRequest(BaseModel):
     dry_run: bool = False
     nightly: bool = False
+    #: Directories under the memory dir to consolidate. ``None`` means
+    #: ``daily/`` alone, which is what this endpoint did unconditionally
+    #: before — hardcoding that scan left the deterministic executor
+    #: unreachable for typed memories saved through /save or MCP.
+    sources: list[str] | None = None
 
 
 @router.post("/consolidate")
@@ -29,7 +34,7 @@ def consolidate_api(req: ConsolidateRequest = None) -> dict[str, Any]:
         if req.nightly:
             result = run_nightly(dry_run=req.dry_run)
         else:
-            result = run_consolidation(dry_run=req.dry_run)
+            result = run_consolidation(dry_run=req.dry_run, sources=req.sources)
         return result
     except Exception as e:
         raise _safe_500(e, "Consolidation failed")
