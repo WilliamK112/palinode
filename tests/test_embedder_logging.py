@@ -4,8 +4,14 @@ Ollama traffic-surface hardening.
 As of Phase 3 of the Ollama traffic-surface hardening, `_embed_local` delegates to the
 centralized `OllamaClient`, which owns the per-call structured JSON logging (the
 `palinode.ollama.events` logger — covered in tests/test_ollama_client.py). What remains
-at the embedder level is a single summary WARNING when an embed degrades to [] — and the
-privacy invariant that logs never carry raw user text, only `text_len`. """
+at the embedder level is a single summary WARNING when an embed call fails — and the
+privacy invariant that logs never carry raw user text, only `text_len`.
+
+A failed embed call now *raises* `EmbeddingUnavailable` instead of degrading to `[]`;
+the WARNING still fires (unchanged contract — the log is the operator-facing summary,
+the exception is the caller-facing signal) but every test below now asserts the raise,
+not a falsy return.
+"""
 from __future__ import annotations
 
 import logging
@@ -14,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from palinode.core import embedder
+from palinode.core.embedder import EmbeddingUnavailable
 from palinode.core.ollama_client import OllamaTimeout, OllamaUnreachable
 
 
@@ -37,20 +44,21 @@ def test_embedder_module_has_logger():
 
 
 # ---------------------------------------------------------------------------
-# Failure → [] + a single WARNING with structured context (model, text_len)
+# Failure → EmbeddingUnavailable + a single WARNING with structured context
+# (model, text_len)
 # ---------------------------------------------------------------------------
 
 
-def test_embed_failure_returns_empty_and_warns(caplog):
+def test_embed_failure_raises_and_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="palinode.core.embedder"):
         with patch("palinode.core.embedder._run_preflight_once"), \
                 _client_with_embed(embed_side_effect=OllamaUnreachable("offline", role="embed")):
-            result = embedder._embed_local("some text to embed")
-    assert result == []
+            with pytest.raises(EmbeddingUnavailable):
+                embedder._embed_local("some text to embed")
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, "no WARNING emitted on embed failure"
     msg = warnings[-1].message
-    assert "returning empty vector" in msg
+    assert "EmbeddingUnavailable" in msg
     assert "text_len" in msg
     assert "model" in msg or "bge" in msg.lower()
 
@@ -59,8 +67,8 @@ def test_embed_failure_warning_on_timeout(caplog):
     with caplog.at_level(logging.WARNING, logger="palinode.core.embedder"):
         with patch("palinode.core.embedder._run_preflight_once"), \
                 _client_with_embed(embed_side_effect=OllamaTimeout("slow", role="embed")):
-            result = embedder._embed_local("timeout test text")
-    assert result == []
+            with pytest.raises(EmbeddingUnavailable):
+                embedder._embed_local("timeout test text")
     assert [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
@@ -86,20 +94,26 @@ def test_embed_success_returns_vector_no_warning(caplog):
 
 
 def test_warning_includes_text_len_not_raw_text(caplog):
-    """Logs must carry text_len, never the raw input (PII / payload safety)."""
+    """Logs (and the raised exception) must carry text_len, never the raw
+    input (PII / payload safety)."""
     sensitive_text = "SECRET_CONTENT_DO_NOT_LOG " * 10
     # Capture both the embedder logger and the client event logger.
     with caplog.at_level(logging.DEBUG):
         with patch("palinode.core.embedder._run_preflight_once"), \
                 _client_with_embed(embed_side_effect=OllamaUnreachable("offline", role="embed")):
-            embedder._embed_local(sensitive_text)
+            with pytest.raises(EmbeddingUnavailable) as ei:
+                embedder._embed_local(sensitive_text)
     for record in caplog.records:
         assert "SECRET_CONTENT_DO_NOT_LOG" not in record.getMessage(), (
             "raw user text leaked into a log record"
         )
+    assert "SECRET_CONTENT_DO_NOT_LOG" not in str(ei.value), (
+        "raw user text leaked into the raised exception's message"
+    )
     assert any("text_len" in r.getMessage() for r in caplog.records), (
         "text_len context missing from all log records"
     )
+    assert "text_len" in str(ei.value)
 
 
 # ---------------------------------------------------------------------------

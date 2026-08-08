@@ -14,6 +14,151 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Security
 
+## [0.11.0] — 2026-08-08
+
+### Added
+
+- **Write-time forgetting:** an explicit first-person forget request in
+  saved content ("please forget that I…") now archives the memories that carry
+  the named preference, resolved via hybrid search, while the request itself
+  stays retrievable as the retraction record. Deterministic detector (no LLM in
+  the save path), applied through the existing on-demand archive op with
+  `superseded_by` provenance back to the request. Config-gated under
+  `consolidation.forget` (default **off**). The design was measured before it
+  was built: archiving with a visible tombstone doubled forgetting compliance
+  in a paired benchmark, while silently removing every trace scored worse than
+  doing nothing — which is why the retraction record is kept retrievable.
+
+### Changed
+
+- **`search.default_limit` raised 10 → 15.** The BEAM k-sweep (400
+  answers/point, replicated on a second judge family) measured
+  contradiction-resolution accuracy rising through k=5/10/15 and plateauing
+  by k=25; the shipped default of 10 sat on the rising part of the curve, not
+  the plateau. Raising it was verified safe only after fixing the hybrid
+  search saturation below — before that fix, results silently capped
+  at a rank-locked ceiling well under any reasonable `limit`, which would
+  have masked whether the new default actually took effect.
+
+### Fixed
+
+- **Write-time forgetting no longer archives dense shared memories that
+  merely mention the forgotten preference — it strikes exactly the
+  mentioning sentences instead.** Forgetting is fact/entity-shaped but the archive op is
+  file-shaped: on a consolidated store, "please forget that I know X" could
+  resolve to a project snapshot where X is two mentions among hundreds of
+  content words and archive the whole file, silently removing unrelated
+  recall. Whole-file coverage of the pref phrase
+  (`consolidation.forget.min_target_coverage`, default 0.05) now routes
+  each resolved target: at or above the floor the memory archives whole as
+  before (it *is* the pref's memory); below it, the sentences/list items
+  carrying the pref are struck in place with an opaque, terminator-final
+  retraction marker (`~~…~~ [RETRACTED <date> r:<id>].` — the pref itself
+  lives only in the history-sibling entry keyed by the same id, so marker
+  text can never feed back into routing or matching) and the rest of the
+  file stays live and in recall. Each applied retraction is recorded in
+  the file's `retracted_prefs` frontmatter; resolution excludes
+  same-pref-retracted files so repeat requests neither re-archive a
+  protected file nor starve target slots that new memories need. Matching
+  is deterministic (Titlecase entity tokens hit on one match — ALL-CAPS
+  emphasis does not qualify; common-word prefs need two shared words) and
+  sentence-granular across soft line breaks; headings, code fences
+  (backtick and tilde), table rows, the auto-footer block, and living
+  `update_policy: replace` documents are never struck — a target whose
+  mention striking cannot reach is reported loudly as `unforgotten`, and
+  an unreadable target fails closed to a reported skip, never to archive.
+  Mutations are audited in the history sibling and committed before
+  re-indexing, with the index outcome surfaced like the save path's.
+  Outcomes are reported in the save response (`forget.retracted` with
+  mention counts; `forget.skipped` with status). Set the floor to 0.0 to
+  restore unconditional whole-file archival.
+
+- **Hybrid search no longer silently caps results at a rank-locked ceiling
+  regardless of the requested `limit`, and `mcp_threshold`/`api_threshold` no
+  longer filter on a score that isn't relevance.** `rank_hybrid`'s post-RRF
+  fused score is a function of an item's
+  RANK within RRF's k=60 formula, not of its relevance — two semantically
+  unrelated queries against the same store produced byte-identical post-RRF
+  score sequences. Thresholding that score after fusion therefore selected a
+  near-invariant rank cutoff (empirically ~41st place at the 0.6 API
+  default) independent of the query and of the requested `limit` — exactly
+  the observed "ask for 400, get 41" saturation. `threshold` now filters
+  each candidate's own PER-ARM score (real cosine for the vector arm,
+  normalized BM25 for the FTS arm) before fusion, matching the per-arm
+  approach used by the forget resolver.
+  Also fixed: the API's `/search` endpoint treated an explicit
+  `threshold: 0.0` as unset (`req.threshold or config.search.api_threshold`
+  — `0.0 or x` evaluates to `x`), silently reinstating the default threshold
+  on a caller's deliberate "no floor" request.
+
+  Changing what `threshold` means changed what its two existing numeric
+  values (`mcp_threshold=0.4`, `api_threshold=0.6`) actually select for, so
+  both were re-measured against real bge-m3 embeddings and real SQLite FTS5
+  — not carried over by default. `api_threshold=0.6` measurably dropped
+  ~1 in 4 genuinely relevant results overall, and ~2 in 5 on natural-language
+  queries specifically (54 query/chunk pairs, three rounds spanning the
+  relevance range on purpose); lowered to **0.5** (98% combined recall).
+  `mcp_threshold=0.4` was already safe under the new semantics (100% recall
+  in every round measured) and is unchanged. The methodology and measured
+  distributions are documented in `palinode/core/config.py`'s `SearchConfig`
+  docstring.
+  Also measured and left open as a separate, known gap: BM25-normalized and
+  cosine scores are not on a comparable 0–1 scale, so one shared threshold
+  value is itself imprecise across the two arms — recalibrating
+  `search_fts`'s normalization or splitting the threshold per arm is a
+  bigger change than this fix and is intentionally not made here.
+- **Consolidation no longer reports success while whole groups silently do nothing.**
+  Notes are grouped by the `project/` refs they carry and compacted into that
+  project's document; when no such document existed the target read raised, the
+  per-project handler logged it, and the run summary — which hardcodes
+  `"status": "success"` and had no field for failures — said nothing. On a real store
+  that read as `processed_notes: 80 · projects_compacted: 2`, with nine groups and
+  roughly half the collected notes producing nothing. Groups without a target
+  document are now filtered at grouping time and reported as
+  `groups_skipped_no_target` plus `skipped_no_target_projects`, matching how
+  `yaml_parse_errors` already surfaces its own partial failure. A subject with no
+  project document is a deliberate skip, not an error — consolidation compacts into
+  existing documents and does not create them.
+
+- **A consolidation pass that proposes no operations no longer crashes.** Found by
+  the tests above: `model_used` was read when composing the commit message but
+  assigned only inside the per-project loop, *after* the empty-operations
+  `continue`. A quiet week — every fact a KEEP, so no project yields operations —
+  raised `UnboundLocalError` at the commit step. `run_nightly` already guarded this;
+  `run_consolidation` did not.
+
+- **`embedder.embed` no longer degrades to a silent empty vector on backend failure.**
+  An Ollama connectivity/timeout/HTTP/circuit-open failure used to log a WARNING and
+  return `[]`; every in-process caller that skipped the REST layer's broad exception
+  handling inherited that falsy vector by default, and it could resurface as a
+  `sqlite-vec` `OperationalError` two modules away from the network failure that
+  actually caused it. `embed()` now raises a typed `EmbeddingUnavailable` (backend,
+  model, text_len, cause) at the boundary instead. The watcher/indexer path and the
+  consolidation dedup check catch it and degrade (retry next pass / skip dedup for
+  that item, matching prior behavior); every search/trigger/dedup REST route already
+  wrapped its body broadly, so the same failure now surfaces as an honest 500 instead
+  of a false "no results" 200 — no route code changed.
+
+- **Plugin README no longer claims write-time contradiction checking is on by default.**
+  It read "As of v0.6.0, saves run write-time contradiction checking in the background" —
+  but `consolidation.write_time.enabled` has always defaulted to `false` (opt-in, flip after
+  validating in your environment). The tool reference now states the flag and its default.
+
+- **Re-registering a trigger no longer raises a UNIQUE-constraint error.**
+  `add_trigger` wrote `triggers_vec` — a `vec0` virtual table — with
+  `INSERT OR REPLACE`, which `vec0` does not reliably support (it can raise
+  instead of replacing). Any re-registration of an existing
+  `trigger_id` — the normal path for updating a trigger's description or
+  embedding, and the only path the consolidation auto-register hook uses, since
+  it derives a deterministic `auto-{base}` id every run — raised
+  `sqlite3.OperationalError` instead of upserting; both known callers caught and
+  swallowed it, leaving the trigger's embedding silently stale. `triggers_vec`
+  now follows the same explicit DELETE-then-INSERT pattern as `chunks_vec`.
+
+### Removed
+
+### Security
+
 ## [0.10.1] — 2026-08-05
 
 ### Added

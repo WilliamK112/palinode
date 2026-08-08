@@ -56,15 +56,95 @@ def test_rrf_fusion_rewards_agreement_across_both_lists():
     assert _order(out)[0] == "both.md", "a hit in both lists should fuse to the top"
 
 
-def test_threshold_drops_low_scoring_hits():
-    a = _res("a.md")
-    b = _res("b.md")
-    # With a single shared rank-0 hit normalized to 1.0, a high threshold keeps
-    # only the top; assert the threshold is actually applied post-fusion.
-    out = _run([a], [a], threshold=0.99)
-    assert _order(out) == ["a.md"]
-    out_empty = _run([a, b], [], threshold=1.01)
-    assert out_empty == [], "threshold above the normalized max drops everything"
+def test_threshold_is_a_per_arm_relevance_floor():
+    """`threshold` filters each candidate's OWN (real) score before fusion —
+    it is no longer a cutoff on the fused/RRF score. A low-own-score
+    candidate is dropped even where RRF rank alone would have carried it to
+    the top of the fused list.
+    """
+    strong = _res("strong.md", score=0.7)
+    weak = _res("weak.md", score=0.3)
+    # `weak` is listed first (rank 0) — under the old post-fusion semantics
+    # rank 0 always normalizes to 1.0 and would have survived any threshold
+    # below 1.0. It is dropped here because its own score never clears 0.5.
+    out = _run([weak, strong], [], threshold=0.5)
+    assert _order(out) == ["strong.md"], (
+        "a candidate below the per-arm floor must be dropped regardless of "
+        "the RRF rank it would fuse to"
+    )
+
+
+def test_threshold_lets_either_arm_vouch_for_a_candidate():
+    """A candidate weak on one arm's own score still survives if the OTHER
+    arm's own score clears the floor — hybrid search should still catch a
+    strong keyword match with a weak vector score, or vice versa."""
+    weak_vec = _res("hit.md", score=0.2)
+    strong_fts = _res("hit.md", score=0.9)
+    out = _run([weak_vec], [strong_fts], threshold=0.5)
+    assert _order(out) == ["hit.md"]
+
+
+def test_threshold_floor_is_independent_of_rrf_rank():
+    """A candidate at/above the per-arm floor survives even buried deep in
+    RRF rank — the floor no longer collapses into an accidental rank cutoff.
+    This is the ranker-level shape of the hybrid-search saturation defect: a
+    relevant candidate must not be silently dropped just because many other
+    relevant candidates outrank it.
+    """
+    decoy = _res("decoy.md", score=0.9)
+    padding = [_res(f"pad{i}.md", score=0.55) for i in range(30)]
+    buried = _res("buried.md", score=0.6)  # rank 31, own score clears 0.55
+    out = _run([decoy] + padding + [buried], [], threshold=0.55, top_k=50)
+    assert "buried.md" in _order(out)
+
+
+def test_hybrid_search_not_capped_by_post_fusion_threshold():
+    """Direct reproduction of the rank-locked ~41-result ceiling a production
+    measurement found on the hybrid search path. 100 candidates, all
+    genuinely relevant (own score 0.9, well above the 0.6 API-default-shaped
+    threshold used here), requesting top_k=80.
+
+    Against the pre-fix ``rank_hybrid`` (post-fusion threshold on the RRF
+    score) this scenario returns exactly 41 results — the RRF-normalized
+    score sequence crosses 0.6 at rank ~40 regardless of how relevant the
+    candidates actually are, independent of the requested top_k. Confirmed
+    against the previous ``palinode/core/ranker.py`` (pre-this-fix) while
+    writing this fix. Post-fix, thresholding happens on each candidate's own
+    (0.9) score, so nothing is dropped and the count is exactly what was
+    asked for.
+    """
+    candidates = [_res(f"c{i}.md", score=0.9) for i in range(100)]
+    out = _run(candidates, [], threshold=0.6, top_k=80)
+    assert len(out) == 80, (
+        "top_k should be the only cardinality control once every candidate "
+        "clears the per-arm relevance floor"
+    )
+
+
+def test_rrf_fused_score_is_a_rank_artifact_not_relevance():
+    """Characterisation pinned from a production measurement: two
+    unrelated queries against the same store produced byte-identical
+    post-RRF score sequences (1.0, 0.4919, 0.4841, 0.4766, 0.4692, …). This
+    reproduces the shape that produces it (top candidate agrees across both
+    arms, everything after appears in only one) and shows the sequence is
+    IDENTICAL whether the underlying candidates are highly relevant (own
+    score 0.99) or barely relevant (own score 0.02) — which is exactly why
+    it must never be used as a relevance threshold (see rank_hybrid's
+    docstring, and palinode/consolidation/forget.py's commit 69c7e5a, which
+    hit the same defect from the demand side).
+    """
+    def _fused(own_score: float) -> list[float]:
+        top = _res("top.md", score=own_score)
+        singles = [_res(f"s{i}.md", score=own_score) for i in range(6)]
+        out = _run([top] + singles, [top], threshold=0.0, top_k=7)
+        return [round(r["score"], 4) for r in out]
+
+    expected = [1.0, 0.4919, 0.4841, 0.4766, 0.4692, 0.4621, 0.4552]
+    assert _fused(0.99) == expected
+    assert _fused(0.02) == expected, (
+        "the fused score must not vary with relevance — it is purely a "
+        "function of rank position and RRF's k=60 constant"
+    )
 
 
 def test_top_k_caps_results():

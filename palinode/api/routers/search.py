@@ -317,6 +317,13 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
         # returning `limit` results after the post-fetch type filter.
         store_limit = limit * 5 if (req.types or req.type_deny or req.min_priority) else limit
 
+        # `or` treats an explicit threshold=0.0 (a legitimate "no floor"
+        # request) as falsy and silently reinstates the default.
+        # `is not None` is the correct "caller didn't set it" check.
+        effective_threshold = (
+            req.threshold if req.threshold is not None else config.search.api_threshold
+        )
+
         if use_hybrid:
             def _run(n: int, record_access: bool = True) -> list[dict[str, Any]]:
                 return store.search_hybrid(
@@ -324,7 +331,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
                     query_embedding=query_emb,
                     category=req.category,
                     top_k=n,
-                    threshold=req.threshold or config.search.api_threshold,
+                    threshold=effective_threshold,
                     hybrid_weight=config.search.hybrid_weight,
                     date_after=effective_date_after,
                     date_before=req.date_before,
@@ -341,7 +348,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
                     query_embedding=query_emb,
                     category=req.category,
                     top_k=n,
-                    threshold=req.threshold or config.search.api_threshold,
+                    threshold=effective_threshold,
                     date_after=effective_date_after,
                     date_before=req.date_before,
                     context_entities=req.context,

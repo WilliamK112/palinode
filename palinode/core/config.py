@@ -203,10 +203,70 @@ class AutoSummaryConfig:
 
 @dataclass
 class SearchConfig:
-    """Matching index score cutoffs thresholds layouts."""
+    """Matching index score cutoffs thresholds layouts.
+
+    mcp_threshold / api_threshold moved from a post-RRF-fusion cutoff (a rank
+    artifact, see ranker.rank_hybrid) to a PER-ARM relevance floor — real
+    cosine similarity for the vector arm, normalized BM25 for the FTS arm,
+    applied before fusion. That changed what these two numbers mean, so both
+    were re-measured against real bge-m3 embeddings + real SQLite FTS5 (no
+    synthetic vectors), not carried over from the pre-fix values by default.
+    Methodology (54 query/chunk pairs, three rounds, deliberately spanning
+    the relevance range rather than stacking near-duplicates at cosine>=0.9):
+    round 1 (n=30) full-sentence questions a user/agent would naturally ask;
+    round 2 (n=18) short keyword-style queries; round 3 (n=6) exact
+    identifiers/codes (IDs, CVEs, ticket refs) — adversarial to the vector
+    arm on purpose, to see whether BM25 independently rescues.
+
+    Vector-arm cosine for the TRUE match, combined across all three rounds
+    (n=54): 100% clear 0.4, 98% clear 0.5 (single miss: a yes/no-phrased
+    question sharing almost no vocabulary with its declarative target,
+    cosine 0.480), only 74% clear 0.6, only 28% clear 0.7. Round-1-only
+    (full-sentence questions — the realistic MCP/agent-caller shape): only
+    60% clear 0.6. The distractor side: the SAME query's hardest wrong
+    answer clears 0.6 in 0% of cases (perfect precision, but 26+ points of
+    recall paid for it) vs 85% at 0.4 (very loose — precision is RRF/rank
+    ordering's job here, not the floor's).
+
+    Conclusion: api_threshold=0.6 measurably drops ~1 in 4 genuinely
+    relevant results overall, and ~2 in 5 on natural-language queries
+    specifically — exactly the "ask for 15, get 3" regression the semantic
+    change risked if the old numeric values were kept unchanged. Lowered to
+    0.5 (98% combined recall, still meaningfully stricter than mcp_threshold
+    as originally intended). mcp_threshold=0.4 was ALREADY safe under the
+    new semantics (100% recall in every round measured) and is unchanged.
+
+    Known, measured, NOT fixed here: BM25-normalized and cosine are not on a
+    comparable scale, so one shared threshold value is itself imprecise.
+    FTS retrieved a candidate at all in only 17/54 pairs (0/30 for
+    full-sentence queries — sanitize_fts_query's boolean-operator stripping
+    plus FTS5's implicit-AND-across-all-terms means an ordinary question
+    essentially never token-matches its target) and its own normalized score
+    for a genuine hit skewed low even where BM25 should be doing the real
+    work: single-identifier queries in round 3 scored 0.131-0.352, all below
+    even mcp_threshold. In every round measured, whenever FTS DID retrieve
+    the true match, the vector arm ALSO scored it >=0.5 — so at either
+    current value, BM25's independent-rescue role is close to vestigial for
+    the query shapes tested. A structurally correct fix (separate per-arm
+    thresholds, or recalibrating search_fts's raw-score/25.0 normalization)
+    is a bigger change than adjusting these two numbers and is intentionally
+    not made here.
+    """
     mcp_threshold: float = 0.4
-    api_threshold: float = 0.6
-    default_limit: int = 10
+    api_threshold: float = 0.5
+    # The BEAM k-sweep (400 answers/point, replicated on a second judge family)
+    # measured contradiction_resolution rising
+    # 0.300→0.388→0.456 at k=5/10/15 then plateauing to k=25 (0.416, n.s. step).
+    # k=10 sat on the rising part of the curve, not the plateau; the effect is
+    # specific to contradiction detection (depth×system DiD +0.155, p=0.022;
+    # a same-embedder dense-RAG baseline moved +0.010, p=0.768 over the same
+    # depth increase) — not a generic "more context helps" result. Raised to
+    # 15, the first plateau point; the last individually-significant step is
+    # 5→15 (p=0.001), not 10→15 (p=0.140) — "10 is below the plateau" is the
+    # supported claim, not "15 is optimal". Safe to raise now that the hybrid
+    # search rank-locked ceiling (see ranker.rank_hybrid) no longer caps
+    # results below this value.
+    default_limit: int = 15
     exclude_status: list[str] = field(default_factory=lambda: ["archived"])
     hybrid_weight: float = 0.5
     hybrid_enabled: bool = True
@@ -243,6 +303,43 @@ class WriteTimeConfig:
     sweep_on_startup: bool = True
 
 @dataclass
+class ForgetConfig:
+    """Write-time forgetting: explicit "please forget X" → archival.
+
+    When enabled, every save runs a deterministic forget-request detector on
+    the incoming content; a hit resolves the named preference to stored
+    memories via hybrid search and archives them, while the request memory
+    itself stays active as the retrieval-visible retraction record. Silent
+    full removal measured *worse than doing nothing*.
+
+    Default disabled — flip on after validating against a real store; a
+    resolution false-positive archives live memories (reversibly, but still).
+    """
+    enabled: bool = False
+    # Hybrid-search candidates considered per request. Search is used for
+    # RANKING only — post-RRF scores are rank artifacts, so there is no score
+    # threshold here (see palinode/consolidation/forget.py).
+    search_k: int = 10
+    # Precision guards, both required: a candidate must share at least
+    # min_shared_words content words with the pref phrase (drops unrelated
+    # memories that rank on template similarity), and at most max_targets
+    # survivors are archived (the validating measurement archived exactly the
+    # two messages of the establishing exchange). Precision over recall: the
+    # retained request memory covers what resolution misses.
+    min_shared_words: int = 1
+    max_targets: int = 2
+    # Granularity router: forgetting is fact/entity-shaped but archival is
+    # file-shaped, so a resolved target that merely *mentions* the pref inside
+    # a dense shared memory would lose everything else in the file if archived
+    # whole. A target archives only when at least this fraction of its content
+    # words (whole file, not the matching chunk) are shared with the pref
+    # phrase; below the floor the matching sentences are struck in place
+    # instead (mention-level retraction, palinode/consolidation/retract.py)
+    # and the rest of the file stays live. 0.0 disables the routing (every
+    # resolved target archives whole).
+    min_target_coverage: float = 0.05
+
+@dataclass
 class ConsolidationConfig:
     """Interval LLM job configuration settings logic."""
     enabled: bool = True
@@ -257,6 +354,7 @@ class ConsolidationConfig:
     llm_max_tokens: int = 2000
     nightly: NightlyConfig = field(default_factory=NightlyConfig)
     write_time: WriteTimeConfig = field(default_factory=WriteTimeConfig)
+    forget: ForgetConfig = field(default_factory=ForgetConfig)
     keyword_map: dict[str, list[str]] | None = None
     # `### <date>` blocks kept verbatim in a status doc's Consolidation Log;
     # older blocks collapse into one cumulative elision line (the full detail

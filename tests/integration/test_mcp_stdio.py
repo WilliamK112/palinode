@@ -17,6 +17,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,17 +36,39 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_for_health(port: int, proc: subprocess.Popen, timeout_s: float = 30.0) -> None:
+def _drain(stream, buf: bytearray, limit: int = 1 << 20) -> None:
+    """Continuously consume a subprocess pipe into ``buf`` (tail-bounded).
+
+    The API subprocess must never block on a full OS pipe buffer (64KB): a
+    sweep whose requests each log a traceback can exceed that, at which point
+    the server freezes mid-write and every subsequent HTTP call — and the
+    stdio tool call awaiting it — hangs until pytest-timeout fires. Draining
+    from a thread keeps the pipe empty while preserving the tail for the
+    early-exit diagnostic.
+    """
+    for chunk in iter(lambda: stream.read(4096), b""):
+        buf.extend(chunk)
+        if len(buf) > limit:
+            del buf[: len(buf) - limit]
+
+
+def _wait_for_health(
+    port: int,
+    proc: subprocess.Popen,
+    out_buf: bytearray,
+    err_buf: bytearray,
+    timeout_s: float = 30.0,
+) -> None:
     """Block until /health returns 200, or raise with subprocess output."""
     deadline = time.monotonic() + timeout_s
     last_err: str | None = None
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            out, err = proc.communicate(timeout=2)
+            time.sleep(0.2)  # let the drain threads consume the final output
             raise RuntimeError(
                 f"palinode-api exited early (code={proc.returncode})\n"
-                f"stdout: {out.decode(errors='replace')[-2000:]}\n"
-                f"stderr: {err.decode(errors='replace')[-2000:]}"
+                f"stdout: {bytes(out_buf).decode(errors='replace')[-2000:]}\n"
+                f"stderr: {bytes(err_buf).decode(errors='replace')[-2000:]}"
             )
         try:
             r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=1.0)
@@ -95,8 +118,12 @@ def api_subprocess(tmp_path_factory):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    out_buf: bytearray = bytearray()
+    err_buf: bytearray = bytearray()
+    for stream, buf in ((proc.stdout, out_buf), (proc.stderr, err_buf)):
+        threading.Thread(target=_drain, args=(stream, buf), daemon=True).start()
     try:
-        _wait_for_health(port, proc)
+        _wait_for_health(port, proc, out_buf, err_buf)
     except Exception:
         proc.terminate()
         try:

@@ -42,6 +42,7 @@ from typing import Any
 
 from palinode.core import embedder as _embedder
 from palinode.core import parser, store
+from palinode.core.embedder import EmbeddingUnavailable
 from palinode.core.hashing import stable_md5_hexdigest
 from palinode.core.ollama_client import get_ollama_client
 
@@ -296,7 +297,17 @@ def apply(p: Plan, embedder: Any = _embedder) -> Diff:
             embeddings: dict[str, list[float]] = {}
             if not deferred:
                 for pw in p.to_index:
-                    emb = embedder.embed(pw.section.content)
+                    try:
+                        emb = embedder.embed(pw.section.content)
+                    except EmbeddingUnavailable as e:
+                        # Backend failure, typed at the embedder boundary. The
+                        # watcher/indexer path wants retry-and-continue, not a
+                        # crash: fold it into the same fail-closed abort a
+                        # falsy `[]` used to trigger, so the file is retried
+                        # intact on the next pass.
+                        raise _EmbedOutage(
+                            diff.embed_failures + 1, pw.section.section_id
+                        ) from e
                     if not emb:
                         raise _EmbedOutage(
                             diff.embed_failures + 1, pw.section.section_id

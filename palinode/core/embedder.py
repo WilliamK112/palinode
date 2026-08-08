@@ -28,7 +28,68 @@ logger = logging.getLogger(__name__)
 # embed path without a circular import) and are re-exported here for backward
 # compatibility — existing `from palinode.core.embedder import
 # EmbeddingContextError` imports keep working (Phase 3).
-__all__ = ["EmbeddingContextError", "embed", "embed_query", "check_model_context"]
+__all__ = [
+    "EmbeddingContextError",
+    "EmbeddingUnavailable",
+    "embed",
+    "embed_query",
+    "check_model_context",
+]
+
+
+# --------------------------------------------------------------------------
+# Backend-failure signal — the embedder boundary contract
+# --------------------------------------------------------------------------
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """Raised by ``embed()`` when the local backend fails to produce a vector.
+
+    Historically this was a silent contract: a connectivity/timeout/HTTP
+    failure against Ollama logged a WARNING and returned ``[]``. Every
+    in-process caller that skipped the REST layer's broad exception handling
+    inherited that falsy vector by default, and the failure resurfaced two
+    modules downstream — sqlite-vec rejecting a zero-length query vector in
+    ``store.search`` / ``search_hybrid`` with an ``OperationalError`` that
+    names the SQL layer, not the network failure that actually caused it.
+    Raising here attributes the failure at the point it happened.
+
+    Attributes:
+        backend: which embedding backend failed (currently always ``"local"``
+            — the Gemini backend already propagates ``httpx`` errors directly
+            and is out of scope for this contract).
+        model: the Ollama model name that was asked to embed.
+        text_len: character length of the input that failed to embed (never
+            the text itself — logs/exceptions must not carry raw content).
+        cause: ``str()`` of the underlying :class:`OllamaError`, also
+            available via ``__cause__`` for anything that walks the chain.
+
+    Recovery: this is the backend failing, not the caller's input — check
+    ``palinode doctor`` (the ``ollama_circuit_health`` check covers the embed
+    role), confirm Ollama is reachable and the model is pulled, then retry.
+
+    Whether to catch this or let it propagate is a per-caller decision, not
+    a blanket one — two patterns are in use: a watcher/indexer/consolidation
+    pass that can tolerate a missed cycle catches it and degrades (retry next
+    pass); an interactive surface (search, save, triggers) lets it propagate
+    so the failure reaches an operator or user instead of masquerading as an
+    empty result.
+    """
+
+    def __init__(self, *, backend: str, model: str, text_len: int, cause: str) -> None:
+        self.backend = backend
+        self.model = model
+        self.text_len = text_len
+        self.cause = cause
+        super().__init__(
+            f"Embedding backend unavailable — backend={backend} model={model!r} "
+            f"text_len={text_len} cause={cause!r}. The embedder failed to "
+            f"produce a vector for this call; this is a backend outage, not a "
+            f"malformed input. Recovery: run `palinode doctor` (check "
+            f"ollama_circuit_health for the embed role), confirm Ollama is "
+            f"reachable and the model is pulled, then retry."
+        )
+
 
 # --------------------------------------------------------------------------
 # Context-window preflight check
@@ -159,14 +220,20 @@ def embed(text: str, backend: str = "local") -> list[float]:
         backend (str): The embedding backend to use - 'local' (Ollama) or 'gemini'.
 
     Returns:
-        list[float]: A list of floats representing the embedding vector.
-        An empty list is returned if the request fails or is misconfigured.
+        list[float]: A non-empty list of floats representing the embedding
+        vector. Never an empty list — a failed or misconfigured backend
+        raises instead (see ``Raises``); this function has no falsy success
+        return.
 
     Raises:
         EmbeddingContextError: When Ollama explicitly rejects the input due to
             context-window overflow. Callers that want to handle truncation
-            specially should catch this; callers that want graceful degradation
-            can let it propagate to the top-level except and receive [] instead.
+            specially should catch this specifically.
+        EmbeddingUnavailable: When the local backend cannot be reached, times
+            out, or errors (connectivity/HTTP/circuit-open). Replaces the old
+            silent-``[]`` contract — callers that want graceful degradation
+            must now catch this explicitly rather than checking for a falsy
+            return.
     """
     if backend == "gemini" and os.environ.get("GEMINI_API_KEY"):
         return _embed_gemini(text)
@@ -192,11 +259,16 @@ def _embed_local(text: str) -> list[float]:
         text (str): The text to embed.
 
     Returns:
-        list[float]: The normalized generated embedding.
+        list[float]: The normalized generated embedding. Always non-empty —
+        a failed call raises rather than returning a falsy vector.
 
     Raises:
         EmbeddingContextError: When Ollama returns an explicit context-overflow
             error. See EmbeddingContextError for recovery guidance.
+        EmbeddingUnavailable: When the client fails on connectivity, timeout,
+            an HTTP error, an open circuit, or an unexpected response shape.
+            See EmbeddingUnavailable for recovery guidance and which callers
+            should catch it.
     """
     # Lazy preflight: check num_ctx once per process so operators get an early
     # warning about misconfigured modelfiles.
@@ -207,28 +279,30 @@ def _embed_local(text: str) -> list[float]:
     # Phase 3: route through the centralized client. It owns the
     # /api/embed → /api/embeddings fallback, retry/backoff, circuit breaking,
     # and the structured per-call JSON logging (palinode.ollama.events). This
-    # wrapper preserves the public contract: returns [] on connectivity/timeout
-    # failure, re-raises EmbeddingContextError on a context-window overflow.
+    # wrapper's contract: raise EmbeddingUnavailable on connectivity/timeout
+    # failure, re-raise EmbeddingContextError on a context-window overflow.
+    # Never a falsy return.
     try:
         return get_ollama_client().embed(text)
     except EmbeddingContextError:
         # Typed signal — propagate so callers can truncate / split.
         raise
     except OllamaError as e:
-        # Connect/timeout/HTTP/circuit-open/unexpected-shape — degrade to an
-        # empty vector (the contract the indexer relies on to skip + retry).
-        # text_len, not raw text, so logs never carry user content.
-        # Structured key=value per docs/logging.md — greppable on
-        # op/outcome alongside the ollama_client per-call event line.
+        # Connect/timeout/HTTP/circuit-open/unexpected-shape. text_len, not
+        # raw text, so logs never carry user content. Structured key=value
+        # per docs/logging.md — greppable on op/outcome alongside the
+        # ollama_client per-call event line.
         logger.warning(
-            "embed failed; returning empty vector "
+            "embed failed; raising EmbeddingUnavailable "
             "op=embed model=%s text_len=%d outcome=error error=%r",
             model, len(text), str(e),
         )
         # First failure this process → surface the plain keyword-only-mode notice
         # so a fresh-install operator sees one clear line, not just per-call noise.
         _notice_keyword_only_once()
-        return []
+        raise EmbeddingUnavailable(
+            backend="local", model=model, text_len=len(text), cause=str(e)
+        ) from e
 
 
 def _embed_gemini(text: str, dimension: int = 768, task_type: str = "RETRIEVAL_DOCUMENT") -> list[float]:
@@ -291,6 +365,11 @@ def embed_query(text: str, backend: str = "local") -> list[float]:
 
     Returns:
         list[float]: The query embedding vector.
+
+    Raises:
+        EmbeddingContextError: see ``embed()``.
+        EmbeddingUnavailable: see ``embed()`` — the local backend contract is
+            identical (this delegates straight to ``_embed_local``).
     """
     if backend == "gemini" and os.environ.get("GEMINI_API_KEY"):
         return _embed_gemini(text, task_type="RETRIEVAL_QUERY")

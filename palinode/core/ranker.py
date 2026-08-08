@@ -1,13 +1,14 @@
 """Pure hybrid-search ranking pipeline.
 
-Extracted from ``store.search_hybrid`` so the scoring stages — RRF fusion,
-demand-decay re-rank, the human-priority nudge, ambient-context boost, daily
-penalty, per-file dedup, threshold/top_k, and the date window — live behind one
-small interface, separable from the I/O around them. ``store.search_hybrid``
-stays the orchestrator: it does the two retrievals, resolves ``context_files``
-from the entity index, and records recall + freshness on the ranked output. This
-module touches **no** database, filesystem, or network — every input is passed
-in, so each scoring stage is testable on plain dicts.
+Extracted from ``store.search_hybrid`` so the scoring stages — per-arm
+relevance floor, RRF fusion, demand-decay re-rank, the human-priority nudge,
+ambient-context boost, daily penalty, per-file dedup, and the date window —
+live behind one small interface, separable from the I/O around them.
+``store.search_hybrid`` stays the orchestrator: it does the two retrievals,
+resolves ``context_files`` from the entity index, and records recall +
+freshness on the ranked output. This module touches **no** database,
+filesystem, or network — every input is passed in, so each scoring stage is
+testable on plain dicts.
 
 Knobs that already live in ``config`` (decay band, context boost, daily penalty,
 dedup gap) are read from ``config`` here, matching the rest of the codebase and
@@ -15,6 +16,17 @@ the existing tests that monkeypatch it. The two inputs that aren't config —
 ``priority_weight`` (kept on ``store`` so ``patch.object(store, ...)`` still
 tunes it) and ``context_files`` (resolved from the DB by the orchestrator) — are
 passed explicitly.
+
+``threshold`` is a PER-ARM relevance floor, not a fused-score cutoff. See
+:func:`rank_hybrid`'s docstring for the measurement behind this: the
+post-RRF score is a function of rank within the ``k=60`` formula, not of
+relevance, so filtering on it after fusion silently selects a rank cutoff
+that is nearly invariant to the query and to the caller's requested
+``top_k`` — a hybrid-search result count that silently saturates well below
+whatever ``top_k`` was requested. The fix moves ``threshold`` to where
+relevance genuinely lives: each candidate's own arm score (real cosine
+similarity for the vector arm, normalized BM25 for the FTS arm), applied
+before RRF ever sees the candidates.
 
 The decay/predicate helpers (:func:`effective_importance`,
 :func:`score_with_decay`, :func:`_is_daily_file`, :func:`_priority_value`) moved
@@ -155,13 +167,41 @@ def rank_hybrid(
     ``context_files`` set (from the entity index), and ``priority_weight`` (the
     ``store``-owned tuning knob); everything else is read from ``config``.
 
-    Stages, in order: Reciprocal Rank Fusion (RRF, k=60) → demand-decay re-rank
-    (ADR-007, when ``config.decay.enabled``) → human-priority nudge → ambient
-    context boost (ADR-008) → daily-file penalty → per-file dedup →
-    threshold + top_k → date window. Returns the merged, ranked result dicts
-    (each carrying ``score`` and ``raw_score``); recall + freshness are recorded
-    by the caller on this output.
+    Stages, in order: per-arm relevance floor (``threshold``) → Reciprocal Rank
+    Fusion (RRF, k=60) → demand-decay re-rank (ADR-007, when
+    ``config.decay.enabled``) → human-priority nudge → ambient context boost
+    (ADR-008) → daily-file penalty → per-file dedup → top_k → date window.
+    Returns the merged, ranked result dicts (each carrying ``score`` and
+    ``raw_score``); recall + freshness are recorded by the caller on this
+    output.
+
+    ``threshold`` filters ``vec_results`` by their own (real cosine) score and
+    ``fts_results`` by their own (normalized BM25) score, BEFORE fusion — a
+    candidate needs only one arm to clear the bar to be considered at all. It
+    is deliberately **not** applied to the fused/boosted score: a production
+    measurement found that score to be a function of RRF rank, not
+    relevance — two semantically unrelated queries against the same store
+    produced byte-identical post-RRF sequences (``1.0, 0.4919, 0.4841,
+    0.4766, …``, confirmed by ``tests/test_ranker.py``'s characterisation
+    tests). A cutoff against that sequence is a rank cutoff wearing a
+    relevance costume, and because the sequence decays slowly and
+    predictably it lands at very nearly the same rank regardless of
+    ``top_k`` — measured in production as a hybrid-search result count that
+    silently plateaued well below the requested limit. Same lesson the
+    forget resolver learned from the demand side
+    (``palinode/consolidation/forget.py``, commit 69c7e5a): never threshold
+    a post-RRF score.
     """
+    # Per-arm relevance floor — see the ``threshold`` paragraph above. Applied
+    # before RRF ever sees either list, so the two inputs it fuses already
+    # carry only candidates at least one retrieval method considers relevant.
+    if threshold > 0.0:
+        vec_results = [
+            r for r in vec_results
+            if (r.get("raw_score") if r.get("raw_score") is not None else r.get("score", 0.0)) >= threshold
+        ]
+        fts_results = [r for r in fts_results if r.get("score", 0.0) >= threshold]
+
     # Reciprocal Rank Fusion (RRF)
     # Score = sum( 1 / (k + rank) ) for each result across both lists
     # k=60 is the standard RRF constant (dampens high-rank dominance)
@@ -271,14 +311,15 @@ def rank_hybrid(
         elif file_best[fp] - score <= gap:
             deduped_keys.append(key)
 
+    # top_k is the sole cardinality control past this point — no post-fusion
+    # score cutoff (see the ``threshold`` paragraph on the docstring above).
     merged = []
     for key in deduped_keys[:top_k]:
         result = result_map[key]
-        if result.get("score", 0) >= threshold:
-            # Attach raw cosine similarity from vector search.
-            # BM25-only results (no vector match) get raw_score=None.
-            result["raw_score"] = raw_cosine.get(key)
-            merged.append(result)
+        # Attach raw cosine similarity from vector search.
+        # BM25-only results (no vector match) get raw_score=None.
+        result["raw_score"] = raw_cosine.get(key)
+        merged.append(result)
 
     if date_after or date_before:
         filtered = []

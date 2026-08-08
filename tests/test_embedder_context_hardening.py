@@ -7,8 +7,11 @@ parsing, and context-overflow detection (those mechanics are tested directly in
 `tests/test_ollama_client.py`). This file covers the *embedder wrapper* contract:
 
 - `_embed_local` re-raises `EmbeddingContextError` (does not swallow it to []).
-- `_embed_local` returns [] on any other `OllamaError`.
-- `embed()` (public) propagates `EmbeddingContextError`.
+- `_embed_local` raises `EmbeddingUnavailable` on any other `OllamaError`
+  — replaces the old silent-`[]` return; see `tests/test_embedder_logging.py`
+  for the accompanying WARNING log.
+- `embed()` (public) propagates both `EmbeddingContextError` and
+  `EmbeddingUnavailable`.
 - `_is_ctx_overflow_message` (re-exported from ollama_client) classifies correctly.
 - `check_model_context()` warns / stays silent based on the client's /api/show.
 - The preflight runs at most once per process.
@@ -23,6 +26,7 @@ import pytest
 from palinode.core import embedder
 from palinode.core.embedder import (
     EmbeddingContextError,
+    EmbeddingUnavailable,
     _is_ctx_overflow_message,
     check_model_context,
 )
@@ -82,12 +86,24 @@ def test_embed_local_propagates_context_error():
     assert "num_ctx" in str(ei.value).lower() or "truncate" in str(ei.value).lower()
 
 
-def test_embed_local_returns_empty_on_ollama_error():
-    """Connectivity/timeout/unexpected-shape (any OllamaError) → []."""
+def test_embed_local_raises_embedding_unavailable_on_ollama_error():
+    """Connectivity/timeout/unexpected-shape (any OllamaError) → EmbeddingUnavailable.
+
+    This used to return [] and let the failure travel silently into whatever
+    the caller passed it to next (sqlite-vec, two modules away). Now it
+    raises at the boundary instead.
+    """
     with patch("palinode.core.embedder._run_preflight_once"), \
             _client_with_embed(embed_side_effect=OllamaUnreachable("offline", role="embed")):
-        result = embedder._embed_local("some text")
-    assert result == []
+        with pytest.raises(EmbeddingUnavailable) as ei:
+            embedder._embed_local("some text")
+    assert ei.value.backend == "local"
+    assert ei.value.text_len == len("some text")
+    assert "offline" in ei.value.cause
+    # The message is the diagnostic surface an operator actually reads —
+    # it must name the cause and point at a next step, not just "failed".
+    assert "backend=local" in str(ei.value)
+    assert "palinode doctor" in str(ei.value)
 
 
 def test_embed_public_propagates_context_error():
@@ -95,6 +111,14 @@ def test_embed_public_propagates_context_error():
     err = EmbeddingContextError(model="bge-m3", text_len=4, ollama_message="too long for max context")
     with patch("palinode.core.embedder._run_preflight_once"), _client_with_embed(embed_side_effect=err):
         with pytest.raises(EmbeddingContextError):
+            embedder.embed("test text")
+
+
+def test_embed_public_propagates_embedding_unavailable():
+    """embed() (public entry) also surfaces EmbeddingUnavailable."""
+    with patch("palinode.core.embedder._run_preflight_once"), \
+            _client_with_embed(embed_side_effect=OllamaUnreachable("offline", role="embed")):
+        with pytest.raises(EmbeddingUnavailable):
             embedder.embed("test text")
 
 

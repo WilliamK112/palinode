@@ -944,6 +944,24 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
                 file_path, str(e), exc_info=True,
             )
 
+    # Write-time forgetting: an explicit "please forget X" in the saved
+    # content archives the resolved pref memories, while this save itself stays
+    # active as the visible retraction record — which is why the hook runs
+    # AFTER index_file, never before. Same save-never-fails contract as tier 2a.
+    if config.consolidation.forget.enabled:
+        try:
+            from palinode.consolidation import forget as forget_mod
+            forget_result = forget_mod.check_forget_on_save(
+                file_path, req.content
+            )
+            if forget_result is not None:
+                result["forget"] = forget_result
+        except Exception as e:
+            logger.warning(
+                "forget check failed (non-fatal) op=forget_check file_path=%s error=%r",
+                file_path, str(e), exc_info=True,
+            )
+
     return result
 
 

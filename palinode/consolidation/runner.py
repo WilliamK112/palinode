@@ -345,6 +345,48 @@ def _group_by_project(daily_notes: list[dict]) -> dict[str, list[dict]]:
                 groups[pid].append(note)
     return groups
 
+
+def _target_file_for(project_id: str) -> str | None:
+    """The file this project's compaction writes into, or ``None`` if it has none.
+
+    Prefers the status layer, which is the fast-changing one, and falls back to
+    the project file. ``None`` means neither exists.
+
+    A group whose subject has no project document is a **skip, not an error**.
+    An entity ref like ``project/searxng`` appearing in one insight does not
+    imply the store wants a ``projects/searxng.md``, and consolidation is not
+    in the business of creating documents — it compacts into existing ones.
+    """
+    projects_dir = os.path.join(config.memory_dir, "projects")
+    status_file = os.path.join(projects_dir, f"{project_id}-status.md")
+    if os.path.exists(status_file):
+        return status_file
+    project_file = os.path.join(projects_dir, f"{project_id}.md")
+    if os.path.exists(project_file):
+        return project_file
+    return None
+
+
+def _partition_by_target(
+    grouped: dict[str, list[dict]],
+) -> tuple[dict[str, list[dict]], list[str]]:
+    """Split groups into those with a target document and those without.
+
+    Filtering here rather than letting the target read raise means a subject
+    with no project document is a *reported skip* rather than a caught
+    exception buried in the log. The run summary previously said
+    ``status: success`` while every such group produced nothing, so the count
+    below is the part that makes the result honest.
+    """
+    keep: dict[str, list[dict]] = {}
+    skipped: list[str] = []
+    for project_id, notes in grouped.items():
+        if _target_file_for(project_id) is None:
+            skipped.append(project_id)
+        else:
+            keep[project_id] = notes
+    return keep, sorted(skipped)
+
 def _build_model_chain() -> list[dict[str, str]]:
     """Build ordered chain from config: primary + fallbacks.
 
@@ -432,13 +474,18 @@ def _consolidate_project(
     with open(prompt_path) as f:
         system_prompt = f.read()
     
-    # Load project file and extract facts
-    project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
-    status_file = os.path.join(config.memory_dir, "projects", f"{project_id}-status.md")
-    
-    # Prefer status file for compaction (that's the fast-changing layer)
-    target_file = status_file if os.path.exists(status_file) else project_file
-    
+    # Load project file and extract facts. Callers filter no-target groups out
+    # before reaching here; this stays defensive for direct callers, and returns
+    # the same "nothing to do" shape as a file with no tagged facts rather than
+    # raising for a condition that is a skip.
+    target_file = _target_file_for(project_id)
+    if target_file is None:
+        logger.info(
+            "No project document for %r — nothing to compact into, skipping",
+            project_id,
+        )
+        return [], "primary"
+
     with open(target_file) as f:
         file_content = f.read()
 
@@ -519,7 +566,20 @@ def _check_contradictions(
 
     operations = []
     for item in new_items:
-        emb = embedder.embed(item.get("content", ""))
+        try:
+            emb = embedder.embed(item.get("content", ""))
+        except embedder.EmbeddingUnavailable as e:
+            # Batch/background path: a nightly consolidation run should not
+            # abort a whole project over one backend hiccup. Degrade to the
+            # same ADD-without-dedup outcome the old falsy `[]` produced — the
+            # embedder already logged a WARNING with the real cause; this
+            # DEBUG line adds the project/item context it can't see.
+            logger.debug(
+                "dedup check skipped for project=%s: embedder unavailable (%s)",
+                project_id, e,
+            )
+            operations.append({"operation": "ADD", "item": item})
+            continue
         if not emb:
             operations.append({"operation": "ADD", "item": item})
             continue
@@ -810,11 +870,26 @@ def run_consolidation(
         )
 
     grouped = _group_by_project(notes)
+    grouped, skipped_no_target = _partition_by_target(grouped)
+    if skipped_no_target:
+        logger.info(
+            "palinode.consolidation: %d group(s) skipped — no project document to "
+            "compact into: %s",
+            len(skipped_no_target),
+            ", ".join(skipped_no_target),
+        )
     
     total_stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0}
     projects_processed = 0
     proposed_changes: list[dict[str, str]] = []
     mutated_files: list[str] = []
+    # Pre-existing crash, found by the no-target tests: `model_used` was assigned
+    # only *after* the `if not operations: continue` inside the loop, but the
+    # commit message below always reads it. A real pass where no project yields
+    # operations — every fact a KEEP, which is the common quiet week — raised
+    # UnboundLocalError at the commit step. `run_nightly` already initialised it;
+    # this is the same guard, and the asymmetry is what marks it an oversight.
+    model_used = "primary"
 
     for project_id, pnotes in grouped.items():
         try:
@@ -825,10 +900,9 @@ def run_consolidation(
 
             model_used = model_used_current
 
-            # Determine target file
-            status_file = os.path.join(config.memory_dir, "projects", f"{project_id}-status.md")
-            project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
-            target = status_file if os.path.exists(status_file) else project_file
+            # Groups without a target were filtered before this loop, so the
+            # helper cannot return None here.
+            target = _target_file_for(project_id)
 
             if dry_run:
                 proposed_changes.extend(_proposed_changes(target, operations))
@@ -864,6 +938,11 @@ def run_consolidation(
         }
         if yaml_skipped:
             result["yaml_parse_errors"] = yaml_skipped
+        if skipped_no_target:
+            # Same shape as yaml_parse_errors: a count of what silently
+            # did not happen belongs in the result, not only the log.
+            result["groups_skipped_no_target"] = len(skipped_no_target)
+            result["skipped_no_target_projects"] = skipped_no_target
         return result
     
     # Extract insights and archive (only if at least one project compacted successfully)
@@ -890,6 +969,11 @@ def run_consolidation(
     }
     if yaml_skipped:
         result["yaml_parse_errors"] = yaml_skipped
+    if skipped_no_target:
+        # Same shape as yaml_parse_errors: a count of what silently
+        # did not happen belongs in the result, not only the log.
+        result["groups_skipped_no_target"] = len(skipped_no_target)
+        result["skipped_no_target_projects"] = skipped_no_target
     return result
 
 
@@ -929,6 +1013,14 @@ def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn:
         )
     
     grouped = _group_by_project(notes)
+    grouped, skipped_no_target = _partition_by_target(grouped)
+    if skipped_no_target:
+        logger.info(
+            "palinode.consolidation: %d group(s) skipped — no project document to "
+            "compact into: %s",
+            len(skipped_no_target),
+            ", ".join(skipped_no_target),
+        )
     
     total_stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0}
     projects_processed = 0
@@ -950,10 +1042,9 @@ def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn:
             if not operations:
                 continue
 
-            # Determine target file
-            status_file = os.path.join(config.memory_dir, "projects", f"{project_id}-status.md")
-            project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
-            target = status_file if os.path.exists(status_file) else project_file
+            # Groups without a target were filtered before this loop, so the
+            # helper cannot return None here.
+            target = _target_file_for(project_id)
 
             if dry_run:
                 proposed_changes.extend(_proposed_changes(target, operations))
@@ -988,6 +1079,11 @@ def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn:
         }
         if yaml_skipped:
             nightly_result["yaml_parse_errors"] = yaml_skipped
+        if skipped_no_target:
+            # Same shape as yaml_parse_errors: a count of what silently
+            # did not happen belongs in the result, not only the log.
+            nightly_result["groups_skipped_no_target"] = len(skipped_no_target)
+            nightly_result["skipped_no_target_projects"] = skipped_no_target
         return nightly_result
     
     if projects_processed > 0:
@@ -1006,4 +1102,9 @@ def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn:
     }
     if yaml_skipped:
         nightly_result["yaml_parse_errors"] = yaml_skipped
+    if skipped_no_target:
+        # Same shape as yaml_parse_errors: a count of what silently
+        # did not happen belongs in the result, not only the log.
+        nightly_result["groups_skipped_no_target"] = len(skipped_no_target)
+        nightly_result["skipped_no_target_projects"] = skipped_no_target
     return nightly_result

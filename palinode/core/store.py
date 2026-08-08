@@ -1604,7 +1604,14 @@ def search_hybrid(
         query_embedding: The embedded query vector (for cosine similarity).
         category: Optional category filter applied to both searches.
         top_k: Maximum results to return.
-        threshold: Minimum score threshold (applied after RRF merging).
+        threshold: Minimum PER-ARM relevance floor — real cosine similarity for
+            vector candidates, normalized BM25 for FTS candidates — applied
+            BEFORE RRF fusion (see :func:`palinode.core.ranker.rank_hybrid`).
+            NOT a cutoff on the fused score: a production measurement found
+            the post-RRF score to be a function of rank, not relevance, so
+            thresholding it there selects a near-invariant rank cutoff
+            regardless of `top_k` — measured as hybrid search silently
+            plateauing well below the requested limit.
         hybrid_weight: Balance between vector and BM25.
             0.0 = vector only, 1.0 = BM25 only, 0.5 = equal weight.
         record_access: When True (default), ADR-006/007 recall metadata is
@@ -1617,6 +1624,9 @@ def search_hybrid(
     """
     # Get results from both search methods. record_access=False: search_hybrid
     # records recall on its final merged hit set, not on these candidates.
+    # threshold=0.0 here is deliberate: this is a wide-net candidate fetch —
+    # rank_hybrid applies the caller's real `threshold` itself, per-arm,
+    # before fusion (see its docstring).
     vec_results = search(query_embedding, category=category, top_k=top_k * 2, threshold=0.0,
                          record_access=False, kind_exclude_list=kind_exclude_list)
     try:
@@ -1643,9 +1653,10 @@ def search_hybrid(
             for row in get_entity_files(entity):
                 context_files.add(row["file_path"])
 
-    # Fuse + re-rank (RRF → decay → priority → context → daily → dedup → threshold
-    # → date) in the pure ranker. priority_weight is read from this module
-    # so patch.object(store, "_PRIORITY_RANK_WEIGHT", ...) still tunes ordering.
+    # Fuse + re-rank (threshold → RRF → decay → priority → context → daily →
+    # dedup → top_k → date) in the pure ranker. priority_weight is read from
+    # this module so patch.object(store, "_PRIORITY_RANK_WEIGHT", ...) still
+    # tunes ordering.
     merged = rank_hybrid(
         vec_results,
         fts_results,
@@ -1921,12 +1932,19 @@ def add_trigger(
         VALUES (?, ?, ?, ?, ?, ?, 1, 0)
     """, (trigger_id, description, memory_file, threshold, cooldown_hours, now))
     
+    # vec0 does not reliably honor `INSERT OR REPLACE` (it can raise a
+    # UNIQUE constraint error on an existing primary key instead of replacing
+    # the row) — explicit DELETE-then-INSERT, same pattern as chunks_vec.
+    # Re-registering an existing trigger_id is the normal path here: the
+    # consolidation auto-register hook reuses a deterministic `auto-{base}`
+    # id on every run.
     emb_json = json.dumps(embedding)
+    db.execute("DELETE FROM triggers_vec WHERE id = ?", (trigger_id,))
     db.execute("""
-        INSERT OR REPLACE INTO triggers_vec (id, embedding)
+        INSERT INTO triggers_vec (id, embedding)
         VALUES (?, ?)
     """, (trigger_id, emb_json))
-    
+
     db.commit()
     db.close()
 

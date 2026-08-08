@@ -66,6 +66,19 @@ def _patch_embed_fail():
     return patch("palinode.core.embedder.embed", return_value=[])
 
 
+def _patch_embed_raises():
+    """Simulate the real backend-failure contract: embed() raises
+    EmbeddingUnavailable rather than returning a falsy vector."""
+    from palinode.core.embedder import EmbeddingUnavailable
+
+    return patch(
+        "palinode.core.embedder.embed",
+        side_effect=EmbeddingUnavailable(
+            backend="local", model="bge-m3", text_len=5, cause="connection refused"
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Failure mode A: race between /save and embed completion
 # ---------------------------------------------------------------------------
@@ -469,3 +482,29 @@ partial embed outage.
         assert outcome["embedded"] is True
         msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.WARNING]
         assert not any("reconcile aborted" in m for m in msgs), msgs
+
+    def test_embedding_unavailable_exception_aborts_same_as_empty_list(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Regression: a real EmbeddingUnavailable raise from the embedder —
+        not just a mocked ``[]`` return — must hit the same fail-closed abort
+        as the pre-existing falsy-vector check. This is the reconcile-side
+        half of the fix; the embedder-side half (raise instead of returning
+        []) is covered in tests/test_embedder_context_hardening.py and
+        tests/test_embedder_logging.py.
+        """
+        import logging as _logging
+
+        file_path = self._write_file(tmp_path, monkeypatch)
+        with _patch_embed_raises():
+            with caplog.at_level(_logging.WARNING, logger="palinode.indexer"):
+                outcome = index_file(str(file_path))
+
+        assert outcome["embedded"] is False
+        assert outcome["chunks_written"] == 0
+        assert self._chunk_count(file_path) == 0, "index must not be half-applied"
+        assert outcome["error"] and "retry" in outcome["error"]
+        msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.WARNING]
+        assert any(
+            "reconcile aborted" in m and "section_id=root" in m for m in msgs
+        ), msgs
