@@ -81,6 +81,33 @@ def _isolate_global_config():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_doctor_search_roots(
+    request: pytest.FixtureRequest,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_global_config,
+) -> None:
+    """Keep doctor filesystem discovery inside each test's temp directory.
+
+    An empty ``config.doctor.search_roots`` enables the production fallback,
+    which includes the user's entire home directory. Tests that invoke doctor
+    through the process-wide config must never inherit that machine-dependent
+    behavior: it is slow, can discover a developer's real databases, and makes
+    wall-clock results depend on the size of ``$HOME``.
+
+    A test that specifically covers the production fallback may opt out with
+    ``@pytest.mark.doctor_real_search_roots``. Keep that marker narrow: ordinary
+    doctor behavior tests should provide explicit roots instead.
+    """
+    if request.node.get_closest_marker("doctor_real_search_roots") is not None:
+        return
+
+    from palinode.core.config import config
+
+    monkeypatch.setattr(config.doctor, "search_roots", [str(tmp_path)])
+
+
+@pytest.fixture(autouse=True)
 def _warm_embed_gate(monkeypatch):
     from palinode.indexer import reconcile as reconcile_mod
 

@@ -33,6 +33,9 @@ def _ctx(memory_dir: Path) -> DoctorContext:
         memory_dir=str(memory_dir),
         db_path=str(memory_dir / ".palinode.db"),
     )
+    # This synthetic config intentionally bypasses the process-wide singleton
+    # isolated by tests/conftest.py, so pin its doctor walk explicitly too.
+    cfg.doctor.search_roots = [str(memory_dir)]
     return DoctorContext(config=cfg)
 
 

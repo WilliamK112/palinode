@@ -115,6 +115,7 @@ addopts = "--ignore=tests/live"
 pythonpath = ["."]
 markers = [
     "slow: marks tests that need Ollama or take >5s",
+    "doctor_real_search_roots: allow a test to exercise doctor's built-in filesystem root discovery",
 ]
 asyncio_mode = "strict"
 timeout = 60
