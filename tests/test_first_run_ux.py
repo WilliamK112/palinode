@@ -79,13 +79,11 @@ class _FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def _reset_embed_cache():
+def _reset_embed_cache(monkeypatch):
     from palinode.api.routers import health
-    health._embed_probe_cache["ts"] = 0.0
-    health._embed_probe_cache["ok"] = None
-    yield
-    health._embed_probe_cache["ts"] = 0.0
-    health._embed_probe_cache["ok"] = None
+
+    monkeypatch.setitem(health._embed_probe_cache, "ts", 0.0)
+    monkeypatch.setitem(health._embed_probe_cache, "ok", None)
 
 
 def test_embed_functional_cached_reflects_probe_and_caches():

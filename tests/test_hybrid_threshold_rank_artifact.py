@@ -83,11 +83,10 @@ def _isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "db_path", db_path)
     monkeypatch.setattr(config.git, "auto_commit", False)
     monkeypatch.setattr(config.decay, "enabled", False)
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     os.makedirs(os.path.join(memory_dir, "insights"), exist_ok=True)
     store.init_db()
     yield memory_dir
-    store._db_checked = False
 
 
 def test_search_hybrid_not_capped_at_rank_locked_ceiling():

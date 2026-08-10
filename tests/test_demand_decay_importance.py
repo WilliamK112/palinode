@@ -113,12 +113,11 @@ def _isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config.decay, "importance_cap", 0.95)
     monkeypatch.setattr(config.decay, "importance_alpha", 0.08)
     monkeypatch.setattr(config.decay, "importance_tau_days", 14.0)
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     for d in ("insights", "projects"):
         os.makedirs(os.path.join(memory_dir, d), exist_ok=True)
     store.init_db()
     yield memory_dir
-    store._db_checked = False
 
 
 # ── (a) explicit nudges; passive does NOT ────────────────────────────────────

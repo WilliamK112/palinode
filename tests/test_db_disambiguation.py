@@ -23,15 +23,13 @@ from palinode.core.config import config
 
 
 @pytest.fixture(autouse=True)
-def _reset_db_checked():
+def _reset_db_checked(monkeypatch):
     """Reset the module-level _db_checked flag before and after each test.
 
     Without this, the first test that triggers ``_ensure_db`` would mark the
     flag True and all subsequent tests would skip the check entirely.
     """
-    store._db_checked = False
-    yield
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
 
 
 @pytest.fixture()

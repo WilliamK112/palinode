@@ -19,14 +19,10 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_rate_counters():
+def _isolate_rate_counters(_isolated_rate_counters):
     from palinode.api import server
 
-    saved = server._rate_counters.copy()
-    server._rate_counters.clear()
-    yield server
-    server._rate_counters.clear()
-    server._rate_counters.update(saved)
+    return server
 
 
 def test_counter_tracks_admissions_not_attempts(_isolate_rate_counters) -> None:

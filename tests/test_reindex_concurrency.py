@@ -29,21 +29,12 @@ from palinode.core.config import config
 
 
 @pytest.fixture(autouse=True)
-def _reset_reindex_state():
+def _reset_reindex_state(monkeypatch):
     """Ensure _reindex_state is clean before and after every test."""
-    srv._reindex_state.update({
-        "running": False,
-        "started_at": None,
-        "files_processed": 0,
-        "total_files": 0,
-    })
-    yield
-    srv._reindex_state.update({
-        "running": False,
-        "started_at": None,
-        "files_processed": 0,
-        "total_files": 0,
-    })
+    monkeypatch.setitem(srv._reindex_state, "running", False)
+    monkeypatch.setitem(srv._reindex_state, "started_at", None)
+    monkeypatch.setitem(srv._reindex_state, "files_processed", 0)
+    monkeypatch.setitem(srv._reindex_state, "total_files", 0)
 
 
 @pytest.fixture()

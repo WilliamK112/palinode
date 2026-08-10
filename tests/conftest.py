@@ -60,16 +60,16 @@ def _isolate_global_config():
 
     ``palinode.core.config.config`` is a module-level singleton that ~30 fixtures
     across the suite mutate (``config.memory_dir``, ``config.git.auto_commit``, …)
-    and then restore with plain statements after a bare ``yield``. Those restores
-    are skipped when the test fails, so **one failure silently reconfigures every
-    later test** — pointing ``memory_dir`` at a deleted ``tmp_path`` or leaving
-    ``git.auto_commit`` off. That turns a single red test into a cascade of
-    unrelated red tests and makes outcomes depend on ordering.
+    and often restore themselves after ``yield``. Pytest runs that teardown after
+    a test-body failure, but cannot register it when fixture setup mutates config
+    and then raises before reaching ``yield``. Without this earlier safety net,
+    that narrower failure can point later tests at a deleted ``tmp_path`` or
+    leave ``git.auto_commit`` off.
 
     This runs before any test-module fixture and restores in a ``finally``, so
-    the leak cannot escape a test regardless of how it ends. It is a safety net,
-    not a licence: a fixture that mutates global state should still use
-    ``monkeypatch`` or ``try/finally``.
+    the setup-failure leak cannot escape a test. It is a safety net, not a
+    licence: a fixture that mutates global state should still use ``monkeypatch``
+    or register a finalizer before its first mutation.
     """
     from palinode.core.config import config
 
@@ -112,6 +112,23 @@ def _warm_embed_gate(monkeypatch):
     from palinode.indexer import reconcile as reconcile_mod
 
     monkeypatch.setattr(reconcile_mod, "_embeds_deferred", lambda client: False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_rate_counters(request: pytest.FixtureRequest) -> dict:
+    """Clear the process-wide limiter while arming restoration first."""
+    from palinode.api import rate_limit
+
+    counters = rate_limit._rate_counters
+    saved = counters.copy()
+
+    def restore() -> None:
+        counters.clear()
+        counters.update(saved)
+
+    request.addfinalizer(restore)
+    counters.clear()
+    return counters
 
 
 @pytest.fixture(autouse=True)

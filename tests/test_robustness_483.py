@@ -58,7 +58,7 @@ def _isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "memory_dir", memory_dir)
     monkeypatch.setattr(config, "db_path", db_path)
     monkeypatch.setattr(config.git, "auto_commit", False)
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     store.init_db()
     yield
 
