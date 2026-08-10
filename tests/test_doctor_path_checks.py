@@ -51,9 +51,19 @@ def _ctx(
         memory_dir=str(memory_dir),
         db_path=str(resolved_db),
     )
-    if search_roots is not None:
-        cfg.doctor.search_roots = search_roots
+    cfg.doctor.search_roots = (
+        search_roots if search_roots is not None else [str(memory_dir)]
+    )
     return DoctorContext(config=cfg)
+
+
+def test_ctx_defaults_search_roots_to_memory_dir(tmp_path: Path) -> None:
+    """Synthetic contexts never fall back to machine-wide discovery roots."""
+    memory_dir = tmp_path / "palinode"
+
+    ctx = _ctx(memory_dir)
+
+    assert ctx.config.doctor.search_roots == [str(memory_dir)]
 
 
 # ---------------------------------------------------------------------------
