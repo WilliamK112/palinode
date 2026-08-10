@@ -4,11 +4,10 @@ Two failure modes live here, both siblings of the "exit 134 after everything
 passed":
 
 1. **Global config leaking across tests.** ``palinode.core.config.config`` is a
-   process-wide singleton that ~30 fixtures mutate and restore with plain
-   statements after a bare ``yield``. Those restores are skipped on failure, so
-   one red test silently reconfigures every test after it — a single failure
-   fans out into unrelated failures, and outcomes start depending on ordering.
-   ``tests/conftest.py::_isolate_global_config`` restores it in a ``finally``.
+   process-wide singleton that ~30 fixtures mutate. Yield-fixture teardown runs
+   after test-body failures, but is not registered if setup raises before its
+   ``yield``. ``tests/conftest.py::_isolate_global_config`` starts first and
+   restores config in a ``finally``, covering that setup-failure window.
 
 2. **Colour-forcing environment.** ``rich`` colourises when ``FORCE_COLOR`` or
    ``CLICOLOR_FORCE`` is merely *present*, so a developer with either exported
@@ -22,6 +21,8 @@ import os
 import pytest
 
 from palinode.core.config import config
+
+pytest_plugins = ("pytester",)
 
 
 class TestGlobalConfigIsolation:
@@ -60,3 +61,31 @@ def test_colour_forcing_env_is_neutralised() -> None:
     assert "FORCE_COLOR" not in os.environ
     assert "CLICOLOR_FORCE" not in os.environ
     assert os.environ.get("NO_COLOR")
+
+
+def test_prearmed_finalizer_runs_after_fixture_setup_failure(pytester) -> None:
+    """Cleanup registered before mutation survives an exception before yield."""
+    pytester.makepyfile(
+        """
+        import pytest
+
+        state = []
+
+        @pytest.fixture
+        def mutates_then_fails(request):
+            request.addfinalizer(state.clear)
+            state.append("leaked")
+            raise RuntimeError("fixture setup failed before yield")
+            yield
+
+        @pytest.mark.xfail(raises=RuntimeError, strict=True)
+        def test_1_setup_failure(mutates_then_fails):
+            pass
+
+        def test_2_following_test_sees_clean_state():
+            assert state == []
+        """
+    )
+
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, xfailed=1)

@@ -10,10 +10,9 @@ def tmp_store_db(tmp_path, monkeypatch):
     db_path = tmp_path / ".palinode.db"
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     monkeypatch.setattr(config, "db_path", str(db_path))
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     store.init_db()
     yield
-    store._db_checked = False
 
 
 def _entity_refs_for_path(file_path: str) -> list[str]:

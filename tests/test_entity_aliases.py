@@ -180,11 +180,10 @@ def store_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cfg, "memory_dir", str(tmp_path))
     monkeypatch.setattr(cfg, "db_path", str(tmp_path / ".palinode.db"))
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     store.init_db()
     aliases.reset_cache()
     yield store
-    store._db_checked = False
 
 
 def test_a_split_subject_answers_as_one_after_mapping(store_db, tmp_path: Path) -> None:

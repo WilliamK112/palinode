@@ -591,7 +591,7 @@ def recall_widen_db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "memory_dir", memory_dir)
     monkeypatch.setattr(config, "db_path", os.path.join(memory_dir, ".palinode.db"))
     monkeypatch.setattr(config.git, "auto_commit", False)
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     os.makedirs(os.path.join(memory_dir, "insights"), exist_ok=True)
     store.init_db()
 
@@ -620,7 +620,6 @@ def recall_widen_db(tmp_path, monkeypatch):
         _write_and_index(r, f"name: Visible{r}\n")
 
     yield memory_dir
-    store._db_checked = False
 
 
 def test_widened_fetch_counts_recall_once(recall_widen_db):

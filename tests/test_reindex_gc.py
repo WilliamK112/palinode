@@ -10,10 +10,8 @@ from palinode.core.config import config
 
 
 @pytest.fixture(autouse=True)
-def _reset_db_checked():
-    store._db_checked = False
-    yield
-    store._db_checked = False
+def _reset_db_checked(monkeypatch):
+    monkeypatch.setattr(store, "_db_checked", False)
 
 
 def _chunk(chunk_id: str, file_path: str, content: str) -> dict:

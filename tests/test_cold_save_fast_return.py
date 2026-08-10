@@ -42,12 +42,9 @@ def tmp_store(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_probe_cache():
-    reconcile_mod._probe_cache["ts"] = 0.0
-    reconcile_mod._probe_cache["ok"] = None
-    yield
-    reconcile_mod._probe_cache["ts"] = 0.0
-    reconcile_mod._probe_cache["ok"] = None
+def _reset_probe_cache(monkeypatch):
+    monkeypatch.setitem(reconcile_mod._probe_cache, "ts", 0.0)
+    monkeypatch.setitem(reconcile_mod._probe_cache, "ok", None)
 
 
 def _write_md(tmp_path) -> str:

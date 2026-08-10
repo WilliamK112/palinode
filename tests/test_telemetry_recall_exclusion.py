@@ -68,12 +68,11 @@ def _isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "memory_dir", memory_dir)
     monkeypatch.setattr(config, "db_path", db_path)
     monkeypatch.setattr(config.git, "auto_commit", False)
-    store._db_checked = False
+    monkeypatch.setattr(store, "_db_checked", False)
     for d in ("inbox", "insights"):
         os.makedirs(os.path.join(memory_dir, d), exist_ok=True)
     store.init_db()
     yield memory_dir
-    store._db_checked = False
 
 
 # ── (c) telemetry is excluded from default vector search ─────────────────────
