@@ -91,11 +91,19 @@ jobs:
           pip install bandit pip-audit
 
       - name: Run bandit (static security analysis)
-        run: bandit -r palinode/ -ll -f json -o bandit-report.json
+        run: |
+          status=0
+          bandit -r palinode/ -ll || status=$?
+          bandit -r palinode/ -ll -f json -o bandit-report.json || status=$?
+          exit "$status"
         continue-on-error: true
 
       - name: Run pip-audit (dependency vulnerability check)
-        run: pip-audit -f json -o pip-audit-report.json
+        run: |
+          status=0
+          pip-audit || status=$?
+          pip-audit -f json -o pip-audit-report.json || status=$?
+          exit "$status"
         continue-on-error: true
 
       - name: Upload security scan reports
