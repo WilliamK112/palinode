@@ -17,6 +17,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 - **The live search smoke test is now self-contained.** It saves and queries a
   unique marker instead of depending on unrelated content already being present
   in the tested instance.
+- **Embedding-dependent search now reports unavailable backends as HTTP 503
+  instead of an internal-server error.** API, CLI, and MCP callers preserve
+  the typed backend/model diagnostic and `palinode doctor` recovery hint,
+  while save continues to succeed with its existing deferred-index warning.
 
 - **Native Windows memory writes now avoid unsupported directory fsync and
   preserve overwrite permissions on Python 3.11/3.12.** Source-capture tests
