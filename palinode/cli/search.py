@@ -1,6 +1,6 @@
 import os
 import click
-from palinode.cli._api import api_client
+from palinode.cli._api import HTTPStatusError, api_client
 from palinode.cli._format import print_result, console, OutputFormat, get_default_format
 from palinode.core.config import config
 from palinode.core.parity import CATEGORIES, MEMORY_TYPES
@@ -141,6 +141,14 @@ def search(
                 console.print(f"  {body}")
                 console.print()
                 
+    except HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        console.print(f"[red]Error searching memory:[/red] {detail or str(e)}")
+        click.Abort()
     except Exception as e:
         console.print(f"[red]Error searching memory: {str(e)}[/red]")
         click.Abort()

@@ -30,6 +30,18 @@ router = APIRouter()
 _VISIBILITY_OVERFETCH = 5
 
 
+def _embedding_unavailable_503(
+    error: embedder.EmbeddingUnavailable,
+    operation: str,
+) -> HTTPException:
+    """Preserve the typed outage message without logging a traceback."""
+    logger.warning(
+        "%s unavailable op=search outcome=embedding_unavailable",
+        operation,
+    )
+    return HTTPException(status_code=503, detail=str(error))
+
+
 def _resolve_scope_chain(
     context: list[str] | None = None,
     session_id: str | None = None,
@@ -404,6 +416,8 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
             session_id=req.session_id,
         )
         return final
+    except embedder.EmbeddingUnavailable as e:
+        raise _embedding_unavailable_503(e, "Search") from None
     except Exception as e:
         raise _safe_500(e, "Search failed")
 
@@ -493,6 +507,8 @@ def dedup_suggest_api(req: DedupSuggestRequest) -> list[dict[str, Any]]:
         for r in ranked:
             r["strong_dup"] = r["similarity"] >= strong_threshold
         return ranked
+    except embedder.EmbeddingUnavailable as e:
+        raise _embedding_unavailable_503(e, "Dedup suggest") from None
     except Exception as e:
         raise _safe_500(e, "Dedup suggest failed")
 
@@ -535,6 +551,8 @@ def orphan_repair_api(req: OrphanRepairRequest) -> list[dict[str, Any]]:
             min_similarity=min_similarity,
             top_k=top_k,
         )
+    except embedder.EmbeddingUnavailable as e:
+        raise _embedding_unavailable_503(e, "Orphan repair") from None
     except Exception as e:
         raise _safe_500(e, "Orphan repair failed")
 
@@ -628,6 +646,8 @@ def cluster_neighbors_api(req: ClusterNeighborsRequest) -> list[dict[str, Any]]:
         for r in ranked:
             r["score"] = r["similarity"]
         return ranked
+    except embedder.EmbeddingUnavailable as e:
+        raise _embedding_unavailable_503(e, "Cluster neighbors") from None
     except Exception as e:
         raise _safe_500(e, "Cluster neighbors failed")
 
@@ -679,5 +699,7 @@ def topic_coverage_api(req: TopicCoverageRequest) -> dict[str, Any]:
                 "similarity": best["similarity"],
             }
         return {"covered": False, "best_match": None, "similarity": 0.0}
+    except embedder.EmbeddingUnavailable as e:
+        raise _embedding_unavailable_503(e, "Topic coverage") from None
     except Exception as e:
         raise _safe_500(e, "Topic coverage failed")
