@@ -212,8 +212,11 @@ def test_ingest_pipeline_writes_timezone_aware_utc_last_updated(tmp_path, monkey
     _assert_utc_iso8601(fm.get("last_updated"), before, after, field="last_updated")
 
 
-def test_layer_split_writes_timezone_aware_utc_timestamps(tmp_path):
+def test_layer_split_writes_timezone_aware_utc_timestamps(tmp_path, monkeypatch):
     """``split_file`` writes UTC ISO-8601 to identity, status, and history files."""
+    # write_memory_file (layer_split's write primitive) validates its target
+    # resolves inside config.memory_dir.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     src = tmp_path / "demo.md"
     # Mix of identity-keyword and status-keyword sections so all three layers
     # actually get written.

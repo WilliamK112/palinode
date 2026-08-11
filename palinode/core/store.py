@@ -31,7 +31,6 @@ from palinode.core.ranker import (  # noqa: F401
     _priority_value,
     effective_importance,
     rank_hybrid,
-    score_with_decay,
 )
 
 _store_logger = __import__('logging').getLogger("palinode.store")
@@ -756,14 +755,20 @@ def rebuild_fts() -> int:
 def search(query_embedding: list[float], category: str | None = None,
            status_exclude_list: list[str] | None = None, top_k: int = 10, threshold: float = 0.6,
            date_after: str | None = None, date_before: str | None = None,
-           context_entities: list[str] | None = None,
-           include_daily: bool = False, record_access: bool = True,
+           record_access: bool = True,
            kind_exclude_list: Sequence[str] | None = None,
            mode: str = "explicit", session_id: str | None = None) -> list[dict[str, Any]]:
     """Search the vector index for semantically similar memory chunks.
 
     Performs cosine similarity search via SQLite-vec, filtering by category
-    and status. Results are scored and ranked by relevance.
+    and status. Returns raw candidates: no ranking stage (RRF, decay,
+    priority nudge, ambient-context boost, daily-file penalty, per-file
+    dedup) runs here — that pipeline lives entirely in
+    :func:`palinode.core.ranker.rank_hybrid`, reached via
+    :func:`search_hybrid` (including its ``use_fts=False`` vector-only mode).
+    Callers that need ranked, boosted, or daily-penalized results must go
+    through ``search_hybrid``, not this function (the fix for the
+    double-applied daily penalty).
 
     Args:
         query_embedding (list[float]): 1024-dimensional embedding vector (BGE-M3 defaults).
@@ -772,9 +777,6 @@ def search(query_embedding: list[float], category: str | None = None,
             Uses `config.search.exclude_status` if unset.
         top_k (int): Maximum number of results to return.
         threshold (float): Minimum cosine similarity score (0.0-1.0).
-        context_entities (list[str] | None): Entity refs (e.g. ["project/palinode"])
-            for ADR-008 ambient context boost. Matching results get score * config.context.boost.
-        include_daily (bool): If True, skip the daily/ penalty (search daily notes at full rank).
         kind_exclude_list (Sequence[str] | None): ADR-015 §2.3 recall-exclusion.
             None → exclude DEFAULT_RECALL_EXCLUDED_KINDS (telemetry). Empty
             sequence → exclude nothing (include telemetry).
@@ -784,7 +786,7 @@ def search(query_embedding: list[float], category: str | None = None,
             metadata, score. Sorted by score in descending order.
 
     Note:
-        SQLite-vec natively returns L2 distance. We convert this mathematically to cosine 
+        SQLite-vec natively returns L2 distance. We convert this mathematically to cosine
         similarity using: score = 1.0 - (distance² / 2.0).
         This is perfectly valid because BGE-M3 embeddings are consistently L2-normalized.
     """
@@ -864,29 +866,6 @@ def search(query_embedding: list[float], category: str | None = None,
         if len(results) >= top_k:
             break
 
-    # ADR-008: Ambient context boost (same logic as search_hybrid)
-    if context_entities and config.context.enabled and config.context.boost != 1.0:
-        context_files: set[str] = set()
-        for entity in context_entities:
-            for row in get_entity_files(entity):
-                context_files.add(row["file_path"])
-        if context_files:
-            for r in results:
-                if r["file_path"] in context_files:
-                    r["score"] = r.get("score", 0) * config.context.boost
-            results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
-
-    # Issue Penalize daily/ files to prevent session notes from dominating results
-    penalty = config.search.daily_penalty
-    if not include_daily and penalty != 1.0:
-        needs_resort = False
-        for r in results:
-            if _is_daily_file(r["file_path"]):
-                r["score"] = r.get("score", 0) * penalty
-                needs_resort = True
-        if needs_resort:
-            results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
-
     # Record retrieval access metadata (ADR-006/007): batched, resilient.
     # Suppressed when called as the inner vector pass of search_hybrid, which
     # records recall against its final merged hit set instead (avoids double-
@@ -905,8 +884,6 @@ def search_internal(
     threshold: float = 0.6,
     date_after: str | None = None,
     date_before: str | None = None,
-    context_entities: list[str] | None = None,
-    include_daily: bool = False,
     kind_exclude_list: "Sequence[str] | None" = None,
 ) -> list[dict[str, Any]]:
     """Vector search for internal / maintenance callers — recall is never recorded.
@@ -929,8 +906,6 @@ def search_internal(
         threshold=threshold,
         date_after=date_after,
         date_before=date_before,
-        context_entities=context_entities,
-        include_daily=include_daily,
         kind_exclude_list=kind_exclude_list,
         record_access=False,  # hard-set; cannot be overridden via this API
     )
@@ -1593,6 +1568,7 @@ def search_hybrid(
     mode: str = "explicit",
     session_id: str | None = None,
     record_access: bool = True,
+    use_fts: bool = True,
 ) -> list[dict[str, Any]]:
     """Hybrid search combining semantic vectors and BM25 keyword matching.
 
@@ -1613,35 +1589,54 @@ def search_hybrid(
             regardless of `top_k` — measured as hybrid search silently
             plateauing well below the requested limit.
         hybrid_weight: Balance between vector and BM25.
-            0.0 = vector only, 1.0 = BM25 only, 0.5 = equal weight.
+            0.0 = vector only, 1.0 = BM25 only, 0.5 = equal weight. Ignored
+            (forced to 0.0) when ``use_fts`` is False.
         record_access: When True (default), ADR-006/007 recall metadata is
             written back for the merged hit set. The visibility-widening
             re-fetch passes False so a row already counted by the initial
             pass is not incremented a second time.
+        use_fts: When False, skip the BM25 arm entirely (no ``search_fts``
+            call) and rank the vector candidates alone through
+            :func:`palinode.core.ranker.rank_hybrid` with an empty FTS list.
+            This is the vector-only ("hybrid=false") search path — routing it
+            through the same ranker means it gets the decay re-rank, priority
+            nudge, ambient-context boost, daily-file penalty (applied exactly
+            once) and per-file dedup that ``hybrid=true`` gets, instead of the
+            second, undocumented ranking policy ``store.search`` used to be.
+            ``hybrid_weight`` is forced to 0.0 in this mode so a
+            caller-supplied weight of 1.0 ("BM25 only") cannot zero out the
+            only arm actually present.
 
     Returns:
         Merged and re-ranked list of result dicts, sorted by combined score.
     """
-    # Get results from both search methods. record_access=False: search_hybrid
-    # records recall on its final merged hit set, not on these candidates.
-    # threshold=0.0 here is deliberate: this is a wide-net candidate fetch —
-    # rank_hybrid applies the caller's real `threshold` itself, per-arm,
-    # before fusion (see its docstring).
+    # Get vector candidates. record_access=False: search_hybrid records recall
+    # on its final merged hit set, not on these candidates. threshold=0.0 here
+    # is deliberate: this is a wide-net candidate fetch — rank_hybrid applies
+    # the caller's real `threshold` itself, per-arm, before fusion (see its
+    # docstring).
     vec_results = search(query_embedding, category=category, top_k=top_k * 2, threshold=0.0,
                          record_access=False, kind_exclude_list=kind_exclude_list)
-    try:
-        fts_results = search_fts(query_text, category=category, top_k=top_k * 2,
-                                 kind_exclude_list=kind_exclude_list)
-    except Exception:
-        # FTS5 corrupted — rebuild and retry once
-        import logging
-        logging.getLogger("palinode.store").warning("FTS5 corrupted, rebuilding...")
-        rebuild_fts()
+
+    fts_results: list[dict[str, Any]] = []
+    effective_hybrid_weight = hybrid_weight
+    if use_fts:
         try:
             fts_results = search_fts(query_text, category=category, top_k=top_k * 2,
                                      kind_exclude_list=kind_exclude_list)
         except Exception:
-            fts_results = []  # Give up on BM25, return vector-only
+            # FTS5 corrupted — rebuild and retry once
+            import logging
+            logging.getLogger("palinode.store").warning("FTS5 corrupted, rebuilding...")
+            rebuild_fts()
+            try:
+                fts_results = search_fts(query_text, category=category, top_k=top_k * 2,
+                                         kind_exclude_list=kind_exclude_list)
+            except Exception:
+                fts_results = []  # Give up on BM25, return vector-only
+    else:
+        # No BM25 arm at all — force vec_weight = 1.0 (see docstring).
+        effective_hybrid_weight = 0.0
 
     # Ambient context boost (ADR-008) resolves the caller's project-context files
     # from the entity index here — the only DB touch in the scoring path; the pure
@@ -1662,7 +1657,7 @@ def search_hybrid(
         fts_results,
         top_k=top_k,
         threshold=threshold,
-        hybrid_weight=hybrid_weight,
+        hybrid_weight=effective_hybrid_weight,
         priority_weight=_PRIORITY_RANK_WEIGHT,
         context_files=context_files,
         include_daily=include_daily,
@@ -1932,7 +1927,7 @@ def add_trigger(
         VALUES (?, ?, ?, ?, ?, ?, 1, 0)
     """, (trigger_id, description, memory_file, threshold, cooldown_hours, now))
     
-    # vec0 does not reliably honor `INSERT OR REPLACE` (it can raise a
+    # ADR-002: vec0 does not reliably honor `INSERT OR REPLACE` (can raise a
     # UNIQUE constraint error on an existing primary key instead of replacing
     # the row) — explicit DELETE-then-INSERT, same pattern as chunks_vec.
     # Re-registering an existing trigger_id is the normal path here: the

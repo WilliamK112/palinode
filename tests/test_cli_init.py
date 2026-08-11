@@ -447,6 +447,54 @@ def test_init_dry_run_writes_nothing(tmp_path: Path):
     assert not (tmp_path / ".mcp.json").exists()
 
 
+# ---- build_plan(): the dry-run plan IS the write-set ---------------------
+
+
+def test_build_plan_matches_executed_write_set(tmp_path: Path):
+    """`build_plan()` is the single enumeration `--dry-run` prints and the
+    real run executes — this proves they can't drift apart: every path in
+    the plan (including the 8 Obsidian vault directories, which the old
+    hard-coded dry-run branch under-reported) exists after running every
+    writer, and nothing exists before."""
+    from palinode.cli.init import InitOptions, build_plan
+
+    opts = InitOptions(
+        slug="sample-project",
+        claudemd=True,
+        agents=False,
+        cursor=False,
+        hook=True,
+        slash=True,
+        wrap_policy="light",
+        skill_roots=[],
+        session_skill_roots=[("project", tmp_path / ".claude" / "skills")],
+        mcp=True,
+        obsidian=True,
+        force=False,
+        force_obsidian=False,
+    )
+    plan = build_plan(tmp_path, opts)
+
+    # The 8 vault category directories must be part of the SAME plan the
+    # dry-run listing walks — not a second, separately-maintained list.
+    vault_dir_labels = {pw.label for pw in plan if pw.label.endswith("/")}
+    assert vault_dir_labels == {
+        "people/", "projects/", "decisions/", "insights/",
+        "research/", "daily/", "archive/", "logs/",
+    }
+
+    for pw in plan:
+        assert not pw.path.exists(), f"{pw.path} exists before any writer ran"
+
+    for pw in plan:
+        pw.writer()
+
+    for pw in plan:
+        assert pw.path.exists(), (
+            f"plan entry {pw.label!r} ({pw.path}) was not created by its own writer"
+        )
+
+
 def test_init_is_idempotent(tmp_path: Path):
     runner = CliRunner()
     first = runner.invoke(main, ["init", "--dir", str(tmp_path)])
@@ -634,6 +682,18 @@ def test_memory_block_core_is_harness_neutral():
     for claude_only in ("/wrap", "/clear", "/save", "/ps", "hook", "SessionEnd"):
         assert claude_only not in core, f"Claude-ism leaked into core: {claude_only!r}"
     assert core.count("## Memory (Palinode)") == 1
+
+
+def test_memory_block_core_byte_identical_to_golden():
+    """`MEMORY_BLOCK_CORE` is what `palinode init` writes to AGENTS.md and
+    .cursor/rules — and, since the block-divergence fix, also what
+    `doctor --fix` appends to CLAUDE.md (see test_doctor_fix.py's mirror of
+    this fixture). Byte-pin it the same way CLAUDE_MD_BLOCK is pinned above,
+    so the two writers can never fork again silently."""
+    from palinode.cli.init import MEMORY_BLOCK_CORE
+
+    core = MEMORY_BLOCK_CORE.format(project_slug="sample-project")
+    assert core == (_FIXTURES / "claude_md_memory_block_core.txt").read_text()
 
 
 def test_init_default_skips_agents_and_cursor(tmp_path: Path):

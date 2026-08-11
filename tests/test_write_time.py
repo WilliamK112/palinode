@@ -1,9 +1,12 @@
 """
 Tests for palinode/consolidation/write_time.py (tier 2a, ADR-004).
 
-These tests mock the LLM call path entirely — they verify queue mechanics,
-marker files, feature flag, and error handling without touching a real
-embedder or consolidation runner.
+Most of these tests mock the LLM call path entirely — they verify queue
+mechanics, marker files, feature flag, and error handling without touching a
+real embedder or consolidation runner. The "Sync path" tests below are the
+exception: they run the real `_run_check_and_apply` end to end (with a fake
+`llm_fn` injected at the propose seam and the embedder/vector-search calls it
+makes faked at the infra boundary) — see that section's comment for why.
 """
 from __future__ import annotations
 
@@ -252,33 +255,103 @@ def test_queue_full_falls_to_marker(tmp_palinode_dir, tmp_memory_file, sample_it
 
 
 # ── Sync path tests ────────────────────────────────────────────────────────
+#
+# These run the REAL `_run_check_and_apply` — the one function joining
+# `_translate_ops` to `apply_operations` — rather than patching it out
+# wholesale. Prior versions of this test patched `write_time._run_check_and_apply`
+# itself, which meant the join was never exercised anywhere in the suite;
+# see tests/test_proposer_seam.py's docstring for why wholesale-mocking the
+# propose seam is inadequate. Only the LLM call (`llm_fn`) and the
+# infra-boundary calls it makes (embedder, vector search) are faked — the real
+# translate -> apply_operations -> file mutation pipeline runs end to end.
 
 
-def test_sync_path_calls_check_and_returns_result(
-    tmp_palinode_dir, tmp_memory_file, sample_item
-):
-    """sync=True calls the underlying check function and returns its result."""
-    fake_result = {
-        "operations": [{"operation": "ADD", "item": sample_item}],
-        "applied_stats": {},
-        "llm_latency_ms": 150,
-    }
-    with patch.object(write_time, "_run_check_and_apply", return_value=fake_result) as mock:
-        result = write_time.schedule_contradiction_check(
-            tmp_memory_file, sample_item, sync=True
+def _seed_contradiction_check_files(
+    tmp_dir: str,
+    *,
+    fact_id: str = "f-old",
+    fact_text: str = "Old fact needing update.",
+    target_rel: str = os.path.join("decisions", "target.md"),
+) -> str:
+    """Seed the update.md prompt (required for _check_contradictions to reach
+    its LLM call instead of short-circuiting to ADD) plus a target memory file
+    with one tagged fact the executor can match against. Returns the target's
+    absolute path."""
+    prompts_dir = os.path.join(tmp_dir, "specs", "prompts")
+    os.makedirs(prompts_dir, exist_ok=True)
+    with open(os.path.join(prompts_dir, "update.md"), "w") as f:
+        f.write("Return the operation as JSON.\n")
+
+    target = os.path.join(tmp_dir, target_rel)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as f:
+        f.write(
+            "---\nid: decision-test\ncategory: decision\n---\n\n"
+            f"- [2026-06-01] {fact_text} <!-- fact:{fact_id} -->\n"
         )
-        mock.assert_called_once_with(tmp_memory_file, sample_item)
-        assert result == fake_result
+    return target
 
 
-def test_sync_path_swallows_check_errors(tmp_palinode_dir, tmp_memory_file, sample_item):
-    """Errors in the underlying check never propagate to the save caller."""
-    with patch.object(
-        write_time, "_run_check_and_apply", side_effect=RuntimeError("LLM exploded")
-    ):
+def _fake_llm(op_json: str):
+    """A fake propose seam returning fixed op-JSON, regardless of the prompts."""
+    def _fn(system_prompt: str, user_prompt: str) -> tuple[str, str]:
+        return op_json, "fake-model"
+    return _fn
+
+
+def test_sync_path_applies_real_write_time_delete_end_to_end(
+    tmp_palinode_dir, sample_item
+):
+    """A write-time DELETE, driven through the real pipeline with a fake
+    llm_fn, produces a visible supersession in the target file. `embedder.embed`
+    and `store.search_internal` are faked at the infra boundary (network
+    embedder, vector DB) — everything downstream of the LLM call (parse,
+    translate, apply_operations, file write) is real."""
+    target = _seed_contradiction_check_files(tmp_palinode_dir)
+    ops_json = json.dumps(
+        {
+            "operation": "DELETE",
+            "target_id": "f-old",
+            "reason": "contradicted by new save",
+        }
+    )
+
+    with patch("palinode.consolidation.runner.embedder.embed", return_value=[0.1] * 8), \
+            patch(
+                "palinode.consolidation.runner.store.search_internal",
+                return_value=[{"id": "f-old", "content": "Old fact needing update."}],
+            ):
+        result = write_time.schedule_contradiction_check(
+            target, sample_item, sync=True, llm_fn=_fake_llm(ops_json)
+        )
+
+    assert result is not None
+    assert result["applied_stats"]["superseded"] == 1
+    body = open(target).read()
+    # The old fact is tombstoned (struck through), not silently dropped —
+    # the visible supersession the executor's SUPERSEDE guard used to
+    # discard for lack of `new_text`.
+    assert "~~" in body
+    assert "[superseded" in body
+    # The replacement text comes from the item that superseded it (the
+    # `_check_contradictions` per-item loop overwrites `operation["item"]`
+    # with the item actually being checked — see runner._check_contradictions).
+    assert sample_item["content"] in body
+
+
+def test_sync_path_swallows_check_errors(tmp_palinode_dir, sample_item):
+    """Errors in the real pipeline never propagate to the save caller — the
+    ADR-004 save-never-fails invariant — exercised via a genuine failure at
+    the embedder boundary rather than a mock of _run_check_and_apply itself."""
+    target = _seed_contradiction_check_files(tmp_palinode_dir)
+
+    def _boom(text, backend="local"):
+        raise RuntimeError("LLM exploded")
+
+    with patch("palinode.consolidation.runner.embedder.embed", side_effect=_boom):
         # Must not raise
         result = write_time.schedule_contradiction_check(
-            tmp_memory_file, sample_item, sync=True
+            target, sample_item, sync=True
         )
         assert result is None  # error path returns None, save continues
 
@@ -299,17 +372,41 @@ def test_translate_ops_filters_ops_without_target_id():
 
 
 def test_translate_ops_delete_becomes_supersede():
-    """DELETE from _check_contradictions maps to SUPERSEDE (we never delete)."""
+    """DELETE from _check_contradictions maps to SUPERSEDE (we never delete).
+
+    The executor's SUPERSEDE guard (executor.py) requires ``new_text`` to be
+    truthy or the op is dropped with no mutation, no stats increment, and no
+    log line — assert the translator actually produces it, not just the
+    id/superseded_by shape the prior version of this test pinned.
+    """
     ops = [
         {
             "operation": "DELETE",
-            "item": {"id": "decision-new"},
+            "item": {"id": "decision-new", "content": "The new content that superseded it."},
             "target_id": "f-old",
             "reason": "contradicted by new",
         }
     ]
     translated = write_time._translate_ops(ops, "/tmp/fake.md")
     assert len(translated) == 1
-    assert translated[0]["op"] == "SUPERSEDE"
-    assert translated[0]["id"] == "f-old"
-    assert translated[0]["superseded_by"] == "decision-new"
+    op = translated[0]
+    assert op["op"] == "SUPERSEDE"
+    assert op["id"] == "f-old"
+    assert op["superseded_by"] == "decision-new"
+    # Falls back to the superseding item's content when the op carries no
+    # explicit new_text of its own.
+    assert op["new_text"] == "The new content that superseded it."
+
+
+def test_translate_ops_delete_prefers_explicit_new_text_over_item_content():
+    """An explicit ``new_text`` on the op wins over the item's content."""
+    ops = [
+        {
+            "operation": "DELETE",
+            "item": {"id": "decision-new", "content": "item content, should be ignored"},
+            "new_text": "explicit replacement text",
+            "target_id": "f-old",
+        }
+    ]
+    translated = write_time._translate_ops(ops, "/tmp/fake.md")
+    assert translated[0]["new_text"] == "explicit replacement text"

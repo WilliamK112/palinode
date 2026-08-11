@@ -18,7 +18,7 @@ Two independent defects produced that, and both are pinned here:
 
 2. **The path filter was silent, and incomplete.** The default list omitted
    ``research/`` and ``inbox/``, two categories the save path really writes
-   to — and ``inbox/`` is where deterministic-monitor writers land
+   to — and ``inbox/`` is where the ADR-015 deterministic-monitor writers land
    their incidents. Anything filtered out, by the default list or by the
    caller's own ``paths``, vanished without a word.
 
@@ -204,7 +204,7 @@ def test_nothing_hidden_means_no_suppression_notice(store):
 def test_telemetry_kind_is_visible_in_diff(store):
     """``metadata.kind: telemetry`` is a *recall* exclusion, not a provenance one.
 
-    The default policy keeps machine writes out of semantic recall so ranking
+    ADR-015 §2.3 keeps machine writes out of default semantic recall so ranking
     stays clean. Provenance answers a different question — "what changed?" — and
     must not inherit that exclusion: a monitor's own writes are precisely what an
     operator is looking for when they diagnose the monitor.

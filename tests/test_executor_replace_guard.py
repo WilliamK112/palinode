@@ -14,16 +14,26 @@ Plain tempfile + frontmatter on disk; no DB, no Ollama (the executor is a pure
 file-mutation layer).
 """
 import os
-import tempfile
+import uuid
 
 import pytest
 
 from palinode.consolidation.executor import apply_operations
+from palinode.core.config import config
 
 
-def _write(content: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".md")
-    with os.fdopen(fd, "w") as f:
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    # write_memory_file (the executor's write primitive) validates its target
+    # resolves inside config.memory_dir — point it at this fixture's tmp_path.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    return tmp_path
+
+
+def _write(content: str, *, _dir=None) -> str:
+    directory = _dir if _dir is not None else config.memory_dir
+    path = os.path.join(directory, f"{uuid.uuid4().hex}.md")
+    with open(path, "w") as f:
         f.write(content)
     return path
 
@@ -54,7 +64,7 @@ type: ProjectSnapshot
 
 
 @pytest.fixture()
-def replace_doc():
+def replace_doc(_memory_dir):
     path = _write(_REPLACE_DOC)
     yield path
     for p in (path, path.replace(".md", "-history.md")):
@@ -63,7 +73,7 @@ def replace_doc():
 
 
 @pytest.fixture()
-def episodic_doc():
+def episodic_doc(_memory_dir):
     path = _write(_EPISODIC_DOC)
     yield path
     for p in (path, path.replace(".md", "-history.md")):

@@ -236,6 +236,17 @@ def split_file(file_path: str) -> dict:
         git_tools.write_memory_file(history_path, h_content)
         results['history'] = history_path
 
+    # One split = one commit covering every sibling file it wrote (up to
+    # three: identity/status/history), through the git_tools choke point —
+    # these writes previously left the split correct on disk but uncommitted.
+    if config.git.auto_commit:
+        committed_paths = [
+            path for key, path in results.items() if key != 'layer_hint_ignored'
+        ]
+        git_tools.commit_memory_files(
+            committed_paths, f"{config.git.commit_prefix} layer-split: {name}"
+        )
+
     return results
 
 

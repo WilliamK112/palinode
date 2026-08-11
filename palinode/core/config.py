@@ -44,65 +44,6 @@ def _expand_path(path_str: str) -> str:
     return os.path.expanduser(path_str)
 
 @dataclass
-class CoreRecallConfig:
-    """Settings for core memory injection logic."""
-    max_chars_per_file: int = 3000
-    max_total_chars: int = 8000
-    directories: list[str] = field(default_factory=lambda: ["people", "projects", "decisions", "insights"])
-
-@dataclass
-class TieringRecallConfig:
-    """Configures tiered memory recall execution."""
-    full_refresh_every_n_turns: int = 200  # Fallback only — compaction hook is primary trigger
-    skip_unsummarized: bool = True
-    # What to inject on non-full turns (between refreshes):
-    #   "none"     — skip core entirely (just topic search). Saves ~200 tokens/turn.
-    #   "summary"  — inject one-line summaries of core files.
-    #   "full"     — inject full core every turn (expensive, ~3K tokens/turn).
-    mid_turn_mode: str = "none"
-
-@dataclass
-class SearchRecallConfig:
-    """Search logic tuning boundaries and constraints."""
-    enabled: bool = True
-    top_k: int = 3          # Was 5 — 3 high-quality results beat 5 noisy ones
-    max_chars_per_chunk: int = 500  # Was 700 — tighter excerpts, less noise
-    threshold: float = 0.4
-    min_query_length: int = 15
-    trivial_patterns: list[str] = field(default_factory=lambda: [
-        "ok", "yep", "sure", "thanks", "thx", "cool", "got it", "nice", "lol", "k", "np"
-    ])
-
-@dataclass
-class RecallConfig:
-    """Holistic recall mechanism toggle layout."""
-    enabled: bool = True
-    core: CoreRecallConfig = field(default_factory=CoreRecallConfig)
-    tiering: TieringRecallConfig = field(default_factory=TieringRecallConfig)
-    search: SearchRecallConfig = field(default_factory=SearchRecallConfig)
-
-@dataclass
-class ExtractionCaptureConfig:
-    """Metrics for contextual extraction flows."""
-    max_items_per_session: int = 5
-    min_turns: int = 3
-    types: list[str] = field(default_factory=lambda: ["Decision", "ProjectSnapshot", "Insight", "PersonMemory", "ActionItem"])
-
-@dataclass
-class DailyCaptureConfig:
-    """Boundaries for chronologic diary capture modes."""
-    enabled: bool = True
-    max_messages: int = 10
-    max_chars: int = 2000
-
-@dataclass
-class QuickCaptureConfig:
-    """Short-form memory input threshold settings."""
-    enabled: bool = True
-    min_chars: int = 5
-    long_text_threshold: int = 500
-
-@dataclass
 class CrossRefsConfig:
     """the mechanical cross-linking work: mechanical, untyped cross-linking during indexing.
 
@@ -116,11 +57,12 @@ class CrossRefsConfig:
 
 @dataclass
 class CaptureConfig:
-    """General extraction capability configuration map."""
-    enabled: bool = True
-    extraction: ExtractionCaptureConfig = field(default_factory=ExtractionCaptureConfig)
-    daily: DailyCaptureConfig = field(default_factory=DailyCaptureConfig)
-    quick_capture: QuickCaptureConfig = field(default_factory=QuickCaptureConfig)
+    """General capture capability configuration map.
+
+    Only ``cross_refs`` is live — session extraction, daily-note capture, and
+    quick-capture are all handled by their respective callers with no config
+    read-through, so no dataclasses exist here for them.
+    """
     cross_refs: CrossRefsConfig = field(default_factory=CrossRefsConfig)
 
 @dataclass
@@ -352,6 +294,14 @@ class ConsolidationConfig:
     llm_fallbacks: list[dict] = field(default_factory=list)
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
+    # Which ops the weekly/full pass (run_consolidation) may apply — the
+    # counterpart to nightly.allowed_ops below, which restricts the nightly
+    # pass only. One name, one nesting depth per pass: this key governs
+    # weekly, `nightly.allowed_ops` governs nightly. There used to be a
+    # third, unrelated `compaction.allowed_ops` key that looked like it did
+    # this and did nothing — removed; this is now the only weekly-pass knob.
+    allowed_ops: list[str] = field(default_factory=lambda:
+        ["KEEP", "UPDATE", "MERGE", "SUPERSEDE", "ARCHIVE", "RETRACT"])
     nightly: NightlyConfig = field(default_factory=NightlyConfig)
     write_time: WriteTimeConfig = field(default_factory=WriteTimeConfig)
     forget: ForgetConfig = field(default_factory=ForgetConfig)
@@ -366,24 +316,16 @@ class DecayConfig:
     """Algorithm constraints matching temporal decay curves settings.
 
     ADR-007 (demand-decay importance, grounded in 31 d of prod telemetry)
-    replaces the per-type decay model below with a single empirical
-    demand-decay clock. ``importance`` is now *decayed distinct-session
-    explicit demand*: reinforced by an exponential-approach nudge on each
-    qualifying demand (§3.3), decayed on read at rank time (§3.3/§3.4).
+    replaces the per-type decay model that used to live here with a single
+    empirical demand-decay clock. ``importance`` is now *decayed
+    distinct-session explicit demand*: reinforced by an exponential-approach
+    nudge on each qualifying demand (§3.3), decayed on read at rank time
+    (§3.3/§3.4). The per-type `tau_*` keys (pre-data guesses for that
+    superseded model) were removed along with the rest of the dead config
+    surface — their only reader, the legacy `score_with_decay` re-rank term,
+    was itself deleted as dead code first.
     """
     enabled: bool = False
-    # DEPRECATED (ADR-007 §3.4): the per-type taus were pre-data guesses for a
-    # *type-based* decay model. They are superseded by `importance_tau_days`
-    # (the single empirical demand-decay clock). Retained only so existing
-    # configs validate and `score_with_decay` (legacy, decay-ranker path)
-    # keeps working; they are NOT used as the decay clock for the ADR-007
-    # decay-on-read term. Remove once no config references them.
-    tau_critical: int = 180
-    tau_decisions: int = 60
-    tau_insights: int = 90
-    tau_general: int = 30
-    tau_status: int = 7
-    tau_ephemeral: int = 1
     # DEPRECATED (ADR-007 §3.3): the old additive `+0.01` nudge — too small and
     # the wrong shape for the Zipfian demand distribution (26 demands → only
     # 0.76). Superseded by the exponential-approach reinforcement below
@@ -391,8 +333,8 @@ class DecayConfig:
     importance_nudge: float = 0.01
     # Recall-feedback loop (ADR-006/007) — demand-decay importance (ADR-007).
     # Access metadata (recall_count / last_recalled) is always written on
-    # retrieval, independent of the decay ranker `enabled` flag (which only gates
-    # the legacy score_with_decay re-rank term). The *importance* nudge is gated
+    # retrieval, independent of the decay ranker `enabled` flag (which gates the
+    # bounded decay-on-read re-rank band in `rank_hybrid`). The *importance* nudge is gated
     # on explicit, session-deduplicated demand (§3.2) and reinforces by
     # exponential approach toward `importance_cap`:
     #     importance ← importance + (cap − importance) · importance_alpha
@@ -419,12 +361,6 @@ class ServicesConfig:
     """Nested configuration mapping array services configurations."""
     api: ApiServiceConfig = field(default_factory=ApiServiceConfig)
     watcher: WatcherServiceConfig = field(default_factory=WatcherServiceConfig)
-
-@dataclass
-class SecurityConfig:
-    """Configurations mappings for scanning logic outputs endpoints schemas."""
-    scrub_patterns_file: str = "specs/scrub-patterns.yaml"
-    exclude_paths: list[str] = field(default_factory=lambda: [".secrets", "credentials", "passwords"])
 
 @dataclass
 class GitConfig:
@@ -597,13 +533,16 @@ class KUCompatConfig:
 
 @dataclass
 class CompactionConfig:
-    """Operations controls algorithms parameters logic models layouts mapping endpoints."""
-    # Which operations are allowed
-    allowed_ops: list[str] = field(default_factory=lambda:
-        ["KEEP", "UPDATE", "MERGE", "SUPERSEDE", "ARCHIVE", "RETRACT"])
-    # How aggressive: conservative = mostly KEEP, aggressive = more MERGE/ARCHIVE
-    aggressiveness: str = "moderate"  # "conservative" | "moderate" | "aggressive"
-    # Layer split heuristics
+    """Layer-split heuristics for markdown section classification.
+
+    ``allowed_ops`` and ``aggressiveness`` used to live here but had no
+    reader anywhere in the tree — the ops filter a user actually gets is
+    ``consolidation.allowed_ops`` (weekly) / ``consolidation.nightly.allowed_ops``
+    (nightly). Removed rather than wired up: neither name nor scope matched
+    what this section otherwise does (layer-split tuning), and duplicating
+    the ops-restriction knob under a second name is exactly the ambiguity
+    that made the first one silently unread.
+    """
     layer_split: LayerSplitConfig = field(default_factory=LayerSplitConfig)
 
 @dataclass
@@ -615,7 +554,6 @@ class Config:
     # PALINODE_DIR overrides at load time". See __post_init__ + load_config.
     # An explicit string (e.g. from palinode.config.yaml) is taken at face value.
     db_path: str | None = None
-    recall: RecallConfig = field(default_factory=RecallConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     ingestion: IngestionConfig = field(default_factory=IngestionConfig)
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
@@ -629,7 +567,6 @@ class Config:
     scope: ScopeConfig = field(default_factory=ScopeConfig)
     decay: DecayConfig = field(default_factory=DecayConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
-    security: SecurityConfig = field(default_factory=SecurityConfig)
     git: GitConfig = field(default_factory=GitConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     instrumentation: InstrumentationConfig = field(default_factory=InstrumentationConfig)

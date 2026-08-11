@@ -17,15 +17,28 @@ from __future__ import annotations
 from pathlib import Path
 
 import frontmatter as fm_lib
+import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main
+from palinode.core.config import config
 from palinode.import_.vault import plan_import
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    """Every test here imports into tmp_path/"memory" (make_memory_dir below)
+    via CliRunner(env={"PALINODE_DIR": ...}) — which the CLI command reads
+    fresh, but write_memory_file's traversal guard checks the process-global
+    config.memory_dir, which the env var alone does not refresh. Point it at
+    the same directory so the choke point validates the write the CLI
+    actually intends."""
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path / "memory"))
 
 def make_vault(tmp_path: Path, files: dict[str, str]) -> Path:
     """Create a fake vault under tmp_path/vault/ with the given file tree.

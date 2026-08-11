@@ -1,11 +1,11 @@
 """triggers_vec must not be written with INSERT OR REPLACE.
 
-Use explicit DELETE-then-INSERT for any `vec0` virtual table, because `vec0`
-does not reliably honor SQLite's
+ADR-002 ("Defensive virtual table writes") mandates explicit DELETE-then-INSERT
+for any `vec0` virtual table, because `vec0` does not reliably honor SQLite's
 conflict-resolution clauses — it can raise a UNIQUE constraint error on an
 existing primary key instead of replacing the row. `chunks_vec` already follows
 this pattern (store.py upsert_chunks). `triggers_vec` did not: `add_trigger`
-used `INSERT OR REPLACE INTO triggers_vec`, the unreliable pattern.
+used `INSERT OR REPLACE INTO triggers_vec`, the exact pattern the ADR forbids.
 
 Failure mode demonstrated below: re-registering an existing trigger_id (the
 normal path for updating a trigger's description/embedding, and the *only*
@@ -14,7 +14,8 @@ path the consolidation auto-register hook uses — it derives a deterministic
 constraint failed on triggers_vec primary key` instead of upserting. Both known
 callers (api/routers/triggers.py, consolidation/layer_split.py) catch this and
 turn it into a swallowed failure — the trigger's embedding silently stays
-stale forever.
+stale forever, which is the "stale entries surviving a replace" class ADR-002
+exists to prevent.
 
 Tests use real SQLite with tmp_path (no mocking the DB per CLAUDE.md).
 """

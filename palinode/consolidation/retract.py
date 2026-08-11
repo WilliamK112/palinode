@@ -9,7 +9,8 @@ content words. Archiving those whole removes unrelated recall; skipping them
 leaves the mentions live. Striking exactly the mentioning sentences does
 neither.
 
-The treatment generalizes the existing fact-level retraction shape to spans
+The treatment is the executor's RETRACT shape
+(:func:`palinode.consolidation.executor._retract_fact`) generalized to spans
 that carry no ``<!-- fact:… -->`` anchor: each matched sentence or list item
 becomes ``~~text~~ [RETRACTED <date> r:<id>].`` in place, with everything
 around it untouched. The marker is deliberately OPAQUE — it never repeats the
@@ -45,11 +46,12 @@ the ``<!-- palinode-auto-footer -->`` block are never struck: what cannot be
 struck cleanly is left for the caller to escalate loudly rather than mangled
 in place. Living documents (``update_policy: replace``) are refused
 entirely — their next replace-save would silently regenerate the body and
-erase every marker.
+erase every marker (ADR-015 §2.2's replace-guard, same rationale as the
+executor's).
 
 The write follows the archive module's mutation contract: path guard via
-:func:`palinode.consolidation.archive.resolve_memory_ref`, an audit entry,
-and one commit staging exactly the files
+:func:`palinode.consolidation.archive.resolve_memory_ref`, audit entry via
+the executor's history writer, and one commit staging exactly the files
 touched. The commit lands BEFORE re-indexing so an index failure can never
 leave an uncommitted body mutation on disk; the index outcome is surfaced in
 the result (``indexed_vec`` / ``indexed_fts`` / ``index_error``) exactly as

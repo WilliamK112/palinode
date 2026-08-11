@@ -10,7 +10,7 @@ Errors in the check are logged but never propagate to the save caller. The
 save-never-fails invariant is load-bearing — see ADR-004 for rationale.
 
 Public API:
-    schedule_contradiction_check(file_path, item, *, sync=False) -> dict | None
+    schedule_contradiction_check(file_path, item, *, sync=False, llm_fn=None) -> dict | None
     sweep_pending_markers() -> int
     start_worker(app_state) -> None
     stop_worker(app_state) -> None
@@ -25,14 +25,21 @@ import glob
 import json
 import logging
 import os
-import subprocess
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from palinode.core import git_tools
 from palinode.core.config import config
 from palinode.consolidation.op_parse import op_kind
+
+if TYPE_CHECKING:
+    # Type-only: importing `runner` at module load time risks a circular
+    # import (see the local import in `_run_check_and_apply` below). Safe
+    # under `from __future__ import annotations`, which defers evaluation of
+    # every annotation in this module to strings.
+    from palinode.consolidation.runner import LlmFn
 
 logger = logging.getLogger("palinode.write_time")
 # Ensure INFO logs propagate even if the parent logger tree hasn't been
@@ -69,6 +76,7 @@ def schedule_contradiction_check(
     item: dict[str, Any],
     *,
     sync: bool = False,
+    llm_fn: LlmFn | None = None,
 ) -> dict[str, Any] | None:
     """Schedule a write-time contradiction check for a just-saved memory.
 
@@ -80,6 +88,15 @@ def schedule_contradiction_check(
         sync: If True, runs the check inline and returns the result dict.
             If False (default), enqueues a job for background processing
             and returns None immediately.
+        llm_fn: The propose seam — same shape as
+            ``runner._call_llm_with_fallback`` ((system_prompt, user_prompt)
+            -> (result_text, model_used)). Defaults to the live caller.
+            Only honoured on the sync path: the async worker (`_worker_loop`)
+            always uses the live adapter, since queued/disk-marker jobs are
+            plain dicts and a callable can't survive that round trip. Tests
+            inject a fake adapter here to drive the real
+            translate→apply_operations pipeline deterministically instead of
+            mocking across the translate/apply seam.
 
     Returns:
         When sync=True: {"operations": [...], "applied_stats": {...}}
@@ -94,7 +111,7 @@ def schedule_contradiction_check(
 
     try:
         if sync:
-            return _run_check_and_apply(file_path, item)
+            return _run_check_and_apply(file_path, item, llm_fn=llm_fn)
         else:
             return _enqueue(file_path, item)
     except Exception as e:  # noqa: BLE001 — intentional catch-all
@@ -347,7 +364,7 @@ async def _worker_loop(queue: asyncio.Queue) -> None:
 
 
 def _run_check_and_apply(
-    file_path: str, item: dict[str, Any]
+    file_path: str, item: dict[str, Any], *, llm_fn: LlmFn | None = None
 ) -> dict[str, Any]:
     """Run the contradiction check and apply resulting ops via the executor.
 
@@ -355,6 +372,13 @@ def _run_check_and_apply(
     sync path (from the save API call) and the background worker call
     this function. It is synchronous — async callers must wrap it in
     asyncio.to_thread() to avoid blocking the event loop.
+
+    Args:
+        llm_fn: The propose seam, threaded through from
+            `schedule_contradiction_check` (default None → the live
+            `runner._call_llm_with_fallback`). Passed straight through to
+            `_check_contradictions`, which already accepts it — this is the
+            join a real test must cross rather than mock.
 
     Returns:
         {"operations": [...], "applied_stats": {...}}
@@ -365,7 +389,9 @@ def _run_check_and_apply(
     from palinode.consolidation.executor import apply_operations
 
     start = time.monotonic()
-    operations = _check_contradictions([item], item.get("category", ""))
+    operations = _check_contradictions(
+        [item], item.get("category", ""), llm_fn=llm_fn
+    )
     llm_latency_ms = int((time.monotonic() - start) * 1000)
 
     # Filter out NOOPs and ADDs — those are not contradictions, just "fine as-is"
@@ -418,6 +444,10 @@ def _translate_ops(
         "UPDATE"  → {"op": "UPDATE", ...}  (update the matched existing line)
         "DELETE"  → {"op": "SUPERSEDE", ...}  (we don't delete; supersede instead)
         Everything else is filtered out by the caller.
+
+    Both mappings carry ``new_text`` — the executor's guard on each op
+    requires it (a missing/empty ``new_text`` is treated as a malformed op
+    and dropped without mutation, stats increment, or log line).
     """
     translated = []
     for op in contradiction_ops:
@@ -442,6 +472,18 @@ def _translate_ops(
                 {
                     "op": "SUPERSEDE",
                     "id": target_id,
+                    # The executor's SUPERSEDE writes `new_text` as the
+                    # replacement fact line inserted after the strikethrough
+                    # of the old one (see executor._supersede_fact) — it is
+                    # not optional. A write-time DELETE means the new item
+                    # (op["item"]) is what superseded the target fact, so its
+                    # content is the replacement text, mirroring how
+                    # `superseded_by` below already sources the new item's id.
+                    # Without this key the executor's `if fact_id and new_text`
+                    # guard silently drops the op — the write-time-DELETE bug
+                    # this translation exists to fix.
+                    "new_text": op.get("new_text")
+                    or op.get("item", {}).get("content", ""),
                     "superseded_by": op.get("item", {}).get("id", ""),
                     "reason": op.get("reason", "write-time: superseded"),
                 }
@@ -453,24 +495,12 @@ def _git_commit_dedup(file_path: str) -> None:
     """Create a separate git commit for the dedup pass.
 
     Keeps history clean: you can blame a memory line back to either the
-    original user save or the subsequent write-time dedup pass.
+    original user save or the subsequent write-time dedup pass. Through the
+    git_tools choke point (commit_memory_file) rather than a raw
+    subprocess.run — that primitive already no-ops when
+    config.git.auto_commit is off and already logs its own I/O failures, so
+    this is now a thin wrapper for the dedup-specific commit message.
     """
-    if not config.git.auto_commit:
-        return
-    try:
-        rel = os.path.relpath(file_path, config.palinode_dir)
-        subprocess.run(
-            ["git", "add", rel],
-            cwd=config.palinode_dir,
-            check=False,
-            capture_output=True,
-        )
-        msg = f"{config.git.commit_prefix} write-time dedup: {rel}"
-        subprocess.run(
-            ["git", "commit", "-m", msg],
-            cwd=config.palinode_dir,
-            check=False,
-            capture_output=True,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"write-time: git commit failed: {e}")
+    rel = os.path.relpath(file_path, config.palinode_dir)
+    msg = f"{config.git.commit_prefix} write-time dedup: {rel}"
+    git_tools.commit_memory_file(file_path, msg)

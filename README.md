@@ -89,6 +89,8 @@ That's the entire client config. Works with Claude Code, Claude Desktop, Cursor,
 
 **Compact** — Weekly consolidation where an LLM returns structured operations and Palinode validates and applies them. Every compaction is a git commit you can review, blame, or revert.
 
+**Dream** — If you've met "dreaming" as the name for this, `palinode dream` is an alias for `palinode consolidate`. Use `--dry-run` to inspect the proposed operations; each completed pass lands as a git commit, so a bad consolidation is a diff to review and a commit to revert.
+
 **Audit** — `git blame` any fact. `git diff` any change. `rollback` any mistake. These aren't just git-compatible files — `palinode_diff`, `palinode_blame`, and `palinode_rollback` are first-class tools your agent can call.
 
 ---
@@ -355,13 +357,6 @@ All behavior is in `palinode.config.yaml`:
 memory_dir: "~/.palinode"
 ollama_url: "http://localhost:11434"
 embedding_model: "bge-m3"
-
-recall:
-  search:
-    top_k: 5
-    threshold: 0.4
-  core:
-    max_chars_per_file: 3000
 
 search:
   hybrid_enabled: true

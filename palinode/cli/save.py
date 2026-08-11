@@ -303,7 +303,10 @@ def save(
         if output_fmt == OutputFormat.JSON:
             print_result(result, fmt=output_fmt)
         else:
-            filename = result.get("file_path", result.get("file", "unknown"))
+            # Prefer the server-computed relative path (ADR-010 parity
+            # with MCP/API) so the console message never leaks an absolute
+            # filesystem path.
+            filename = result.get("rel_path") or result.get("file_path", result.get("file", "unknown"))
             id_str = result.get("id", "unknown")
             console.print(f"[green]Saved:[/green] {filename} (id: {id_str})")
             # The file is persisted (and git-committed) regardless of embedding.

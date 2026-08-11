@@ -7,8 +7,25 @@ from fastapi import APIRouter, HTTPException, Request
 from palinode.api._util import _retrieval_logger
 from palinode.core import git_tools
 from palinode.core.config import config
+from palinode.core.path_guard import PathTraversalError
 
 router = APIRouter()
+
+
+def _http_path_error(exc: PathTraversalError) -> HTTPException:
+    """Map the shared path guard's typed error onto an ``HTTPException``.
+
+    Same split ``api/path_safety.py`` uses: 400 for input that's malformed on
+    its face (a null byte), 403 for a syntactically valid path that resolves
+    outside ``memory_dir``. Before this router's guards were unified, its
+    handlers either propagated the legacy guard's ``ValueError`` uncaught
+    (``/history``, ``/rollback``, plain ``/blame`` — a 500, not a rejection)
+    or caught it and echoed its path-bearing message at 400 (the ``claims``
+    branch of ``/blame`` and ``/trace``). One guard, one mapping, applied
+    everywhere a ``file_path`` reaches this router.
+    """
+    status_code = 400 if exc.malformed else 403
+    return HTTPException(status_code=status_code, detail="Invalid path")
 
 
 @router.get("/history/{file_path:path}")
@@ -26,7 +43,10 @@ def history_api(
     """
     if detail not in ("summary", "full"):
         raise HTTPException(status_code=422, detail="detail must be 'summary' or 'full'")
-    commits = git_tools.history(file_path, limit, detail=detail)
+    try:
+        commits = git_tools.history(file_path, limit, detail=detail)
+    except PathTraversalError as exc:
+        raise _http_path_error(exc)
     if not commits:
         # Distinguish "file not found" from "no history"
         import os as _os
@@ -59,7 +79,10 @@ def timeline_api(
     _logging.getLogger("palinode.api").warning(
         "GET /timeline is deprecated — use GET /history/%s?detail=full", file_path
     )
-    commits = git_tools.history(file_path, limit, detail="full")
+    try:
+        commits = git_tools.history(file_path, limit, detail="full")
+    except PathTraversalError as exc:
+        raise _http_path_error(exc)
     if not commits:
         import os as _os
         full_path = _os.path.join(config.memory_dir, file_path)
@@ -98,15 +121,18 @@ def blame_api(file_path: str, search: str | None = None, claims: bool = False) -
         source="palinode_blame",
         mode="explicit",
     )
-    result: dict[str, Any] = {"blame": git_tools.blame(file_path, search)}
+    try:
+        result: dict[str, Any] = {"blame": git_tools.blame(file_path, search)}
+    except PathTraversalError as exc:
+        raise _http_path_error(exc)
     if claims:
         from palinode.core.claims import resolve_memory_claims
 
         try:
             safe_rel = git_tools._resolve_memory_path(file_path)
             result["claims"] = resolve_memory_claims(safe_rel, config.memory_dir)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        except PathTraversalError as exc:
+            raise _http_path_error(exc)
         except FileNotFoundError:
             # blame already reports the missing file in its text output.
             result["claims"] = []
@@ -127,8 +153,8 @@ def trace_api(file_path: str) -> dict[str, Any]:
 
     try:
         safe_rel = git_tools._resolve_memory_path(file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except PathTraversalError as exc:
+        raise _http_path_error(exc)
     try:
         trace = compose_trace(safe_rel, config.memory_dir)
     except FileNotFoundError:
@@ -154,7 +180,10 @@ def rollback_api(file_path: str, commit: str | None = None, dry_run: bool = True
 
     Defaults to dry_run=True for safety. Set dry_run=False to actually revert.
     """
-    return {"result": git_tools.rollback(file_path, commit, dry_run)}
+    try:
+        return {"result": git_tools.rollback(file_path, commit, dry_run)}
+    except PathTraversalError as exc:
+        raise _http_path_error(exc)
 
 
 @router.post("/push")

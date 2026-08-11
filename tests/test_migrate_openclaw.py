@@ -48,13 +48,19 @@ def memory_md_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def fake_memory_dir(tmp_path: Path) -> Path:
+def fake_memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     mem = tmp_path / "palinode"
     mem.mkdir()
     # Minimal git repo so the git commit call doesn't crash
     os.system(f"git init -q {mem} 2>/dev/null")
     os.system(f"git -C {mem} config user.email 'test@test.com' 2>/dev/null")
     os.system(f"git -C {mem} config user.name 'Test' 2>/dev/null")
+    # write_memory_file's traversal guard reads the real global config
+    # singleton, not palinode.migration.openclaw's patched `config` name —
+    # patching one doesn't touch the other's already-bound reference to the
+    # real object, so point the real one at the same directory too.
+    from palinode.core.config import config as real_config
+    monkeypatch.setattr(real_config, "memory_dir", str(mem))
     return mem
 
 

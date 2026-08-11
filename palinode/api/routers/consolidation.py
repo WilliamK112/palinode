@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from palinode.api._util import _safe_500
+from palinode.core.path_guard import PathTraversalError
 
 router = APIRouter()
 
@@ -86,8 +87,13 @@ def archive_api(req: ArchiveRequest) -> dict[str, Any]:
             reason=req.reason,
             superseded_by=req.superseded_by,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except PathTraversalError as e:
+        # Same split as every other path-guarded route: 400 for malformed
+        # input (null byte), 403 for a path that resolves outside
+        # memory_dir. This used to be a blanket 400 that echoed the legacy
+        # guard's path-bearing message.
+        status_code = 400 if e.malformed else 403
+        raise HTTPException(status_code=status_code, detail="Invalid path")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
     except Exception as e:

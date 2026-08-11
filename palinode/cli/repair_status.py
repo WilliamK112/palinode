@@ -48,6 +48,7 @@ from palinode.consolidation.status_doc import (
     repair_status_doc,
     strip_frontmatter_fact_markers,
 )
+from palinode.core import git_tools
 from palinode.core.config import config
 from palinode.core.parser import split_frontmatter
 
@@ -169,8 +170,11 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
         # `changed` is damage, `noncanonical` is formatting drift. Both are
         # worth writing under --execute; neither is worth reporting as a repair.
         if execute and (report["changed"] or report["noncanonical"]):
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(repaired)
+            # Through the git_tools choke point (write, not commit — this
+            # tool is deliberately local + dry-run-reviewed; see the module
+            # docstring). Atomic write, same crash-safety every other memory
+            # write in the tree gets.
+            git_tools.write_memory_file(path, repaired)
             report["chunks_repointed"] = _propagate_entities(path, repaired)
 
     # Marker-strip only. These files get no re-dump, no log rewrite, no entity
@@ -194,8 +198,7 @@ def repair_status(paths: tuple[str, ...], execute: bool, max_blocks: int,
             "markers_only": True,
         })
         if execute:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(stripped)
+            git_tools.write_memory_file(path, stripped)
             reports[-1]["chunks_repointed"] = _propagate_entities(path, stripped)
 
     if as_json:

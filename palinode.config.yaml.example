@@ -23,101 +23,14 @@
 db_path: ".palinode.db"
 
 # -----------------------------------------------------------------------------
-# Recall (Context Injection)
-# -----------------------------------------------------------------------------
-# Controls what gets injected into the agent's context each turn.
-recall:
-  enabled: true
-
-  # Phase 1: Core memory (files with `core: true` in frontmatter)
-  core:
-    # Maximum characters per core file before truncation
-    max_chars_per_file: 3000
-    # Maximum total characters for all core files combined
-    max_total_chars: 8000
-    # Directories to scan for core files
-    directories:
-      - people
-      - projects
-      - decisions
-      - insights
-
-  # Tiered injection to save tokens on non-first turns
-  tiering:
-    # Turn 1: full core content. Full core re-injected every N turns.
-    # Primary trigger: full core is always injected on turn 1 AND after
-    # any session compaction (context was summarized, injection was lost).
-    # The turn counter is a last-resort fallback if compaction hooks fail.
-    full_refresh_every_n_turns: 200   # Fallback only — set high, compaction hook is primary
-    # What to inject on turns between full refreshes:
-    #   "none"    — skip core entirely (default). Model has it from turn 1.
-    #              Saves ~200 tokens/turn. Works because context persists until compaction.
-    #   "summary" — inject one-line summaries of core files (~200 tokens).
-    #   "full"    — inject full core every turn (~2K tokens). Very expensive.
-    mid_turn_mode: "none"
-    # If mid_turn_mode is "summary": skip files without a summary: field
-    skip_unsummarized: true
-
-  # Phase 2: Semantic search based on user's message
-  search:
-    enabled: true
-    # Number of results to inject
-    top_k: 3
-    # Maximum characters per search result chunk
-    max_chars_per_chunk: 500
-    # Similarity threshold (0.0 = everything, 1.0 = exact match)
-    threshold: 0.4
-    # Skip search for messages shorter than this (trivial acks)
-    min_query_length: 15
-    # Skip search for these exact messages (case-insensitive)
-    trivial_patterns:
-      - "ok"
-      - "yep"
-      - "sure"
-      - "thanks"
-      - "thx"
-      - "cool"
-      - "got it"
-      - "nice"
-      - "lol"
-      - "k"
-      - "np"
-
-# -----------------------------------------------------------------------------
-# Capture (Session-End Extraction)
+# Capture (mechanical cross-linking during indexing)
 # -----------------------------------------------------------------------------
 capture:
-  enabled: true
-
-  # Session-end extraction
-  extraction:
-    # Maximum memories to extract per session
-    max_items_per_session: 5
-    # Minimum session turns before extraction fires
-    min_turns: 3
-    # Memory types to auto-extract
-    types:
-      - Decision
-      - ProjectSnapshot
-      - Insight
-      - PersonMemory
-      - ActionItem
-
-  # Daily notes (session logging)
-  daily:
+  cross_refs:
     enabled: true
-    # Max recent messages to append to daily notes
-    max_messages: 10
-    # Max total characters per session append
-    max_chars: 2000
-
-  # -es quick capture flag
-  quick_capture:
-    enabled: true
-    # Minimum input length for -es to fire
-    min_chars: 5
-    # Chars above which text is treated as ResearchRef
-    long_text_threshold: 500
+    # Floor below which a bare slug/title token is NOT matched in prose, to
+    # avoid false-positive substring hits on short names.
+    min_token_len: 6
 
 # -----------------------------------------------------------------------------
 # Ingestion Pipeline
@@ -270,6 +183,11 @@ consolidation:
   llm_temperature: 0.3
   llm_max_tokens: 2000
 
+  # Which operations the weekly full pass may apply. The nightly pass has
+  # its own, separately-scoped restriction below (nightly.allowed_ops) —
+  # this one only governs the weekly pass.
+  allowed_ops: ["KEEP", "UPDATE", "MERGE", "SUPERSEDE", "ARCHIVE", "RETRACT"]
+
   # Nightly pass configuration (Tier 2)
   nightly:
     enabled: true
@@ -305,9 +223,6 @@ consolidation:
 # Compaction
 # -----------------------------------------------------------------------------
 compaction:
-  allowed_ops: ["KEEP", "UPDATE", "MERGE", "SUPERSEDE", "ARCHIVE"]
-  aggressiveness: "moderate"  # conservative | moderate | aggressive
-
   # Layer split heuristics — these keywords classify ## section headings
   # into Identity (slow-changing) vs Status (fast-changing) layers.
   #
@@ -360,21 +275,10 @@ compaction:
 # -----------------------------------------------------------------------------
 # Temporal Decay
 # -----------------------------------------------------------------------------
-# Time constants (tau) in days describing how fast memories decay
+# Gates the demand-decay importance re-rank band in hybrid search (a memory's
+# effective importance decays toward baseline the longer it goes unread).
 decay:
   enabled: false
-  # Core unchanging facts
-  tau_critical: 180
-  # Significant architectural decisions
-  tau_decisions: 60
-  # General insights and observations
-  tau_insights: 90
-  # Default standard notes
-  tau_general: 30
-  # Weekly statuses and ephemeral updates
-  tau_status: 7
-  # Daily logs not meant for long term without consolidation
-  tau_ephemeral: 1
 
 # -----------------------------------------------------------------------------
 # Services
@@ -390,19 +294,6 @@ services:
   watcher:
     # Debounce: ignore rapid file changes within this window
     debounce_seconds: 1.0
-
-# -----------------------------------------------------------------------------
-# Security
-# -----------------------------------------------------------------------------
-security:
-  # YAML file with regex patterns to scrub before context injection
-  scrub_patterns_file: "specs/scrub-patterns.yaml"
-  # If true, never include file paths containing these strings in search results
-  # (defense in depth — scrub_patterns handles content, this handles file selection)
-  exclude_paths:
-    - ".secrets"
-    - "credentials"
-    - "passwords"
 
 # -----------------------------------------------------------------------------
 # Git Integration

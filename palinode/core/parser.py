@@ -306,7 +306,13 @@ DEFAULT_LIFECYCLE: str = "active"
 #             never SUPERSEDE/ARCHIVE-into-history a `replace` doc (executor
 #             guard), and `created_at` is preserved across overwrites (PR-A).
 # Persisted as sticky frontmatter so the file declares its own regime.
-VALID_UPDATE_POLICIES: tuple[str, ...] = ("append", "replace")
+# Re-exported from `core.parity`, which owns every cross-surface enum and is
+# importable with a bare Python (the plugin's parity pretest depends on that).
+# Imported here so the existing `from palinode.core.parser import
+# VALID_UPDATE_POLICIES` call sites keep working and there is still exactly one
+# tuple.
+from palinode.core.parity import VALID_UPDATE_POLICIES  # noqa: E402,F401
+
 DEFAULT_UPDATE_POLICY: str = "append"
 
 # ADR-015 §2.2: incident lifecycle lives in the `status` field on a
@@ -338,7 +344,7 @@ VALID_STATUSES: tuple[str, ...] = VALID_LIFECYCLES + VALID_INCIDENT_STATUSES
 #                   `inference`, and it is not a question. Distinct from
 #                   `unmarked` (no claim at all). The prime candidate to acquire
 #                   a `backed_by` link and graduate toward `fact`.
-VALID_EPISTEMICS: tuple[str, ...] = ("fact", "inference", "open_question", "unverified")
+from palinode.core.parity import VALID_EPISTEMICS  # noqa: E402,F401
 
 # The ABSENCE of the field is its own state — `unmarked`: no epistemic claim was
 # made. Crucially this is NOT equated with `fact`; for an audit-grade store,

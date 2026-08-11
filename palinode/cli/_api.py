@@ -2,6 +2,7 @@ import os
 import httpx
 from palinode.core.config import config
 from palinode.core.defaults import SAVE_SOURCE_HEADER, SESSION_END_TIMEOUT_SECONDS, _SESSION_END_TIMEOUT_SENTINEL
+from palinode.core.write_input import SAVE_PARAMS, SESSION_END_PARAMS, build_payload
 
 # Cross-surface drift guard: all three entry points (CLI, MCP, hook) must
 # use SESSION_END_TIMEOUT_SECONDS from defaults.  If the sentinel changes without
@@ -16,8 +17,18 @@ assert SESSION_END_TIMEOUT_SECONDS == _SESSION_END_TIMEOUT_SENTINEL or os.enviro
 
 # Re-exported for CLI commands that need to catch API errors without
 # importing httpx directly (ADR-010: HTTP-layer monopoly).
+#
+# Keep this list complete. `session_end.py` imported httpx directly for years
+# solely because `ReadTimeout` was missing here — the monopoly held on the call
+# path (it goes through `api_client`), but the *exception* surface had a hole,
+# so the one command that needed to distinguish a timeout had nowhere to get
+# the name. An adapter that hides the transport has to hide all of it.
+#
+# `ReadTimeout` is a `RequestError` subclass, so a handler that wants the
+# specific message must catch it *before* `RequestError`.
 HTTPStatusError = httpx.HTTPStatusError
 RequestError = httpx.RequestError
+ReadTimeout = httpx.ReadTimeout
 
 
 class PalinodeAPI:
@@ -103,45 +114,41 @@ class PalinodeAPI:
         contradicts: list[str] | None = None,
         backed_by: list[str] | None = None,
     ):
+        # One inclusion rule, shared with MCP via core/write_input.py: a param
+        # is sent when it is not None, so an explicitly-empty ``contradicts=[]``
+        # reaches the server as the assertion the caller made rather than being
+        # elided into "never specified". This used to read ``if contradicts:``
+        # here and ``is not None`` in MCP — the same divergence the session_end
+        # method below already carries a post-mortem for.
         payload: dict = {
             "content": content,
             "type": memory_type,
-            "entities": entities or [],
         }
-        # Only include optional fields when set so the server can apply its
-        # own defaults vs. seeing an explicit ``None``.
-        if title is not None:
-            payload["title"] = title
-        if source:
-            payload["source"] = source
-        if project:
-            # ADR-010: project is API-side sugar; the API expands it
-            # into entities.
-            payload["project"] = project
-        if slug is not None:
-            payload["slug"] = slug
-        if core is not None:
-            payload["core"] = core
-        if confidence is not None:
-            payload["confidence"] = confidence
-        if priority is not None:
-            payload["priority"] = priority
-        if metadata is not None:
-            payload["metadata"] = metadata
-        if external_refs is not None:
-            payload["external_refs"] = external_refs
-        if update_policy is not None:
-            payload["update_policy"] = update_policy
-        if sources is not None:
-            payload["sources"] = sources
-        if claims is not None:
-            payload["claims"] = claims
-        if epistemic is not None:
-            payload["epistemic"] = epistemic
-        if contradicts:
-            payload["contradicts"] = contradicts
-        if backed_by:
-            payload["backed_by"] = backed_by
+        payload.update(
+            build_payload(
+                SAVE_PARAMS,
+                {
+                    "entities": entities,
+                    "title": title,
+                    # ADR-010: project is API-side sugar; the API expands it
+                    # into entities.
+                    "project": project,
+                    "source": source,
+                    "slug": slug,
+                    "core": core,
+                    "confidence": confidence,
+                    "priority": priority,
+                    "metadata": metadata,
+                    "external_refs": external_refs,
+                    "update_policy": update_policy,
+                    "epistemic": epistemic,
+                    "sources": sources,
+                    "claims": claims,
+                    "contradicts": contradicts,
+                    "backed_by": backed_by,
+                },
+            )
+        )
         params = {"sync": "true"} if sync else None
         response = self.client.post("/save", json=payload, params=params)
         response.raise_for_status()
@@ -253,35 +260,32 @@ class PalinodeAPI:
     ):
         """Capture session outcomes via the API. ADR-010 (the project-slug derivation work
 fields, the session-end hook audit push)."""
-        payload: dict = {"summary": summary}
         # `is not None`, not truthiness. An empty list means "considered, none
         # to report"; eliding it makes the server read a parameter the caller
         # did send as one that never arrived, which is the signature its
-        # envelope guard treats as a corrupted call.
-        if decisions is not None:
-            payload["decisions"] = list(decisions)
-        if blockers is not None:
-            payload["blockers"] = list(blockers)
-        if project:
-            payload["project"] = project
-        if source:
-            payload["source"] = source
-        if harness:
-            payload["harness"] = harness
-        if cwd:
-            payload["cwd"] = cwd
-        if model:
-            payload["model"] = model
-        if trigger:
-            payload["trigger"] = trigger
-        if session_id:
-            payload["session_id"] = session_id
-        if duration_seconds is not None:
-            payload["duration_seconds"] = duration_seconds
-        if push is not None:
-            payload["push"] = push
-        if dry_run:
-            payload["dry_run"] = True
+        # envelope guard treats as a corrupted call. This method is where that
+        # was first worked out; core/write_input.py is where it now lives, so
+        # `save` above and MCP get it too instead of re-deriving it per-param.
+        payload: dict = {"summary": summary}
+        payload.update(
+            build_payload(
+                SESSION_END_PARAMS,
+                {
+                    "decisions": None if decisions is None else list(decisions),
+                    "blockers": None if blockers is None else list(blockers),
+                    "project": project,
+                    "source": source,
+                    "harness": harness,
+                    "cwd": cwd,
+                    "model": model,
+                    "trigger": trigger,
+                    "session_id": session_id,
+                    "duration_seconds": duration_seconds,
+                    "push": push,
+                    "dry_run": dry_run,
+                },
+            )
+        )
         response = self.client.post("/session-end", json=payload, timeout=SESSION_END_TIMEOUT_SECONDS)
         response.raise_for_status()
         return response.json()

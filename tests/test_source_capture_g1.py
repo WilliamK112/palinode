@@ -119,9 +119,14 @@ def test_sources_absent_keeps_clean_frontmatter(mock_memory_dir):
 
 def test_sources_not_a_list_rejected(mock_memory_dir):
     res = _save({"content": "x", "type": "Insight", "sources": {"ref": "r.md"}})
-    # Pydantic rejects a non-list (422) before our normalizer; either way it's
-    # a client error and no file is written.
-    assert res.status_code in (400, 422), res.text
+    # This used to accept 400 *or* 422 because the answer depended on which
+    # entry point you came through: Pydantic rejected a non-list with a 422
+    # before `_normalize_sources` could say "sources must be a list", so the
+    # capability and the HTTP surface disagreed about the same input. `sources`
+    # is now loosely typed like its three siblings and the normalizer owns the
+    # rejection, so there is one answer to assert.
+    assert res.status_code == 400, res.text
+    assert res.json()["detail"] == "sources must be a list"
 
 
 def test_sources_entry_missing_ref_rejected(mock_memory_dir):

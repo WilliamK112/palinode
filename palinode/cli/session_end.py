@@ -1,6 +1,5 @@
 import click
-import httpx
-from palinode.cli._api import HTTPStatusError, RequestError, api_client
+from palinode.cli._api import HTTPStatusError, ReadTimeout, RequestError, api_client
 from palinode.cli._format import print_result, get_default_format, OutputFormat
 
 
@@ -55,7 +54,7 @@ def session_end(summary, decision, blocker, project, source, harness, cwd, model
         )
     except HTTPStatusError as e:
         raise click.ClickException(f"Session-end failed: {e.response.text}") from e
-    except httpx.ReadTimeout as e:
+    except ReadTimeout as e:
         # Distinguish a slow-server timeout from a connection failure — the old
         # message ("is palinode running?") was misleading when the API was up but
         # the embedding + git commit path exceeded the request budget.

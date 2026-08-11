@@ -16,6 +16,7 @@ import click
 
 from palinode.cli._api import HTTPStatusError, api_client
 from palinode.cli._format import OutputFormat, get_default_format
+from palinode.core.parser import split_frontmatter
 
 
 @click.command()
@@ -92,10 +93,16 @@ def _format_with_meta(result: dict) -> str:
 
 
 def _strip_frontmatter(content: str) -> str:
-    """If `content` starts with `---`, drop the frontmatter block."""
-    if not content.startswith("---"):
-        return content
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return content
-    return parts[2].lstrip("\n")
+    """Drop the leading YAML frontmatter block, if any.
+
+    Delegates to the canonical, lossless splitter
+    (:func:`palinode.core.parser.split_frontmatter`) instead of splitting on
+    the first two ``---`` occurrences anywhere in the string — that naive
+    approach mis-splits when a frontmatter *value* (a title, a quote anchor,
+    an em-dash-heavy description) itself contains ``---``, truncating the
+    body at the wrong point. A ``---`` thematic break in the body is
+    unaffected either way: the split only ever looks at the frontmatter
+    fence.
+    """
+    _, body = split_frontmatter(content)
+    return body.lstrip("\n")

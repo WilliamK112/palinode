@@ -8,11 +8,20 @@ The timeout-message tests also drive the async dispatcher directly with
 a mocked slow server, since the verify-before-retry contract lives in the
 dispatcher's except block, not in a pure helper alone.
 """
+import os
+
 import httpx
 import pytest
 
 import palinode.mcp as mcp
-from palinode.mcp import _coerce_str_array, _dispatch_tool, _resolve_save_type, _timeout_message
+from palinode.core.config import config
+from palinode.mcp import (
+    _coerce_str_array,
+    _dispatch_tool,
+    _rel_path_from,
+    _resolve_save_type,
+    _timeout_message,
+)
 
 
 # _coerce_str_array (— JSON-encoded array args from MCP clients) ----
@@ -85,6 +94,38 @@ def test_resolve_save_type_neither_specified():
 def test_resolve_save_type_falsy_ps_treated_as_unset():
     # ps=False with a real type should pass the type through
     assert _resolve_save_type("Decision", False) == "Decision"
+
+
+# _rel_path_from (— server-computed rel_path, with a config-derived fallback
+# for an older API server that doesn't send it yet; replaces the hardcoded
+# "/palinode/" rsplit that silently failed on any custom-named memory_dir) ----
+
+
+def test_rel_path_from_prefers_server_computed_rel_path():
+    payload = {"file_path": "/anything/at/all.md", "rel_path": "decisions/at-all.md"}
+    assert _rel_path_from(payload) == "decisions/at-all.md"
+
+
+def test_rel_path_from_falls_back_when_rel_path_missing(monkeypatch, tmp_path):
+    # Simulates an older API server that hasn't started sending rel_path yet.
+    # memory_dir deliberately has no "palinode" substring — the exact shape
+    # the old hardcoded-literal split failed on.
+    memory_dir = tmp_path / "second-brain"
+    memory_dir.mkdir()
+    monkeypatch.setattr(config, "memory_dir", str(memory_dir))
+
+    abs_path = os.path.join(str(memory_dir), "decisions", "no-rel-path.md")
+    payload = {"file_path": abs_path}
+    assert _rel_path_from(payload) == os.path.join("decisions", "no-rel-path.md")
+
+
+def test_rel_path_from_uses_custom_key_for_topic_coverage_best_match():
+    payload = {"best_match": "/wherever/best.md", "rel_path": "insights/best.md"}
+    assert _rel_path_from(payload, key="best_match") == "insights/best.md"
+
+
+def test_rel_path_from_empty_payload_returns_empty_string():
+    assert _rel_path_from({}) == ""
 
 
 # _timeout_message (— verify-before-retry hint on write-path timeout) ----
@@ -195,3 +236,166 @@ async def test_dispatch_search_forwards_min_priority(monkeypatch):
     assert captured["path"] == "/search"
     assert captured["json"]["min_priority"] == 4
     assert "No results" in result[0].text
+
+
+# ── rel_path parity: MCP tool text must render the API's rel_path, never a
+# raw absolute path, for a memory_dir with no "/palinode/" substring — the
+# regression coverage for the seven hardcoded-literal call sites ────────────
+
+
+_NO_PALINODE_ABS_PATH = "/Users/x/Documents/second-brain/decisions/target.md"
+_NO_PALINODE_REL_PATH = "decisions/target.md"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_search_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=30.0):
+        return _FakeResponse([
+            {
+                "file_path": _NO_PALINODE_ABS_PATH,
+                "rel_path": _NO_PALINODE_REL_PATH,
+                "score": 0.9,
+                "snippet": "target content",
+            }
+        ])
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_search", {"query": "anything"})
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_save_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=30.0):
+        return _FakeResponse({
+            "file_path": _NO_PALINODE_ABS_PATH,
+            "rel_path": _NO_PALINODE_REL_PATH,
+            "id": "decisions-target",
+        })
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool(
+        "palinode_save", {"content": "body", "type": "Decision"}
+    )
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ingest_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=60.0):
+        return _FakeResponse({
+            "status": "success",
+            "file_path": _NO_PALINODE_ABS_PATH,
+            "rel_path": _NO_PALINODE_REL_PATH,
+        })
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_ingest", {"url": "https://example.com/x"})
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_dedup_suggest_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=60.0):
+        return _FakeResponse([
+            {
+                "file_path": _NO_PALINODE_ABS_PATH,
+                "rel_path": _NO_PALINODE_REL_PATH,
+                "similarity": 0.95,
+                "snippet": "near-duplicate content",
+            }
+        ])
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_dedup_suggest", {"content": "draft"})
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_orphan_repair_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=60.0):
+        return _FakeResponse([
+            {
+                "file_path": _NO_PALINODE_ABS_PATH,
+                "rel_path": _NO_PALINODE_REL_PATH,
+                "similarity": 0.8,
+                "snippet": "related content",
+            }
+        ])
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_orphan_repair", {"broken_link": "target"})
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cluster_neighbors_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=60.0):
+        return _FakeResponse([
+            {
+                "file_path": _NO_PALINODE_ABS_PATH,
+                "rel_path": _NO_PALINODE_REL_PATH,
+                "similarity": 0.85,
+                "snippet": "neighbour content",
+            }
+        ])
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool(
+        "palinode_cluster_neighbors", {"file_path": "decisions/source.md"}
+    )
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_topic_coverage_renders_server_rel_path(monkeypatch):
+    async def fake_post(path, json=None, timeout=60.0):
+        return _FakeResponse({
+            "covered": True,
+            "best_match": _NO_PALINODE_ABS_PATH,
+            "rel_path": _NO_PALINODE_REL_PATH,
+            "similarity": 0.9,
+        })
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_topic_coverage", {"query": "some topic"})
+    text = result[0].text
+    assert _NO_PALINODE_REL_PATH in text
+    assert _NO_PALINODE_ABS_PATH not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_search_falls_back_to_config_memory_dir_without_rel_path(
+    monkeypatch, tmp_path
+):
+    """Older API server that hasn't started sending rel_path yet: MCP still
+    relativizes client-side, using config.memory_dir rather than any
+    hardcoded literal — for a memory_dir with no "palinode" substring."""
+    memory_dir = tmp_path / "second-brain"
+    memory_dir.mkdir()
+    monkeypatch.setattr(config, "memory_dir", str(memory_dir))
+
+    abs_path = os.path.join(str(memory_dir), "decisions", "legacy.md")
+
+    async def fake_post(path, json=None, timeout=30.0):
+        return _FakeResponse([
+            {"file_path": abs_path, "score": 0.5, "snippet": "legacy content"}
+        ])
+
+    monkeypatch.setattr(mcp, "_post", fake_post)
+    result = await _dispatch_tool("palinode_search", {"query": "anything"})
+    text = result[0].text
+    assert os.path.join("decisions", "legacy.md") in text
+    assert abs_path not in text

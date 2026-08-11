@@ -74,9 +74,18 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 0
 fi
 
+# NOTE on the `+"${arr[@]}"` guards below: under `set -u`, bash 3.2 — still the
+# system bash on macOS — treats expansion of an EMPTY array as an unbound
+# variable and aborts. GRANDFATHERED is legitimately empty (the cleanup emptied
+# it, which is the goal), so the naive `"${GRANDFATHERED[@]}"` crashed this
+# script for anyone running it on a stock Mac. The crash was indistinguishable
+# from a finding, so the script could not answer the question it exists to
+# answer. `${arr[@]+"${arr[@]}"}` expands to nothing when unset/empty and to the
+# elements otherwise, on both bash 3.2 and bash 5.
 is_allowed() {
     local f="$1"
-    for a in "${ALLOWED_FILES[@]}"; do
+    local a
+    for a in ${ALLOWED_FILES[@]+"${ALLOWED_FILES[@]}"}; do
         [[ "$f" == "$a" || "$f" == */"$a" ]] && return 0
     done
     return 1
@@ -84,7 +93,8 @@ is_allowed() {
 
 is_grandfathered() {
     local f="$1"
-    for g in "${GRANDFATHERED[@]}"; do
+    local g
+    for g in ${GRANDFATHERED[@]+"${GRANDFATHERED[@]}"}; do
         [[ "$f" == "$g" || "$f" == */"$g" ]] && return 0
     done
     return 1

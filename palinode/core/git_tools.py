@@ -16,23 +16,35 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from palinode.core import path_guard
 from palinode.core.config import config
 
 logger = logging.getLogger("palinode.git_tools")
 
+#: Re-exported so callers that need to catch the guard's typed error don't
+#: have to import :mod:`palinode.core.path_guard` directly.
+PathTraversalError = path_guard.PathTraversalError
+
 
 def _resolve_memory_path(file_path: str) -> str:
-    """Resolve a relative file_path against memory_dir and reject traversal.
+    """Validate ``file_path`` is inside memory_dir; return it unchanged.
 
-    Returns the validated relative path. Raises ValueError if the resolved
-    path escapes memory_dir.
+    Thin wrapper over :func:`palinode.core.path_guard.resolve_memory_path`
+    — this module used to carry its own weaker ``os.path.realpath``-based
+    guard with no absolute-path rejection, before the two path guards in the
+    tree were unified into one. Every function below routes the
+    ``file_path`` it was handed through this wrapper before touching git or
+    the filesystem.
+
+    Returns the original relative path, not the resolved absolute form:
+    callers here pass it straight to ``git`` subcommands run with
+    ``cwd=config.memory_dir``, which need the relative spelling.
+
+    Raises:
+        PathTraversalError: (a ``ValueError`` subclass) if ``file_path`` is
+            absolute, contains a null byte, or resolves outside memory_dir.
     """
-    if "\x00" in file_path:
-        raise ValueError("Null bytes are not allowed in file paths")
-    base = os.path.realpath(config.memory_dir)
-    resolved = os.path.realpath(os.path.join(base, file_path))
-    if not resolved.startswith(base + os.sep) and resolved != base:
-        raise ValueError(f"Path traversal rejected: {file_path}")
+    path_guard.resolve_memory_path(file_path)
     return file_path
 
 
@@ -74,14 +86,29 @@ def _run_git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
 # ── Mutation choke point ─────────────────────────────────────────────────────
 #
 # Every path that mutates a memory file routes its write through
-# :func:`write_memory_file` and its commit through :func:`commit_memory_file` /
-# :func:`commit_memory_files`. Concentrating both here gives the substrate a
-# single observation point for the mutation chain — a future signer hooks one
-# function instead of the formerly-scattered ``open(w)`` / ``git add`` sites
-# (save, write-time dedup, consolidation ops, ttl-archive, migration). It also
-# enforces the one-mutation-one-commit invariant: a commit stages an explicit
-# list of files, never a repo-wide ``git add *.md`` sweep that would conflate
+# :func:`write_memory_file` (or, for a rename/relocation, :func:`move_memory_file`)
+# and its commit through :func:`commit_memory_file` / :func:`commit_memory_files`.
+# Concentrating both here gives the substrate a single observation point for
+# the mutation chain — a future signer hooks one function instead of the
+# formerly-scattered ``open(w)`` / ``git add`` sites (save, write-time dedup,
+# consolidation ops, ttl-archive, migration). It also enforces the
+# one-mutation-one-commit invariant: a commit stages an explicit list of
+# files, never a repo-wide ``git add *.md`` sweep that would conflate
 # unrelated working-tree edits under one message.
+
+
+def _is_windows() -> bool:
+    """Platform probe for the fsync/chmod fallbacks, as one patchable seam.
+
+    Reading ``os.name`` inline looks simpler, but a test faking Windows has to
+    set it on the real ``os`` module — and since `write_memory_file` now
+    validates its target through ``pathlib`` first, that global flip makes
+    ``Path()`` try to build a ``WindowsPath`` on a POSIX host and raise
+    ``NotImplementedError`` before the branch under test is ever reached.
+    Patching this function fakes the platform for the code that cares without
+    perturbing every other ``os.name`` reader in the process.
+    """
+    return os.name == "nt"
 
 
 def _fsync_directory(path: str) -> None:
@@ -93,14 +120,65 @@ def _fsync_directory(path: str) -> None:
         os.close(dir_fd)
 
 
+def _validate_write_target(file_path: str) -> None:
+    """Precondition for :func:`write_memory_file` / :func:`move_memory_file`:
+    reject a target outside ``memory_dir``.
+
+    Unlike the read-side helpers above (``blame``, ``history``, ``rollback``,
+    …), which take the memory-relative spelling the git subcommands need,
+    every current write-side caller passes an *absolute* path it already
+    built under ``config.memory_dir`` (``os.path.join(config.memory_dir,
+    ...)``). :func:`palinode.core.path_guard.resolve_memory_path` rejects any
+    absolute input outright — that is its contract for a caller-supplied,
+    externally-facing path — so an absolute ``file_path`` here is first
+    rewritten relative to the memory root before crossing the guard; a
+    relative ``file_path`` is passed through unchanged. Either way, the
+    guard's own ``.resolve()`` + containment check is what actually decides:
+    the rewrite only avoids rejecting the write choke point's own internal
+    callers on a rule aimed at a different threat model (an untrusted
+    caller-supplied path arriving as ``/etc/passwd``).
+
+    Raises:
+        PathTraversalError: ``file_path`` contains a null byte, or resolves
+            (after the above normalization) outside ``memory_dir``.
+    """
+    candidate = file_path
+    if os.path.isabs(file_path):
+        base = path_guard.memory_base_dir()  # already realpath'd
+        # realpath file_path too before diffing against the (already
+        # realpath'd) base — otherwise a path built through an unresolved
+        # symlink (macOS: /tmp -> /private/tmp, /var -> /private/var; the
+        # pytest tmp_path fixture routinely hands out /var/folders/... while
+        # memory_base_dir() resolves it to /private/var/folders/...) produces
+        # a relpath dominated by leading `..` segments that legitimately
+        # resolves outside memory_dir once path_guard re-joins and
+        # re-resolves it below — rejecting an in-tree write as traversal.
+        # realpath is safe on a not-yet-created file: it resolves symlinks in
+        # whatever prefix exists and appends the rest verbatim.
+        try:
+            candidate = os.path.relpath(os.path.realpath(file_path), base)
+        except ValueError:
+            # Different drive on Windows — cannot possibly be inside memory_dir.
+            raise path_guard.PathTraversalError(file_path) from None
+    path_guard.resolve_memory_path(candidate)
+
+
 def write_memory_file(file_path: str, content: str) -> None:
     """Atomically write ``content`` to ``file_path`` (temp + fsync + rename).
 
-    The single write primitive for memory-file mutations. Crash-safe: the
-    target is only replaced once the temp file is durably on disk, so a torn
-    write can never leave a half-written memory file. Preserves the existing
-    file's permission bits when overwriting.
+    The single write primitive for memory-file mutations. Validates
+    ``file_path`` resolves inside ``memory_dir`` (see
+    :func:`_validate_write_target`) before touching disk — the traversal
+    guard folded in as a precondition here, rather than left to the
+    read/provenance side only. Crash-safe: the target is only replaced once
+    the temp file is durably on disk, so a torn write can never leave a
+    half-written memory file. Preserves the existing file's permission bits
+    when overwriting.
+
+    Raises:
+        PathTraversalError: ``file_path`` resolves outside ``memory_dir``.
     """
+    _validate_write_target(file_path)
     directory = os.path.dirname(file_path) or "."
     prefix = f".{os.path.basename(file_path)}."
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=prefix, suffix=".tmp")
@@ -123,7 +201,7 @@ def write_memory_file(file_path: str, content: str) -> None:
         os.replace(tmp_path, file_path)
         # Windows cannot open a directory for fsync, so the rename's metadata
         # durability is weaker there after a crash.
-        if os.name != "nt":
+        if not _is_windows():
             _fsync_directory(directory)
     except Exception:
         if fd != -1:
@@ -133,6 +211,33 @@ def write_memory_file(file_path: str, content: str) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def move_memory_file(src_path: str, dst_path: str) -> None:
+    """Atomically relocate a memory file within ``memory_dir`` (e.g. archiving
+    a daily note into ``archive/<year>/``).
+
+    The move counterpart to :func:`write_memory_file`: both endpoints cross
+    the same traversal guard, then the rename happens via ``os.replace``
+    (atomic on a single filesystem, which every path under ``memory_dir``
+    is) and the destination directory is fsynced so the rename survives a
+    crash. Does not create the destination directory — callers that need one
+    create it first, same as :func:`write_memory_file` never creates
+    ``os.path.dirname(file_path)``.
+
+    This function only moves the file; it does not commit. A caller commits
+    the result via ``commit_memory_files([src_path, dst_path], message)`` —
+    git recognizes the now-missing source as a staged deletion and the
+    destination as a staged addition, landing the rename as one commit.
+
+    Raises:
+        PathTraversalError: either path resolves outside ``memory_dir``.
+    """
+    _validate_write_target(src_path)
+    _validate_write_target(dst_path)
+    directory = os.path.dirname(dst_path) or "."
+    os.replace(src_path, dst_path)
+    _fsync_directory(directory)
 
 
 def commit_memory_files(file_paths: list[str], message: str) -> bool:
@@ -585,19 +690,24 @@ def rollback(file_path: str, commit: str | None = None, dry_run: bool = False) -
         )
         return f"Rollback failed: {checkout.stderr}"
 
-    # Commit the revert
+    # Commit the revert through the choke point (commit_memory_files) rather
+    # than a raw add + commit — the fourth commit-message shape this module
+    # used to carry alongside commit_memory_file/commit_memory_files/push().
+    # Note: this now also respects config.git.auto_commit, same as every
+    # other commit site in this module; the raw calls it replaces did not.
     message = f"palinode: rollback {file_path} to {target}"
-    _run_git("add", file_path)
-    commit = _run_git("commit", "-m", message)
-    if commit.returncode != 0:
+    committed = commit_memory_files([file_path], message)
+    if not committed:
         # The checkout landed but the commit did not — the working tree is now
         # dirty (rolled-back content uncommitted). Surface it so the operator
-        # knows the rollback is half-applied. "nothing to commit" also
-        # lands here but is benign; stderr distinguishes the two.
+        # knows the rollback is half-applied. commit_memory_files already logs
+        # genuine I/O failures (subprocess errors) at ERROR with a stack
+        # trace; this WARNING covers the other reason it can return False —
+        # config.git.auto_commit is off — which isn't itself an error but
+        # still leaves this rollback's revert uncommitted.
         logger.warning(
-            "rollback commit failed op=commit file_path=%s target=%s "
-            "returncode=%d stderr=%r",
-            file_path, target, commit.returncode, commit.stderr.strip(),
+            "rollback commit did not complete op=commit file_path=%s target=%s",
+            file_path, target,
         )
 
     return f"Rolled back {file_path} to {target}. Committed as: {message}"
@@ -613,21 +723,40 @@ def push() -> str:
     """
     # Check if there are unpushed commits
     status = _run_git("status", "--porcelain")
-    if status.stdout.strip():
-        # Auto-commit any uncommitted changes first (only markdown, not journals)
-        _run_git("add", "*.md", "**/*.md")
-        pre_commit = _run_git(
-            "commit", "-m",
-            f"palinode: auto-commit before push ({_utc_now().strftime('%Y-%m-%d %H:%M')})",
-        )
-        if pre_commit.returncode != 0:
-            # A failed pre-push commit silently proceeds to push stale state —
-            # surface it. "nothing to commit" also lands here but is
-            # benign; stderr distinguishes a real failure.
-            logger.warning(
-                "auto-commit before push failed op=commit returncode=%d stderr=%r",
-                pre_commit.returncode, pre_commit.stderr.strip(),
+    dirty = status.stdout.strip()
+    if dirty:
+        # Auto-commit any uncommitted changes first — an explicit file list,
+        # never the repo-wide `*.md` / `**/*.md` sweep this module's own
+        # docstring forbids elsewhere. `git status --porcelain` prefixes each
+        # line with a two-character status code; a rename entry reads
+        # "old -> new", of which only the destination is still on disk to
+        # add. Quoted paths (spaces/unicode under core.quotepath) are
+        # unquoted so the pathspec matches the real filename.
+        md_files: list[str] = []
+        for line in dirty.split("\n"):
+            if not line:
+                continue
+            entry = line[3:]
+            if " -> " in entry:
+                entry = entry.split(" -> ", 1)[1]
+            entry = entry.strip('"')
+            if entry.endswith(".md"):
+                md_files.append(entry)
+
+        if md_files:
+            _run_git("add", "--", *md_files)
+            pre_commit = _run_git(
+                "commit", "-m",
+                f"palinode: auto-commit before push ({_utc_now().strftime('%Y-%m-%d %H:%M')})",
             )
+            if pre_commit.returncode != 0:
+                # A failed pre-push commit silently proceeds to push stale state —
+                # surface it. "nothing to commit" also lands here but is
+                # benign; stderr distinguishes a real failure.
+                logger.warning(
+                    "auto-commit before push failed op=commit returncode=%d stderr=%r",
+                    pre_commit.returncode, pre_commit.stderr.strip(),
+                )
 
     result = _run_git("push", "origin", "main")
     if result.returncode != 0:

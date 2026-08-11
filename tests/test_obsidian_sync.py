@@ -20,9 +20,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from palinode.cli import main
+from palinode.core.config import config
+
+
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    """Every test here targets tmp_path/"memory" (_make_memory_dir below) via
+    CliRunner(env={"PALINODE_DIR": ...}) — which the CLI command reads fresh,
+    but write_memory_file's traversal guard checks the process-global
+    config.memory_dir, which the env var alone does not refresh."""
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path / "memory"))
 
 
 # ---------------------------------------------------------------------------

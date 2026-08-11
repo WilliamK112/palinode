@@ -198,16 +198,19 @@ type: Decision
 """
 
 
-def _tmp_doc(content: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".md")
+def _tmp_doc(content: str, *, dir: str | None = None) -> str:
+    fd, path = tempfile.mkstemp(suffix=".md", dir=dir)
     with os.fdopen(fd, "w") as f:
         f.write(content)
     return path
 
 
-def test_executor_proposes_contradicts_link():
+def test_executor_proposes_contradicts_link(tmp_path, monkeypatch):
+    # write_memory_file (the executor's write primitive) validates its
+    # target resolves inside config.memory_dir.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     from palinode.consolidation.executor import apply_operations
-    path = _tmp_doc(_DOC)
+    path = _tmp_doc(_DOC, dir=str(tmp_path))
     try:
         stats = apply_operations(path, [
             {"op": "PROPOSE_CONTRADICTS", "contradicts": ["decisions/other-pick"]},
@@ -226,9 +229,10 @@ def test_executor_proposes_contradicts_link():
                 os.remove(p)
 
 
-def test_executor_propose_is_idempotent():
+def test_executor_propose_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     from palinode.consolidation.executor import apply_operations
-    path = _tmp_doc(_DOC)
+    path = _tmp_doc(_DOC, dir=str(tmp_path))
     try:
         apply_operations(path, [
             {"op": "PROPOSE_CONTRADICTS", "contradicts": ["decisions/x"]},
@@ -245,9 +249,10 @@ def test_executor_propose_is_idempotent():
                 os.remove(p)
 
 
-def test_executor_propose_rejects_malformed_refs():
+def test_executor_propose_rejects_malformed_refs(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     from palinode.consolidation.executor import apply_operations
-    path = _tmp_doc(_DOC)
+    path = _tmp_doc(_DOC, dir=str(tmp_path))
     try:
         stats = apply_operations(path, [
             {"op": "PROPOSE_CONTRADICTS", "contradicts": ["../escape"]},

@@ -280,6 +280,22 @@ def test_obsidian_dry_run_writes_nothing(tmp_path: Path):
     assert not (tmp_path / "_README.md").exists()
 
 
+def test_obsidian_dry_run_lists_vault_directories(tmp_path: Path):
+    """--dry-run --obsidian must list the 8 vault category directories the
+    real run creates, not just the 5 files. Regression guard: the dry-run
+    and real-write branches used to be two hand-maintained enumerations,
+    and the directories were invisible to --dry-run because it printed 5
+    hard-coded lines instead of walking what the real run walked."""
+    result = run_init(tmp_path, "--obsidian", "--dry-run")
+    assert result.exit_code == 0, result.output
+    for d in (
+        "people", "projects", "decisions", "insights",
+        "research", "daily", "archive", "logs",
+    ):
+        assert d in result.output, f"dry-run output missing vault directory {d!r}"
+    assert not (tmp_path / "people").exists()
+
+
 # ---------------------------------------------------------------------------
 # Output messages
 # ---------------------------------------------------------------------------

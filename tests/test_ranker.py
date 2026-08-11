@@ -196,3 +196,25 @@ def test_date_window_filters_by_last_updated():
     out = _run([inwin, old], [], date_after="2026-06-01")
     paths = _order(out)
     assert "in.md" in paths and "old.md" not in paths
+
+
+def test_date_window_applied_before_top_k_truncation():
+    """The date-window-vs-top_k-truncation defect: the date window must
+    filter the full candidate list BEFORE the top_k slice, not after. Two
+    out-of-window candidates outrank two in-window ones here; under the old
+    order (top_k=2 slice first, date filter second) both survivors of the
+    slice get filtered out and the search silently returns 0 results, even
+    though 2 in-window candidates exist just past the slice boundary.
+    """
+    out_of_window = [
+        _res(f"old{i}.md", metadata={"last_updated": "2026-01-01"}) for i in range(2)
+    ]
+    in_window = [
+        _res(f"new{i}.md", metadata={"last_updated": "2026-06-10"}) for i in range(2)
+    ]
+    # out_of_window ranked first (rank 0, 1); in_window ranked after (rank 2, 3).
+    out = _run(out_of_window + in_window, [], top_k=2, date_after="2026-06-01")
+    assert _order(out) == ["new0.md", "new1.md"], (
+        "date-windowed search must not be defeated by top_k truncating away "
+        "the in-window candidates before the window is ever applied"
+    )

@@ -28,7 +28,11 @@ def ingest(url, name, inbox, fmt):
                 print_result(data, fmt=output_fmt)
             else:
                 if data.get("status") == "success":
-                    console.print(f"[green]✓[/green] Saved to {data.get('file_path', 'research/')}")
+                    # Prefer the server-computed relative path (ADR-010
+                    # parity with MCP/API) so the console message never
+                    # leaks an absolute filesystem path.
+                    shown = data.get("rel_path") or data.get("file_path", "research/")
+                    console.print(f"[green]✓[/green] Saved to {shown}")
                 else:
                     console.print("[yellow]No content extracted from URL.[/yellow]")
     except HTTPStatusError as e:

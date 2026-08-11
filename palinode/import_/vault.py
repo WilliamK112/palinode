@@ -179,24 +179,6 @@ def _generate_id(content: str) -> str:
     return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]  # noqa: S324
 
 
-def _build_slug_map(plans: list[ImportPlan]) -> dict[str, str]:
-    """Build a mapping from source-file slug → dest relative path (without .md).
-
-    Used for wikilink translation: if a source [[Note]] matches a file being
-    imported, rewrite the link to the dest path slug.
-    """
-    slug_map: dict[str, str] = {}
-    for plan in plans:
-        # Source stem slug
-        src_slug = slugify(plan.source_path.stem)
-        # Destination relative to memory_dir (without extension)
-        dest_rel = plan.dest_path.stem
-        slug_map[src_slug] = dest_rel
-        # Also index the raw stem for case-insensitive matching
-        slug_map[plan.source_path.stem.lower()] = dest_rel
-    return slug_map
-
-
 def _translate_wikilinks(
     body: str,
     slug_map: dict[str, str],

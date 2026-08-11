@@ -1,8 +1,5 @@
 """Embedding text preprocessing for the Obsidian wiki-maintenance tools.
 
-Background — design doc `artifacts/obsidian-integration/design.md`, section
-"Embedding text preprocessing — known issue, captured":
-
 Embedding models are sensitive to formatting noise.  When palinode auto-appends
 `## See also` footers materializing entity wikilinks (Deliverable C), every note
 that links the same entities gains the same trailing `[[alice]]`/`[[bob]]`

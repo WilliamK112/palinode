@@ -107,7 +107,10 @@ def dedup_suggest(content, file_path, min_similarity, top_k, fmt):
         return
 
     for r in results:
-        fp = r.get("file_path", "")
+        # Prefer the server-computed relative path (ADR-010 parity with
+        # MCP/API) so the console listing never leaks an absolute
+        # filesystem path.
+        fp = r.get("rel_path") or r.get("file_path", "")
         pct = int(r.get("similarity", 0) * 100)
         snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:200]
         if r.get("strong_dup"):
@@ -175,7 +178,10 @@ def orphan_repair(broken_link, min_similarity, top_k, fmt):
         return
 
     for r in results:
-        fp = r.get("file_path", "")
+        # Prefer the server-computed relative path (ADR-010 parity with
+        # MCP/API) so the console listing never leaks an absolute
+        # filesystem path.
+        fp = r.get("rel_path") or r.get("file_path", "")
         pct = int(r.get("similarity", 0) * 100)
         snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:200]
         console.print(f"[bold blue]{fp}[/bold blue] ({pct}% similar)")
@@ -237,7 +243,10 @@ def cluster_neighbors(file_path, min_similarity, top_k, fmt):
         return
 
     for r in results:
-        fp = r.get("file_path", "")
+        # Prefer the server-computed relative path (ADR-010 parity with
+        # MCP/API) so the console listing never leaks an absolute
+        # filesystem path.
+        fp = r.get("rel_path") or r.get("file_path", "")
         pct = int(r.get("similarity", 0) * 100)
         snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:200]
         console.print(f"[bold blue]{fp}[/bold blue] ({pct}% similar)")
@@ -285,7 +294,10 @@ def topic_coverage(query, min_similarity, fmt):
         return
 
     if result.get("covered"):
-        best = result.get("best_match", "")
+        # Prefer the server-computed relative path (ADR-010 parity with
+        # MCP/API) so the console message never leaks an absolute
+        # filesystem path.
+        best = result.get("rel_path") or result.get("best_match", "")
         pct = int(result.get("similarity", 0) * 100)
         console.print(
             f"[yellow]COVERED[/yellow] — {best} ({pct}% similar). "

@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 
 from palinode.core import git_tools, store
 from palinode.core.config import config
-from palinode.core.parser import parse_markdown
+from palinode.core.parser import parse_markdown, split_frontmatter
 
 from palinode.api.path_safety import _resolve_memory_path
 from palinode.api.ui.provenance import build_provenance
@@ -150,7 +150,7 @@ def _page_context() -> dict[str, Any]:
     from palinode.core.lint import run_lint_pass
 
     lint = run_lint_pass()
-    total_memories = len(scan_memory_files(config.memory_dir, _read_frontmatter))
+    total_memories = len(scan_memory_files())
 
     try:
         total_chunks = store.get_stats().get("total_chunks", 0)
@@ -244,17 +244,6 @@ def ui_dashboard(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
-def _read_frontmatter(filepath: str) -> dict[str, Any]:
-    """Parse just the frontmatter dict of a file on disk (no body, never raises)."""
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-        metadata, _ = parse_markdown(content)
-        return metadata or {}
-    except Exception:
-        return {}
-
-
 @router.get("/memory", response_class=HTMLResponse, name="ui_memory_list")
 def ui_memory_list(
     request: Request,
@@ -275,7 +264,7 @@ def ui_memory_list(
     ctx["active"] = "memory"
 
     rows = build_memory_list(
-        scan_memory_files(config.memory_dir, _read_frontmatter),
+        scan_memory_files(),
         type_filter=type or None,
         core_only=bool(core),
         freshness=freshness or None,
@@ -346,7 +335,7 @@ def ui_quality(request: Request) -> HTMLResponse:
     lint = dict(lint)
     lint["no_extraction_meta"] = [
         {"file": r["path"]}
-        for r in scan_memory_files(config.memory_dir, _read_frontmatter)
+        for r in scan_memory_files()
     ]
 
     ctx = _page_context()
@@ -502,15 +491,14 @@ def _category_from_path(rel: str) -> str:
 def _strip_frontmatter(content: str) -> str:
     """Return the markdown body with YAML frontmatter removed.
 
-    Mirrors ``core.lint``: use the ``frontmatter`` library and fall back to the
-    raw content if parsing fails (never raises).
+    Delegates to the canonical, lossless splitter
+    (:func:`palinode.core.parser.split_frontmatter`) — the single source of
+    truth for frontmatter/body separation, not the ``frontmatter`` library or
+    an ad hoc string split. Never raises: an unparseable/absent frontmatter
+    block degrades to returning the whole content unchanged.
     """
-    try:
-        import frontmatter as _frontmatter
-
-        return _frontmatter.loads(content).content
-    except Exception:
-        return content
+    _, body = split_frontmatter(content)
+    return body
 
 
 def _first_heading(body: str) -> str | None:

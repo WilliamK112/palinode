@@ -23,6 +23,15 @@ import pytest
 import yaml
 
 from palinode.consolidation import layer_split
+from palinode.core.config import config
+
+
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    # write_memory_file (layer_split's write primitive) validates its target
+    # resolves inside config.memory_dir — every fixture/test here writes
+    # under tmp_path, so point memory_dir there.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
 
 
 # Four sections, split across identity keywords ("architecture", "key decisions")

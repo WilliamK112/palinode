@@ -275,6 +275,40 @@ class TestFixClaudeMdBlock:
         assert fix_result.applied is False
         assert claude_md.read_text(encoding="utf-8") == original
 
+    def test_appended_block_byte_identical_to_golden(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The block `doctor --fix` appends must be byte-identical to
+        MEMORY_BLOCK_CORE (tests/fixtures/claude_md_memory_block_core.txt) —
+        the same rendering `palinode init` uses for AGENTS.md / .cursor/rules.
+        Regression guard for the two writers forking again."""
+        project = tmp_path / "sample-project"
+        project.mkdir()
+        monkeypatch.chdir(project)
+        claude_md = project / "CLAUDE.md"
+        claude_md.write_text("# Notes\n", encoding="utf-8")
+
+        cfg = Config(memory_dir=str(project), db_path=str(project / ".palinode.db"))
+        ctx = DoctorContext(config=cfg)
+        result = CheckResult(
+            name="claude_md_palinode_block",
+            severity="info",
+            passed=False,
+            message="missing",
+        )
+
+        fix_result = fixes_module.fix_claude_md_palinode_block(ctx, result)
+        assert fix_result.applied is True
+
+        content = claude_md.read_text(encoding="utf-8")
+        golden = (
+            Path(__file__).parent / "fixtures" / "claude_md_memory_block_core.txt"
+        ).read_text()
+        # "# Notes\n" ends in a newline already, so the fix adds exactly one
+        # blank line (the leading "\n") before the block — same separator
+        # convention as `palinode init`'s `_write_memory_block`.
+        assert content == "# Notes\n" + "\n" + golden
+
 
 # ---------------------------------------------------------------------------
 # CLI integration — `palinode doctor --fix` end-to-end.

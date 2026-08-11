@@ -11,7 +11,6 @@ import re
 import json
 import glob
 import logging
-import shutil
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
@@ -622,112 +621,32 @@ Return the operation as JSON."""
 
     return operations
 
-def _write_project_summary(project_id: str, consolidation: dict) -> None:
-    """Write the consolidated project summary back to the project markdown file."""
-    project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
-    
-    # Simple write, but realistically we'd merge with existing body/frontmatter.
-    # We will log the new summary block or replace the content.
-    # human-readable UTC log heading. Previously used a literal ``Z``
-    # suffix which trips the project-wide ``strftime("...Z")`` audit; ``UTC``
-    # is unambiguous and keeps the log scannable.
-    now = _utc_now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    status_bullets = consolidation.get("status_bullets", [])
-    bullets_text = "\n".join(f"- {b}" for b in status_bullets)
-    
-    if os.path.exists(project_file):
-        with open(project_file, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # Append consolidation log
-        log_entry = f"\n\n## Consolidation Log ({now})\n{bullets_text}\n"
-        content += log_entry
-        git_tools.write_memory_file(project_file, content)
-    else:
-        # Create new
-        metadata = {
-            "id": f"project-{project_id}",
-            "category": "project",
-            "name": project_id,
-            "entities": [f"project/{project_id}"],
-            "last_updated": now
-        }
-        yaml_front = yaml.dump(metadata, default_flow_style=False)
-        content = f"---\n{yaml_front}---\n\n# {project_id}\n\n## Summary\n{bullets_text}\n"
-        git_tools.write_memory_file(project_file, content)
-
-def _handle_superseded_decisions(superseded: list[dict]) -> None:
-    """Mark superseded decisions in their frontmatter."""
-    for decision in superseded:
-        decision_path = os.path.join(config.memory_dir, "decisions", f"{decision['id']}.md")
-        if not os.path.exists(decision_path):
-            continue
-            
-        with open(decision_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            
-        # Update frontmatter status
-        new_content = re.sub(
-            r"^status:\s*active", 
-            "status: superseded", 
-            content, 
-            flags=re.MULTILINE
-        )
-        
-        # Add superseded_by if provided
-        if "superseded_by" in decision:
-            new_content = re.sub(
-                r"^superseded_by:\s*\"\"", 
-                f"superseded_by: {decision['superseded_by']}", 
-                new_content, 
-                flags=re.MULTILINE
-            )
-            
-        git_tools.write_memory_file(decision_path, new_content)
-        logger.info(f"Marked decision {decision['id']} as superseded")
-
-def _extract_insights(all_notes: list[dict]) -> list[dict]:
-    """Extract recurring patterns as insight candidates from notes.
-    
-    Looks for notes tagged as 'insight' category or containing
-    keywords indicating a generalizable lesson.
-    """
-    if not all_notes:
-        return []
-        
-    insights = []
-    insight_keywords = ["lesson:", "insight:", "pattern:", "learned:", "takeaway:", "principle:"]
-    
-    for note in all_notes:
-        content = note.get("content", "").lower()
-        category = note.get("category", "").lower()
-        
-        if category in ("insight", "insights"):
-            insights.append(note)
-        elif any(kw in content for kw in insight_keywords):
-            insights.append({
-                **note,
-                "category": "insight",
-                "extracted": True,
-            })
-    
-    if insights:
-        logger.info(f"Extracted {len(insights)} insight candidates from {len(all_notes)} notes")
-    return insights
-
 def _archive_daily_notes(notes: list[dict]) -> None:
-    """Move processed daily notes to the archive directory."""
+    """Move processed daily notes to the archive directory.
+
+    Through git_tools.move_memory_file (the choke point's move primitive)
+    rather than a raw shutil.move, and committed here per-note: the old path
+    stages as a deletion and the new path as an addition, in one commit —
+    _git_commit (used for the compaction pass itself) filters out paths that
+    no longer exist on disk, which would silently drop the deletion half of
+    a move, so the archived pair cannot ride along with mutated_files there.
+    """
     archive_dir = os.path.join(config.memory_dir, "archive")
     os.makedirs(archive_dir, exist_ok=True)
-    
+
     for note in notes:
         try:
             date_prefix = note["date"][:4] # YYYY
             year_dir = os.path.join(archive_dir, date_prefix)
             os.makedirs(year_dir, exist_ok=True)
-            new_path = os.path.join(year_dir, os.path.basename(note["filepath"]))
-            shutil.move(note["filepath"], new_path)
+            old_path = note["filepath"]
+            new_path = os.path.join(year_dir, os.path.basename(old_path))
+            git_tools.move_memory_file(old_path, new_path)
+            if config.git.auto_commit:
+                git_tools.commit_memory_files(
+                    [old_path, new_path],
+                    f"{config.git.commit_prefix} archive daily note [{os.path.basename(old_path)}]",
+                )
         except Exception as e:
             logger.error(f"Failed to archive note {note['filepath']}: {e}")
 
@@ -863,6 +782,10 @@ def _run_consolidation_unlocked(
     project's status file, so a source whose memories name no project
     contributes nothing — which the run summary reports as
     ``projects_compacted: 0`` rather than silently.
+
+    Proposed operations are filtered against ``config.consolidation.allowed_ops``
+    before being applied — the weekly-pass counterpart to ``run_nightly``'s
+    ``config.consolidation.nightly.allowed_ops`` filter below.
     """
     from palinode.consolidation.executor import apply_operations
 
@@ -918,6 +841,17 @@ def _run_consolidation_unlocked(
 
             model_used = model_used_current
 
+            # Enforce allowed-ops restriction (mirrors run_nightly's filter,
+            # applied against the weekly-pass config key so the two passes
+            # each have exactly one knob to restrict them). A missing kind
+            # defaults to KEEP — same default the executor applies — so an
+            # op with no "op"/"operation" field is filtered on what it will
+            # actually become, not dropped as if it were some other kind.
+            allowed_ops = set(config.consolidation.allowed_ops)
+            operations = [op for op in operations if (op_kind(op) or "KEEP") in allowed_ops]
+            if not operations:
+                continue
+
             # Groups without a target were filtered before this loop, so the
             # helper cannot return None here.
             target = _target_file_for(project_id)
@@ -963,8 +897,7 @@ def _run_consolidation_unlocked(
             result["skipped_no_target_projects"] = skipped_no_target
         return result
     
-    # Extract insights and archive (only if at least one project compacted successfully)
-    _extract_insights(notes)
+    # Archive (only if at least one project compacted successfully)
     if projects_processed > 0:
         _archive_daily_notes(notes)
     else:
@@ -1066,9 +999,14 @@ def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = Fals
 
             model_used = model_used_current
 
-            # Enforce allows ops restriction
+            # Enforce allowed-ops restriction. Resolves a missing op-kind the
+            # same way the weekly filter does (op_kind(op) or "KEEP", matching
+            # the executor's own default) rather than comparing an empty
+            # string against allowed_ops — which can never match regardless
+            # of configuration, silently dropping the op no matter what an
+            # operator sets allowed_ops to.
             allowed_ops = set(config.consolidation.nightly.allowed_ops)
-            operations = [op for op in operations if op.get("op", op.get("operation", "")).upper() in allowed_ops]
+            operations = [op for op in operations if (op_kind(op) or "KEEP") in allowed_ops]
             if not operations:
                 continue
 

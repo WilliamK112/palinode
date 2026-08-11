@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -50,7 +51,14 @@ from palinode.core.defaults import (
     _SESSION_END_TIMEOUT_SENTINEL as _SENTINEL,
 )
 from palinode.core.parity import CATEGORIES, MEMORY_TYPES, PROMPT_TASKS
+from palinode.core.path_guard import to_rel_path
 from palinode.core.typed_links import parse_link_refs
+from palinode.core.write_input import (
+    SAVE_PARAMS,
+    SESSION_END_PARAMS,
+    build_payload,
+    coerce_str_array,
+)
 
 logger = logging.getLogger("palinode.mcp")
 logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
@@ -301,31 +309,11 @@ async def _tailor_instructions(ctx: Any, call_next: Any) -> Any:
 server.middleware.append(_tailor_instructions)
 
 
-def _coerce_str_array(value: Any) -> Any:
-    """Tolerate JSON-encoded array strings from MCP clients that double-encode.
-
-    Some MCP transports/clients serialize array arguments as JSON strings
-    (e.g. ``'["a","b"]'``) instead of native arrays. FastAPI's Pydantic
-    validation rejects those with "expected array, received string". This
-    helper decodes the string form when it's clearly a JSON array; otherwise
-    it returns ``value`` unchanged so native lists pass through.
-
-    Despite the name, element types are never inspected — any decoded JSON list
-    is returned as-is. That is why it applies equally to arrays of objects
-    (``sources``, ``claims``) and arrays of strings (``entities``,
-    ``contradicts``, ``backed_by``). Applied to EVERY array parameter on a
-    write-path tool: guarding only some produced a partial experience where one
-    array silently worked and the rest failed in three different shapes, which
-    is harder to diagnose than uniform failure.
-    """
-    if isinstance(value, str):
-        try:
-            decoded = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return value
-        if isinstance(decoded, list):
-            return decoded
-    return value
+#: Alias for the canonical implementation, which lives in
+#: :mod:`palinode.core.write_input` so CLI and API share it rather than
+#: re-deriving it. Kept as a module-level name because this is the
+#: address the coercion has always had from MCP's side.
+_coerce_str_array = coerce_str_array
 
 
 def _resolve_context() -> list[str] | None:
@@ -413,6 +401,79 @@ def _text(content: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=content)]
 
 
+#: Every prefix ``_dispatch_tool`` uses to signal a failed call.
+#:
+#: The dispatcher reports failure in-band — a normal ``TextContent`` whose text
+#: begins with one of these — so "did this tool fail?" is answerable only by
+#: matching the prefix. That makes this list a contract, and it lives here, next
+#: to the code that emits it.
+#:
+#: It used to be hand-mirrored in ``tests/integration/_smoke_args.py`` under a
+#: "keep this in sync" comment, and it had already drifted: six messages the
+#: dispatcher really emits matched nothing in that copy, so the hermetic smoke
+#: test read them as success. ``palinode_review`` is registered strict and
+#: returns ``"Review failed: …"``; that guarantee was silently void. The four
+#: ``Error <verb> …`` messages are the subtle ones — ``"Error reading prompt:"``
+#: does not start with ``"Error:"``.
+#:
+#: ``tests/test_mcp_error_contract.py`` derives the messages from this module's
+#: source and asserts this tuple covers every one, so the next message added
+#: cannot quietly evade the smoke suite the way those six did.
+DISPATCH_ERROR_PREFIXES: tuple[str, ...] = (
+    "Error:",
+    "Error activating prompt:",
+    "Error listing prompts:",
+    "Error reading file:",
+    "Error reading prompt:",
+    "API Error:",
+    "API unreachable",
+    "Search failed",
+    "Save failed",
+    "Session-end failed",
+    "Doctor failed",
+    "Doctor (deep) failed",
+    "Lint failed",
+    "Review failed",
+    "Consolidation failed",
+    "Archive failed",
+    "Archive-expired sweep failed",
+    "Push failed",
+    "Ingest failed",
+    # Not emitted by a `_text(...)` call at all — `_timeout_message()` builds it
+    # and a caller wraps it. That is why the first version of the coverage guard
+    # missed it: the guard scanned `_text(` sites, and this failure is assembled
+    # one function away. The guard now reads every string literal in the module,
+    # which is the only form that cannot be dodged by moving the string.
+    "Timeout:",
+    "Unknown action:",
+    "Unknown tool",
+)
+
+
+def _rel_path_from(payload: dict[str, Any], key: str = "file_path") -> str:
+    """Return the memory-relative spelling of a path-bearing API payload.
+
+    Prefers the server-computed ``rel_path`` the API now sends alongside
+    ``key`` (``file_path`` for most tools, ``best_match`` for
+    ``palinode_topic_coverage``) — the API is the one place that knows the
+    configured memory directory for certain, since MCP may be a thin client
+    talking to a remote API over ``PALINODE_API_HOST`` (see module
+    docstring) with a different memory directory than this process's own
+    config.
+
+    Falls back to deriving it from this process's local config only for an
+    older API server that hasn't started sending ``rel_path`` yet — a
+    same-host-only approximation, computed via
+    :func:`palinode.core.path_guard.to_rel_path` rather than any hardcoded
+    directory-name literal, so it degrades gracefully for a memory directory
+    with an arbitrary name.
+    """
+    rel = payload.get("rel_path")
+    if rel:
+        return rel
+    return to_rel_path(payload.get(key, "") or "")
+
+
 # write-path tools can commit server-side even when the client's request
 # times out. A slow LLM-derived field (auto_summary, embedding refresh) can
 # outlast the HTTP timeout *after* the durable write has already landed, so the
@@ -460,12 +521,7 @@ def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
     parts = []
     any_truncated = False
     for r in results:
-        file_path = r.get("file_path", "")
-        # Strip absolute prefix if present
-        if "/" in file_path:
-            rel = file_path.rsplit("/palinode/", 1)[-1] if "/palinode/" in file_path else file_path
-        else:
-            rel = file_path
+        rel = _rel_path_from(r)
         score_pct = int(r.get("score", 0) * 100)
         freshness = r.get("freshness")
         fresh_label = f" ✓ {freshness}" if freshness == "valid" else (f" ⚠ {freshness}" if freshness == "stale" else "")
@@ -1645,13 +1701,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     result = await _dispatch_tool(name, arguments)
     duration_ms = (time.monotonic() - start_time) * 1000
 
-    # Detect error responses (the dispatch handler returns error text rather than raising)
+    # Detect error responses — the dispatcher returns error text rather than
+    # raising, so the prefix is the only signal. This used to carry its own
+    # hand-written tuple, the third copy of the same contract, and it had
+    # drifted like the others: `API unreachable`, `Review failed`,
+    # `Archive failed`, `Archive-expired sweep failed`, `Unknown action:` and
+    # `Unknown tool` matched nothing here, so those failures were written to the
+    # audit log with status="success". Reading from the one declaration means a
+    # reworded or newly added message updates the audit log by construction.
     first_text = result[0].text if result else ""
-    is_error = first_text.startswith(("Error", "API Error", "Search failed", "Save failed",
-                                      "Ingest failed", "Push failed", "Consolidation failed",
-                                      "Session-end failed", "Lint failed",
-                                      "Doctor failed", "Doctor (deep) failed",
-                                      "Timeout:"))
+    is_error = first_text.startswith(DISPATCH_ERROR_PREFIXES)
     _audit.log_call(
         name, arguments, duration_ms,
         status="error" if is_error else "success",
@@ -1660,706 +1719,734 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     return result
 
 
-async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+# ── Tool handlers ────────────────────────────────────────────────────────────
+#
+# One function per tool, registered by name. This chain used to be a 647-line
+# if/elif inside `_dispatch_tool`, which meant a tool's logic could only be
+# reached by dispatching to it — and `_dispatch_tool` is private, so the test
+# suite referenced it 48 times across 12 files against 4 for the public
+# `call_tool`.
+#
+# Splitting the tools out *behind* `_dispatch_tool` rather than migrating those
+# 48 references is deliberate. `_dispatch_tool(name, arguments)` still dispatches
+# exactly as before, so every existing caller and test keeps working; what
+# changes is that the thing they reach for is now a nine-line lookup. Reaching
+# past the interface stops mattering when there is nothing behind it to miss.
+#
+# Handlers take `arguments` alone — none of the thirty branches referenced
+# `name`, which is why this split is mechanical rather than a redesign.
+
+_ToolHandler = Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]]
+
+_TOOL_HANDLERS: dict[str, _ToolHandler] = {}
+
+
+def _handles(tool_name: str) -> Callable[[_ToolHandler], _ToolHandler]:
+    """Register a coroutine as the handler for one MCP tool."""
+
+    def register(fn: _ToolHandler) -> _ToolHandler:
+        _TOOL_HANDLERS[tool_name] = fn
+        return fn
+
+    return register
+
+
+# ── list ──────────────────────────────────────────────────────────
+@_handles("palinode_list")
+async def _tool_list(arguments: dict[str, Any]) -> list[types.TextContent]:
+    params: dict[str, Any] = {}
+    if arguments.get("category"):
+        params["category"] = arguments["category"]
+    if arguments.get("core_only"):
+        params["core_only"] = "true"
+
+    resp = await _get("/list", params=params)
+    if resp.status_code != 200:
+        return _text(f"API Error: {resp.text}")
+    data = resp.json()
+    if not data:
+        return _text("No files found.")
+    parts = []
+    for f in data:
+        c_tag = " [core]" if f.get("core") else ""
+        parts.append(f"{f['file']} — {f.get('summary', '')}{c_tag}")
+    return _text("\n".join(parts))
+
+
+# ── read ──────────────────────────────────────────────────────────
+@_handles("palinode_read")
+async def _tool_read(arguments: dict[str, Any]) -> list[types.TextContent]:
+    include_meta = bool(arguments.get("meta", False))
+    resp = await _get(
+        "/read",
+        params={"file_path": arguments["file_path"], "meta": "true"},
+    )
+    if resp.status_code != 200:
+        return _text(f"Error reading file: {resp.text}")
+    data = resp.json()
+    content = data.get("content", "")
+    if include_meta:
+        fm = data.get("frontmatter") or {}
+        # Render as YAML-ish frontmatter + body so downstream consumers
+        # can re-parse if they want.  Keep it simple: the file already
+        # has the same structure on disk.
+        fm_lines = "\n".join(f"{k}: {v!r}" for k, v in fm.items())
+        return _text(f"---\n{fm_lines}\n---\n{content}")
+    return _text(content)
+
+
+# ── search ────────────────────────────────────────────────────────
+@_handles("palinode_search")
+async def _tool_search(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"query": arguments["query"]}
+    if arguments.get("category"):
+        body["category"] = arguments["category"]
+    if arguments.get("limit"):
+        body["limit"] = int(arguments["limit"])
+    if arguments.get("date_after"):
+        body["date_after"] = arguments["date_after"]
+    if arguments.get("date_before"):
+        body["date_before"] = arguments["date_before"]
+    if arguments.get("include_daily"):
+        body["include_daily"] = True
+    if arguments.get("include_telemetry"):
+        body["include_telemetry"] = True
+    if arguments.get("since_days") is not None:
+        body["since_days"] = int(arguments["since_days"])
+    if arguments.get("types"):
+        body["types"] = _coerce_str_array(arguments["types"])
+    if arguments.get("min_priority") is not None:
+        body["min_priority"] = int(arguments["min_priority"])
+    # ADR-010: caller-supplied threshold wins; otherwise use
+    # the MCP-tuned default (typically tighter than the API default
+    # to keep auto-context noise low).
+    if arguments.get("threshold") is not None:
+        body["threshold"] = float(arguments["threshold"])
+    else:
+        body["threshold"] = config.search.mcp_threshold
+    # ADR-008: ambient context boost
+    context = _resolve_context()
+    if context:
+        body["context"] = context
+
+    resp = await _post("/search", json=body, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Search failed: {resp.text}")
+    # `full` is purely a rendering choice — the API always
+    # populates `snippet` and preserves `content`, so the MCP picks
+    # which to render without an extra round-trip.
+    return _text(_format_results(resp.json(), full=bool(arguments.get("full"))))
+
+
+# ── save ──────────────────────────────────────────────────────────
+@_handles("palinode_save")
+async def _tool_save(arguments: dict[str, Any]) -> list[types.TextContent]:
     try:
-        # ── list ──────────────────────────────────────────────────────────
-        if name == "palinode_list":
-            params: dict[str, Any] = {}
-            if arguments.get("category"):
-                params["category"] = arguments["category"]
-            if arguments.get("core_only"):
-                params["core_only"] = "true"
+        resolved_type = _resolve_save_type(
+            arguments.get("type"), arguments.get("ps")
+        )
+    except ValueError as e:
+        return _text(f"Error: {e}")
 
-            resp = await _get("/list", params=params)
-            if resp.status_code != 200:
-                return _text(f"API Error: {resp.text}")
-            data = resp.json()
-            if not data:
-                return _text("No files found.")
-            parts = []
-            for f in data:
-                c_tag = " [core]" if f.get("core") else ""
-                parts.append(f"{f['file']} — {f.get('summary', '')}{c_tag}")
-            return _text("\n".join(parts))
+    body: dict[str, Any] = {
+        "content": arguments["content"],
+        "type": resolved_type,
+    }
+    # One inclusion rule for every surface — a param is sent
+    # when it is not None, so an explicitly-empty `contradicts: []`
+    # survives as the assertion the caller made. The `omit_if_empty`
+    # strings (source/slug/project/title) still elide when blank, which
+    # is what this handler already did for them. ADR-010: an omitted
+    # `source` lets the X-Palinode-Source header carry attribution.
+    body.update(build_payload(SAVE_PARAMS, arguments))
 
-        # ── read ──────────────────────────────────────────────────────────
-        elif name == "palinode_read":
-            # ADR-010: honor caller's `meta` request. We always fetch
-            # with meta=true (cheap; parser already runs) but only render
-            # frontmatter when the caller asked for it.
-            include_meta = bool(arguments.get("meta", False))
-            resp = await _get(
-                "/read",
-                params={"file_path": arguments["file_path"], "meta": "true"},
+    resp = await _post("/save", json=body)
+    if resp.status_code != 200:
+        return _text(f"Save failed: {resp.text}")
+    data = resp.json()
+    rel = _rel_path_from(data)
+    # Surface per-index health signals from if either index
+    # write failed — these are warnings, not save failures.
+    warnings: list[str] = []
+    if not data.get("indexed_vec", True):
+        warnings.append("vec index write failed (chunk absent from vector search)")
+    if not data.get("indexed_fts", True):
+        warnings.append("FTS5 sync failed (periodic rebuild will recover)")
+    if not data.get("git_committed", True):
+        warnings.append("git auto-commit failed (file on disk, not versioned)")
+    if warnings:
+        return _text(f"Saved to {rel} [warnings: {'; '.join(warnings)}]")
+    return _text(f"Saved to {rel}")
+
+
+# ── ingest ────────────────────────────────────────────────────────
+@_handles("palinode_ingest")
+async def _tool_ingest(arguments: dict[str, Any]) -> list[types.TextContent]:
+    url = arguments["url"]
+    name_arg = arguments.get("name", url.split("/")[-1][:40])
+
+    resp = await _post("/ingest-url", json={"url": url, "name": name_arg}, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Ingest failed: {resp.text}")
+    data = resp.json()
+    if data.get("file_path"):
+        return _text(f"Ingested → {_rel_path_from(data)}")
+    return _text("No content extracted from URL.")
+
+
+# ── history ───────────────────────────────────────────────────────
+@_handles("palinode_history")
+async def _tool_history(arguments: dict[str, Any]) -> list[types.TextContent]:
+    file_path = arguments["file_path"]
+    limit = int(arguments.get("limit", 20))
+    detail = arguments.get("detail", "summary")
+    if detail not in ("summary", "full"):
+        return _text("Error: detail must be 'summary' or 'full'")
+    resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": detail})
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    if not data.get("history"):
+        return _text("No history found.")
+    lines = []
+    for c in data["history"]:
+        line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
+        if c.get("stats"):
+            line += f"\n  {c['stats']}"
+        if detail == "full" and c.get("diff"):
+            line += f"\n{c['diff']}"
+        lines.append(line)
+    return _text("\n\n---\n\n".join(lines) if detail == "full" else "\n".join(lines))
+
+
+# ── timeline (deprecated alias for history detail=full) ───────────
+@_handles("palinode_timeline")
+async def _tool_timeline(arguments: dict[str, Any]) -> list[types.TextContent]:
+    logger.warning("palinode_timeline is deprecated — use palinode_history with detail='full'")
+    file_path = arguments["file_path"]
+    limit = int(arguments.get("limit", 20))
+    resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": "full"})
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    if not data.get("history"):
+        return _text("No history found.")
+    lines = []
+    for c in data["history"]:
+        line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
+        if c.get("stats"):
+            line += f"\n  {c['stats']}"
+        if c.get("diff"):
+            line += f"\n{c['diff']}"
+        lines.append(line)
+    deprecation_note = "[DEPRECATED] palinode_timeline is deprecated — use palinode_history with detail='full' instead.\n\n"
+    return _text(deprecation_note + "\n\n---\n\n".join(lines))
+
+
+# ── entities ──────────────────────────────────────────────────────
+@_handles("palinode_entities")
+async def _tool_entities(arguments: dict[str, Any]) -> list[types.TextContent]:
+    entity_ref = arguments.get("entity_ref")
+    if entity_ref:
+        resp = await _get(f"/entities/{entity_ref}")
+    else:
+        resp = await _get("/entities")
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    return _text(json.dumps(resp.json(), indent=2))
+
+
+# ── consolidate ───────────────────────────────────────────────────
+@_handles("palinode_consolidate")
+async def _tool_consolidate(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {}
+    if arguments.get("dry_run"):
+        body["dry_run"] = True
+    if arguments.get("nightly"):
+        body["nightly"] = True
+    if arguments.get("sources"):
+        body["sources"] = _coerce_str_array(arguments["sources"])
+    resp = await _post("/consolidate", json=body, timeout=300.0)
+    if resp.status_code != 200:
+        return _text(f"Consolidation failed: {resp.text}")
+    return _text(json.dumps(resp.json(), indent=2))
+
+
+# ── archive-expired ────────────────────────────────────────────────
+@_handles("palinode_archive_expired")
+async def _tool_archive_expired(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body = {}
+    if arguments.get("dry_run"):
+        body["dry_run"] = True
+    resp = await _post("/archive-expired", json=body, timeout=120.0)
+    if resp.status_code != 200:
+        return _text(f"Archive-expired sweep failed: {resp.text}")
+    return _text(json.dumps(resp.json(), indent=2))
+
+
+# ── archive (on-demand ARCHIVE / SUPERSEDE) ────────────────────────
+@_handles("palinode_archive")
+async def _tool_archive(arguments: dict[str, Any]) -> list[types.TextContent]:
+    file_path = arguments.get("file_path")
+    if not file_path:
+        return _text("Error: file_path is required")
+    body = {"file_path": file_path}
+    if arguments.get("reason"):
+        body["reason"] = arguments["reason"]
+    if arguments.get("superseded_by"):
+        body["superseded_by"] = arguments["superseded_by"]
+    resp = await _post("/archive", json=body)
+    if resp.status_code != 200:
+        return _text(f"Archive failed: {resp.text}")
+    data = resp.json()
+    if data.get("status") == "already_archived":
+        return _text(f"{data.get('file')} is already archived — no change.")
+    successor = data.get("superseded_by")
+    verb = f"Superseded by {successor}" if successor else "Archived"
+    return _text(
+        f"{verb}: {data.get('file')}\n"
+        f"History: {data.get('history_file')}\n"
+        f"Chunks suppressed from recall: {data.get('chunks_updated', 0)}"
+    )
+
+
+# ── status ────────────────────────────────────────────────────────
+@_handles("palinode_status")
+async def _tool_status(arguments: dict[str, Any]) -> list[types.TextContent]:
+    resp = await _get("/status")
+    if resp.status_code != 200:
+        return _text(f"API unreachable: {resp.text}")
+    s = resp.json()
+    lines = [
+        "Palinode Status",
+        f"  Version:        {s.get('version', '?')}",
+        f"  Files indexed:  {s.get('total_files', '?')}",
+        f"  Chunks indexed: {s.get('total_chunks', '?')}",
+        f"  Hybrid search:  {'✅ enabled' if s.get('hybrid_search') else '❌ disabled'}",
+        f"  FTS5 chunks:    {s.get('fts_chunks', '?')}",
+        f"  Entities:       {s.get('total_entities', '?')}",
+        f"  Ollama (embed): {'✅ reachable' if s.get('ollama_reachable') else '❌ unreachable'}",
+        f"  Git commits 7d: {s.get('git_commits_7d', '?')}",
+        f"  Unpushed:       {s.get('unpushed_commits', '?')}",
+        f"  API:            {_api_url('')}",
+    ]
+    return _text("\n".join(lines))
+
+
+# ── diff ──────────────────────────────────────────────────────────
+@_handles("palinode_diff")
+async def _tool_diff(arguments: dict[str, Any]) -> list[types.TextContent]:
+    days = int(arguments.get("days", 7))
+    params = {"days": str(days)}
+    paths = _coerce_str_array(arguments.get("paths"))
+    if paths:
+        params["paths"] = ",".join(paths)
+    resp = await _get("/diff", params=params)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    return _text(resp.json().get("diff", "No changes."))
+
+
+# ── session init (ADR-012 Layer 4) ────────────────────────────────
+@_handles("palinode_session_init")
+async def _tool_session_init(arguments: dict[str, Any]) -> list[types.TextContent]:
+    if not config.auto_inject.enabled:
+        return _text(
+            "Session auto-inject is disabled (auto_inject.enabled=false). "
+            "Call palinode_search directly for context."
+        )
+    client_name = _session_init_client_name()
+    if _auto_inject_suppressed_for(client_name):
+        return _text(
+            f"Session auto-inject is suppressed for this client ({client_name}) — "
+            "it already receives memory instructions through its instruction "
+            "file/skill/hook layers. Call palinode_search directly for context."
+        )
+    body = {}
+    if arguments.get("project"):
+        body["project"] = arguments["project"]
+    if arguments.get("cwd"):
+        body["cwd"] = arguments["cwd"]
+    elif not body:
+        # stdio servers run on the client's machine, so the server
+        # process CWD is a usable default scope hint. Explicit args win.
+        body["cwd"] = os.getcwd()
+    resp = await _post("/context/prime", json=body)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    from palinode.core.context_prime import format_context_digest
+
+    return _text(format_context_digest(resp.json()))
+
+
+# ── blame ─────────────────────────────────────────────────────────
+@_handles("palinode_blame")
+async def _tool_blame(arguments: dict[str, Any]) -> list[types.TextContent]:
+    file_path = arguments.get("file_path") or arguments.get("file")
+    if not file_path:
+        return _text("Error: file_path is required")
+    params: dict[str, str] = {}
+    if arguments.get("search"):
+        params["search"] = arguments["search"]
+    if arguments.get("claims"):
+        params["claims"] = "true"
+    resp = await _get(f"/blame/{file_path}", params=params)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    blame_text = data.get("blame", "No blame data.")
+    if arguments.get("claims"):
+        from palinode.core.claims import format_claims_resolution
+
+        claims_text = format_claims_resolution(file_path, data.get("claims", []))
+        return _text(f"{blame_text}\n\n{claims_text}")
+    return _text(blame_text)
+
+
+# ── trace ─────────────────────────────────────────────────────────
+@_handles("palinode_trace")
+async def _tool_trace(arguments: dict[str, Any]) -> list[types.TextContent]:
+    file_path = arguments.get("file_path")
+    if not file_path:
+        return _text("Error: file_path is required")
+    resp = await _get(f"/trace/{file_path}")
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    from palinode.core.trace import format_trace_text
+
+    return _text(format_trace_text(resp.json()))
+
+
+# ── rollback ──────────────────────────────────────────────────────
+@_handles("palinode_rollback")
+async def _tool_rollback(arguments: dict[str, Any]) -> list[types.TextContent]:
+    file_path = arguments.get("file_path") or arguments.get("file")
+    if not file_path:
+        return _text("Error: file_path is required")
+    params: dict[str, str] = {"file_path": file_path}
+    if arguments.get("commit"):
+        params["commit"] = arguments["commit"]
+    params["dry_run"] = str(arguments.get("dry_run", True)).lower()
+    resp = await _post_params("/rollback", params=params)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    return _text(resp.json().get("result", "Done."))
+
+
+# ── push ──────────────────────────────────────────────────────────
+@_handles("palinode_push")
+async def _tool_push(arguments: dict[str, Any]) -> list[types.TextContent]:
+    resp = await _post("/push")
+    if resp.status_code != 200:
+        return _text(f"Push failed: {resp.text}")
+    return _text(resp.json().get("result", "Pushed."))
+
+
+# ── trigger ───────────────────────────────────────────────────────
+@_handles("palinode_trigger")
+async def _tool_trigger(arguments: dict[str, Any]) -> list[types.TextContent]:
+    action = arguments.get("action", "create")
+    if action == "list":
+        resp = await _get("/triggers")
+        if resp.status_code != 200:
+            return _text(f"Error: {resp.text}")
+        return _text(json.dumps(resp.json(), indent=2))
+
+    elif action == "delete":
+        tid = arguments.get("trigger_id")
+        if not tid:
+            return _text("Error: trigger_id required for delete")
+        resp = await _delete(f"/triggers/{tid}")
+        if resp.status_code != 200:
+            return _text(f"Error: {resp.text}")
+        return _text(f"Deleted trigger {tid}")
+
+    else:  # create
+        desc = arguments.get("description")
+        mem = arguments.get("memory_file")
+        if not desc or not mem:
+            return _text("Error: description and memory_file required for create")
+        body = {
+            "description": desc,
+            "memory_file": mem,
+        }
+        if arguments.get("trigger_id"):
+            body["trigger_id"] = arguments["trigger_id"]
+        if arguments.get("threshold") is not None:
+            body["threshold"] = arguments["threshold"]
+        if arguments.get("cooldown_hours") is not None:
+            body["cooldown_hours"] = arguments["cooldown_hours"]
+        resp = await _post("/triggers", json=body)
+        if resp.status_code != 200:
+            return _text(f"Error: {resp.text}")
+        data = resp.json()
+        return _text(f"Created trigger {data.get('id', '?')} for {mem}")
+
+
+# ── session_end ───────────────────────────────────────────────────
+@_handles("palinode_session_end")
+async def _tool_session_end(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"summary": arguments.get("summary", "")}
+    # Forward empty arrays rather than dropping them. The server's
+    # envelope guard reads the absence of `decisions`/`blockers` as the
+    # signature of an absorbed tool call, so eliding `[]` here
+    # manufactured that signature for callers who had simply nothing to
+    # report. That rule now lives in core/write_input.py and applies on
+    # every surface, not just this one.
+    body.update(build_payload(SESSION_END_PARAMS, arguments))
+
+    resp = await _post("/session-end", json=body, timeout=_SESSION_END_TIMEOUT)
+    if resp.status_code != 200:
+        return _text(f"Session-end failed: {resp.text}")
+    data = resp.json()
+    if data.get("dry_run"):
+        # Lead with the fact that nothing was written. A dry run that
+        # reads like a capture is worse than no dry run — the caller
+        # moves on believing the session is recorded.
+        targets = [data["daily_file"]]
+        if data.get("status_file"):
+            targets.append(data["status_file"])
+        return _text(
+            "DRY RUN — nothing written, committed, or pushed.\n"
+            f"Would append to: {', '.join(targets)}\n\n"
+            f"{data.get('entry', '')}"
+        )
+    status_msg = f" + status → {data['status_file']}" if data.get("status_file") else ""
+    # Report push outcome so the wrap flow can say "pushed" vs "pending"
+    # without a second tool call.
+    if body.get("push"):
+        push_msg = " + pushed" if data.get("pushed") else " (push pending — commit local, push did not succeed)"
+    else:
+        push_msg = ""
+    return _text(f"Session captured → {data['daily_file']}{status_msg}{push_msg}\n\n{data.get('entry', '')}")
+
+
+# ── dedup_suggest ─────────────────────────────────────────────────
+@_handles("palinode_dedup_suggest")
+async def _tool_dedup_suggest(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"content": arguments.get("content", "")}
+    if arguments.get("min_similarity") is not None:
+        body["min_similarity"] = float(arguments["min_similarity"])
+    if arguments.get("top_k") is not None:
+        body["top_k"] = int(arguments["top_k"])
+    resp = await _post("/dedup-suggest", json=body, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    if not data:
+        return _text("No semantically similar files found.")
+    lines = []
+    for r in data:
+        rel = _rel_path_from(r)
+        tag = " ⚠ STRONG-DUP (likely should update, not create)" if r.get("strong_dup") else ""
+        pct = int(r.get("similarity", 0) * 100)
+        snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
+        lines.append(f"[{rel}] ({pct}% similar){tag}\n  {snippet}")
+    return _text("\n\n".join(lines))
+
+
+# ── orphan_repair ─────────────────────────────────────────────────
+@_handles("palinode_orphan_repair")
+async def _tool_orphan_repair(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"broken_link": arguments.get("broken_link", "")}
+    if arguments.get("min_similarity") is not None:
+        body["min_similarity"] = float(arguments["min_similarity"])
+    if arguments.get("top_k") is not None:
+        body["top_k"] = int(arguments["top_k"])
+    resp = await _post("/orphan-repair", json=body, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    if not data:
+        return _text("No semantically related files found.")
+    lines = []
+    for r in data:
+        rel = _rel_path_from(r)
+        pct = int(r.get("similarity", 0) * 100)
+        snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
+        lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
+    return _text("\n\n".join(lines))
+
+
+# ── cluster_neighbors ─────────────────────────────────────────────
+@_handles("palinode_cluster_neighbors")
+async def _tool_cluster_neighbors(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"file_path": arguments.get("file_path", "")}
+    if arguments.get("min_similarity") is not None:
+        body["min_similarity"] = float(arguments["min_similarity"])
+    if arguments.get("top_k") is not None:
+        body["top_k"] = int(arguments["top_k"])
+    resp = await _post("/cluster-neighbors", json=body, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    if not data:
+        return _text("No unlinked semantic neighbours found above threshold.")
+    lines = []
+    for r in data:
+        rel = _rel_path_from(r)
+        pct = int(r.get("similarity", 0) * 100)
+        snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
+        lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
+    return _text("\n\n".join(lines))
+
+
+# ── topic_coverage ────────────────────────────────────────────────
+@_handles("palinode_topic_coverage")
+async def _tool_topic_coverage(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {"query": arguments.get("query", "")}
+    if arguments.get("min_similarity") is not None:
+        body["min_similarity"] = float(arguments["min_similarity"])
+    resp = await _post("/topic-coverage", json=body, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Error: {resp.text}")
+    data = resp.json()
+    covered = data.get("covered", False)
+    best = data.get("best_match")
+    sim = data.get("similarity", 0.0)
+    if covered and best:
+        fp = _rel_path_from(data, key="best_match")
+        pct = int(sim * 100)
+        return _text(f"COVERED — {fp} ({pct}% similar). Consider updating the existing page.")
+    return _text(f"NOT COVERED — no existing page matches above threshold (best similarity: {sim:.2f}). Safe to create new.")
+
+
+# ── doctor ────────────────────────────────────────────────────────
+@_handles("palinode_doctor")
+async def _tool_doctor(arguments: dict[str, Any]) -> list[types.TextContent]:
+    resp = await _get("/doctor", params={"fast": "true"}, timeout=10.0)
+    if resp.status_code != 200:
+        return _text(f"Doctor failed: {resp.text}")
+    data = resp.json()
+    return _text(json.dumps(data, indent=2))
+
+
+@_handles("palinode_doctor_deep")
+async def _tool_doctor_deep(arguments: dict[str, Any]) -> list[types.TextContent]:
+    resp = await _get("/doctor", params={"canary": "true"}, timeout=60.0)
+    if resp.status_code != 200:
+        return _text(f"Doctor (deep) failed: {resp.text}")
+    data = resp.json()
+    return _text(json.dumps(data, indent=2))
+
+
+# ── lint ──────────────────────────────────────────────────────────
+@_handles("palinode_lint")
+async def _tool_lint(arguments: dict[str, Any]) -> list[types.TextContent]:
+    resp = await _post("/lint", timeout=120.0)
+    if resp.status_code != 200:
+        return _text(f"Lint failed: {resp.text}")
+    return _text(json.dumps(resp.json(), indent=2))
+
+
+# ── review ───────────────────────────────────────────────────
+@_handles("palinode_review")
+async def _tool_review(arguments: dict[str, Any]) -> list[types.TextContent]:
+    body: dict[str, Any] = {}
+    if arguments.get("project"):
+        body["project"] = arguments["project"]
+    resp = await _post("/review", json=body, timeout=120.0)
+    if resp.status_code != 200:
+        return _text(f"Review failed: {resp.text}")
+    return _text(json.dumps(resp.json(), indent=2))
+
+
+# ── prompt ────────────────────────────────────────────────────────
+@_handles("palinode_prompt")
+async def _tool_prompt(arguments: dict[str, Any]) -> list[types.TextContent]:
+    action = arguments.get("action", "list")
+
+    if action == "list":
+        params: dict[str, str] = {}
+        if arguments.get("task"):
+            params["task"] = arguments["task"]
+        resp = await _get("/prompts", params=params)
+        if resp.status_code != 200:
+            return _text(f"Error listing prompts: {resp.text}")
+        data = resp.json()
+        if not data:
+            return _text("No prompts found.")
+        lines = []
+        for p in data:
+            active_tag = " [active]" if p.get("active") else ""
+            lines.append(
+                f"{p['name']} (task={p.get('task','')}, "
+                f"model={p.get('model','')}, "
+                f"v{p.get('version','')}){active_tag}"
             )
-            if resp.status_code != 200:
-                return _text(f"Error reading file: {resp.text}")
-            data = resp.json()
-            content = data.get("content", "")
-            if include_meta:
-                fm = data.get("frontmatter") or {}
-                # Render as YAML-ish frontmatter + body so downstream consumers
-                # can re-parse if they want.  Keep it simple: the file already
-                # has the same structure on disk.
-                fm_lines = "\n".join(f"{k}: {v!r}" for k, v in fm.items())
-                return _text(f"---\n{fm_lines}\n---\n{content}")
-            return _text(content)
+        return _text("\n".join(lines))
 
-        # ── search ────────────────────────────────────────────────────────
-        elif name == "palinode_search":
-            body: dict[str, Any] = {"query": arguments["query"]}
-            if arguments.get("category"):
-                body["category"] = arguments["category"]
-            if arguments.get("limit"):
-                body["limit"] = int(arguments["limit"])
-            if arguments.get("date_after"):
-                body["date_after"] = arguments["date_after"]
-            if arguments.get("date_before"):
-                body["date_before"] = arguments["date_before"]
-            if arguments.get("include_daily"):
-                body["include_daily"] = True
-            if arguments.get("include_telemetry"):
-                body["include_telemetry"] = True
-            if arguments.get("since_days") is not None:
-                body["since_days"] = int(arguments["since_days"])
-            if arguments.get("types"):
-                body["types"] = _coerce_str_array(arguments["types"])
-            if arguments.get("min_priority") is not None:
-                body["min_priority"] = int(arguments["min_priority"])
-            # ADR-010: caller-supplied threshold wins; otherwise use
-            # the MCP-tuned default (typically tighter than the API default
-            # to keep auto-context noise low).
-            if arguments.get("threshold") is not None:
-                body["threshold"] = float(arguments["threshold"])
-            else:
-                body["threshold"] = config.search.mcp_threshold
-            # ADR-008: ambient context boost
-            context = _resolve_context()
-            if context:
-                body["context"] = context
+    elif action == "read":
+        pname = arguments.get("name")
+        if not pname:
+            return _text("Error: name required for 'read'")
+        resp = await _get(f"/prompts/{pname}")
+        if resp.status_code == 404:
+            return _text(f"Prompt '{pname}' not found.")
+        if resp.status_code != 200:
+            return _text(f"Error reading prompt: {resp.text}")
+        data = resp.json()
+        header = (
+            f"# {data['name']} (task={data.get('task','')}, "
+            f"model={data.get('model','')}, v{data.get('version','')})"
+        )
+        active_note = " [ACTIVE]" if data.get("active") else ""
+        return _text(f"{header}{active_note}\n\n{data.get('content','')}")
 
-            resp = await _post("/search", json=body, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Search failed: {resp.text}")
-            # `full` is purely a rendering choice — the API always
-            # populates `snippet` and preserves `content`, so the MCP picks
-            # which to render without an extra round-trip.
-            return _text(_format_results(resp.json(), full=bool(arguments.get("full"))))
+    elif action == "activate":
+        pname = arguments.get("name")
+        if not pname:
+            return _text("Error: name required for 'activate'")
+        resp = await _post(f"/prompts/{pname}/activate")
+        if resp.status_code == 404:
+            return _text(f"Prompt '{pname}' not found.")
+        if resp.status_code != 200:
+            return _text(f"Error activating prompt: {resp.text}")
+        data = resp.json()
+        return _text(f"Activated '{data['activated']}' for task={data['task']}")
 
-        # ── save ──────────────────────────────────────────────────────────
-        elif name == "palinode_save":
-            # Resolve memory type from either explicit `type` or `ps=true`
-            # shortcut (parity with CLI `palinode save --ps`).
-            try:
-                resolved_type = _resolve_save_type(
-                    arguments.get("type"), arguments.get("ps")
-                )
-            except ValueError as e:
-                return _text(f"Error: {e}")
+    else:
+        return _text(f"Unknown action: {action}. Use 'list', 'read', or 'activate'.")
 
-            body: dict[str, Any] = {
-                "content": arguments["content"],
-                "type": resolved_type,
-            }
-            # ADR-010: only set body source when caller explicitly
-            # supplied one.  Otherwise the X-Palinode-Source header (set on
-            # every MCP request) carries attribution to the API.
-            if arguments.get("source"):
-                body["source"] = arguments["source"]
-            if arguments.get("slug"):
-                body["slug"] = arguments["slug"]
-            if arguments.get("core") is not None:
-                body["core"] = arguments["core"]
-            if arguments.get("entities"):
-                body["entities"] = _coerce_str_array(arguments["entities"])
-            if arguments.get("project"):
-                body["project"] = arguments["project"]
-            if arguments.get("title"):
-                body["title"] = arguments["title"]
-            if arguments.get("metadata") is not None:
-                body["metadata"] = arguments["metadata"]
-            if arguments.get("confidence") is not None:
-                body["confidence"] = float(arguments["confidence"])
-            if arguments.get("priority") is not None:
-                body["priority"] = int(arguments["priority"])
-            # ADR-018: epistemic marker. Forwarded verbatim; the API
-            # validates against VALID_EPISTEMICS and 400s on an unknown value
-            # (surfaced below as the standard "Save failed" message).
-            if arguments.get("epistemic") is not None:
-                body["epistemic"] = arguments["epistemic"]
-            if arguments.get("external_refs") is not None:
-                body["external_refs"] = arguments["external_refs"]
-            # ADR-015 §2.1: write-semantics axis. Forwarded verbatim; the API
-            # validates against VALID_UPDATE_POLICIES and 400s on an unknown
-            # value (surfaced below as the standard "Save failed" message).
-            if arguments.get("update_policy") is not None:
-                body["update_policy"] = arguments["update_policy"]
-            # source-citation anchors. Forwarded verbatim; the API
-            # validates each entry and computes/verifies quote_hash, 400ing on a
-            # malformed or inconsistent anchor (surfaced as "Save failed").
-            if arguments.get("sources") is not None:
-                body["sources"] = _coerce_str_array(arguments["sources"])
-            # (G4): typed relationship links. Forwarded verbatim; the API
-            # validates each ref and 400s on a malformed one (surfaced below as
-            # the standard "Save failed" message).
-            if arguments.get("contradicts") is not None:
-                body["contradicts"] = _coerce_str_array(arguments["contradicts"])
-            if arguments.get("backed_by") is not None:
-                body["backed_by"] = _coerce_str_array(arguments["backed_by"])
-            # claim-level source anchors. Forwarded verbatim; the API
-            # validates each entry, derives/verifies claim_id + quote_hash, and
-            # 400s on a malformed or inconsistent anchor (surfaced below as the
-            # standard "Save failed" message).
-            if arguments.get("claims") is not None:
-                body["claims"] = _coerce_str_array(arguments["claims"])
 
-            resp = await _post("/save", json=body)
-            if resp.status_code != 200:
-                return _text(f"Save failed: {resp.text}")
-            data = resp.json()
-            file_path = data.get("file_path", "")
-            # Show relative path
-            rel = file_path.rsplit("/palinode/", 1)[-1] if "/palinode/" in file_path else file_path
-            # Surface per-index health signals from if either index
-            # write failed — these are warnings, not save failures.
-            warnings: list[str] = []
-            if not data.get("indexed_vec", True):
-                warnings.append("vec index write failed (chunk absent from vector search)")
-            if not data.get("indexed_fts", True):
-                warnings.append("FTS5 sync failed (periodic rebuild will recover)")
-            if not data.get("git_committed", True):
-                warnings.append("git auto-commit failed (file on disk, not versioned)")
-            if warnings:
-                return _text(f"Saved to {rel} [warnings: {'; '.join(warnings)}]")
-            return _text(f"Saved to {rel}")
+# ── depends ───────────────────────────────────────────────────────
+@_handles("palinode_depends")
+async def _tool_depends(arguments: dict[str, Any]) -> list[types.TextContent]:
+    if arguments.get("unblocked"):
+        resp = await _get("/depends/_unblocked")
+        if resp.status_code != 200:
+            return _text(f"API Error: {resp.text}")
+        items = resp.json()
+        if not items:
+            return _text("No unblocked items found.")
+        lines = [
+            f"{it['slug']}" + (f" (status={it['status']})" if it.get("status") else "")
+            for it in items
+        ]
+        return _text("Unblocked items:\n" + "\n".join(lines))
+    else:
+        slug = arguments.get("slug", "").strip()
+        if not slug:
+            return _text("Error: 'slug' is required unless unblocked=true")
+        resp = await _get(f"/depends/{slug}")
+        if resp.status_code != 200:
+            return _text(f"API Error: {resp.text}")
+        import json as _json
+        return _text(_json.dumps(resp.json(), indent=2))
 
-        # ── ingest ────────────────────────────────────────────────────────
-        elif name == "palinode_ingest":
-            url = arguments["url"]
-            name_arg = arguments.get("name", url.split("/")[-1][:40])
 
-            resp = await _post("/ingest-url", json={"url": url, "name": name_arg}, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Ingest failed: {resp.text}")
-            data = resp.json()
-            if data.get("file_path"):
-                fp = data["file_path"]
-                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
-                return _text(f"Ingested → {rel}")
-            return _text("No content extracted from URL.")
+async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+    """Route one tool call to its handler.
 
-        # ── history ───────────────────────────────────────────────────────
-        elif name == "palinode_history":
-            file_path = arguments["file_path"]
-            limit = int(arguments.get("limit", 20))
-            detail = arguments.get("detail", "summary")
-            if detail not in ("summary", "full"):
-                return _text("Error: detail must be 'summary' or 'full'")
-            resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": detail})
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            if not data.get("history"):
-                return _text("No history found.")
-            lines = []
-            for c in data["history"]:
-                line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
-                if c.get("stats"):
-                    line += f"\n  {c['stats']}"
-                if detail == "full" and c.get("diff"):
-                    line += f"\n{c['diff']}"
-                lines.append(line)
-            return _text("\n\n---\n\n".join(lines) if detail == "full" else "\n".join(lines))
-
-        # ── timeline (deprecated alias for history detail=full) ───────────
-        elif name == "palinode_timeline":
-            logger.warning("palinode_timeline is deprecated — use palinode_history with detail='full'")
-            file_path = arguments["file_path"]
-            limit = int(arguments.get("limit", 20))
-            resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": "full"})
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            if not data.get("history"):
-                return _text("No history found.")
-            lines = []
-            for c in data["history"]:
-                line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
-                if c.get("stats"):
-                    line += f"\n  {c['stats']}"
-                if c.get("diff"):
-                    line += f"\n{c['diff']}"
-                lines.append(line)
-            deprecation_note = "[DEPRECATED] palinode_timeline is deprecated — use palinode_history with detail='full' instead.\n\n"
-            return _text(deprecation_note + "\n\n---\n\n".join(lines))
-
-        # ── entities ──────────────────────────────────────────────────────
-        elif name == "palinode_entities":
-            entity_ref = arguments.get("entity_ref")
-            if entity_ref:
-                resp = await _get(f"/entities/{entity_ref}")
-            else:
-                resp = await _get("/entities")
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            return _text(json.dumps(resp.json(), indent=2))
-
-        # ── consolidate ───────────────────────────────────────────────────
-        elif name == "palinode_consolidate":
-            body: dict[str, Any] = {}
-            if arguments.get("dry_run"):
-                body["dry_run"] = True
-            if arguments.get("nightly"):
-                body["nightly"] = True
-            if arguments.get("sources"):
-                body["sources"] = _coerce_str_array(arguments["sources"])
-            resp = await _post("/consolidate", json=body, timeout=300.0)
-            if resp.status_code != 200:
-                return _text(f"Consolidation failed: {resp.text}")
-            return _text(json.dumps(resp.json(), indent=2))
-
-        # ── archive-expired ────────────────────────────────────────────────
-        elif name == "palinode_archive_expired":
-            body = {}
-            if arguments.get("dry_run"):
-                body["dry_run"] = True
-            resp = await _post("/archive-expired", json=body, timeout=120.0)
-            if resp.status_code != 200:
-                return _text(f"Archive-expired sweep failed: {resp.text}")
-            return _text(json.dumps(resp.json(), indent=2))
-
-        # ── archive (on-demand ARCHIVE / SUPERSEDE) ────────────────────────
-        elif name == "palinode_archive":
-            file_path = arguments.get("file_path")
-            if not file_path:
-                return _text("Error: file_path is required")
-            body = {"file_path": file_path}
-            if arguments.get("reason"):
-                body["reason"] = arguments["reason"]
-            if arguments.get("superseded_by"):
-                body["superseded_by"] = arguments["superseded_by"]
-            resp = await _post("/archive", json=body)
-            if resp.status_code != 200:
-                return _text(f"Archive failed: {resp.text}")
-            data = resp.json()
-            if data.get("status") == "already_archived":
-                return _text(f"{data.get('file')} is already archived — no change.")
-            successor = data.get("superseded_by")
-            verb = f"Superseded by {successor}" if successor else "Archived"
-            return _text(
-                f"{verb}: {data.get('file')}\n"
-                f"History: {data.get('history_file')}\n"
-                f"Chunks suppressed from recall: {data.get('chunks_updated', 0)}"
-            )
-
-        # ── status ────────────────────────────────────────────────────────
-        elif name == "palinode_status":
-            resp = await _get("/status")
-            if resp.status_code != 200:
-                return _text(f"API unreachable: {resp.text}")
-            s = resp.json()
-            lines = [
-                "Palinode Status",
-                f"  Version:        {s.get('version', '?')}",
-                f"  Files indexed:  {s.get('total_files', '?')}",
-                f"  Chunks indexed: {s.get('total_chunks', '?')}",
-                f"  Hybrid search:  {'✅ enabled' if s.get('hybrid_search') else '❌ disabled'}",
-                f"  FTS5 chunks:    {s.get('fts_chunks', '?')}",
-                f"  Entities:       {s.get('total_entities', '?')}",
-                f"  Ollama (embed): {'✅ reachable' if s.get('ollama_reachable') else '❌ unreachable'}",
-                f"  Git commits 7d: {s.get('git_commits_7d', '?')}",
-                f"  Unpushed:       {s.get('unpushed_commits', '?')}",
-                f"  API:            {_api_url('')}",
-            ]
-            return _text("\n".join(lines))
-
-        # ── diff ──────────────────────────────────────────────────────────
-        elif name == "palinode_diff":
-            days = int(arguments.get("days", 7))
-            params = {"days": str(days)}
-            paths = _coerce_str_array(arguments.get("paths"))
-            if paths:
-                params["paths"] = ",".join(paths)
-            resp = await _get("/diff", params=params)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            return _text(resp.json().get("diff", "No changes."))
-
-        # ── session init (ADR-012 Layer 4) ────────────────────────────────
-        elif name == "palinode_session_init":
-            if not config.auto_inject.enabled:
-                return _text(
-                    "Session auto-inject is disabled (auto_inject.enabled=false). "
-                    "Call palinode_search directly for context."
-                )
-            client_name = _session_init_client_name()
-            if _auto_inject_suppressed_for(client_name):
-                return _text(
-                    f"Session auto-inject is suppressed for this client ({client_name}) — "
-                    "it already receives memory instructions through its instruction "
-                    "file/skill/hook layers. Call palinode_search directly for context."
-                )
-            body = {}
-            if arguments.get("project"):
-                body["project"] = arguments["project"]
-            if arguments.get("cwd"):
-                body["cwd"] = arguments["cwd"]
-            elif not body:
-                # stdio servers run on the client's machine, so the server
-                # process CWD is a usable default scope hint. Explicit args win.
-                body["cwd"] = os.getcwd()
-            resp = await _post("/context/prime", json=body)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            from palinode.core.context_prime import format_context_digest
-
-            return _text(format_context_digest(resp.json()))
-
-        # ── blame ─────────────────────────────────────────────────────────
-        elif name == "palinode_blame":
-            # ADR-010: prefer canonical `file_path`; accept legacy
-            # `file` for one release.
-            file_path = arguments.get("file_path") or arguments.get("file")
-            if not file_path:
-                return _text("Error: file_path is required")
-            params: dict[str, str] = {}
-            if arguments.get("search"):
-                params["search"] = arguments["search"]
-            if arguments.get("claims"):
-                params["claims"] = "true"
-            resp = await _get(f"/blame/{file_path}", params=params)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            blame_text = data.get("blame", "No blame data.")
-            if arguments.get("claims"):
-                from palinode.core.claims import format_claims_resolution
-
-                claims_text = format_claims_resolution(file_path, data.get("claims", []))
-                return _text(f"{blame_text}\n\n{claims_text}")
-            return _text(blame_text)
-
-        # ── trace ─────────────────────────────────────────────────────────
-        elif name == "palinode_trace":
-            file_path = arguments.get("file_path")
-            if not file_path:
-                return _text("Error: file_path is required")
-            resp = await _get(f"/trace/{file_path}")
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            from palinode.core.trace import format_trace_text
-
-            return _text(format_trace_text(resp.json()))
-
-        # ── rollback ──────────────────────────────────────────────────────
-        elif name == "palinode_rollback":
-            # ADR-010: prefer canonical `file_path`; accept legacy
-            # `file` for one release.
-            file_path = arguments.get("file_path") or arguments.get("file")
-            if not file_path:
-                return _text("Error: file_path is required")
-            params: dict[str, str] = {"file_path": file_path}
-            if arguments.get("commit"):
-                params["commit"] = arguments["commit"]
-            params["dry_run"] = str(arguments.get("dry_run", True)).lower()
-            resp = await _post_params("/rollback", params=params)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            return _text(resp.json().get("result", "Done."))
-
-        # ── push ──────────────────────────────────────────────────────────
-        elif name == "palinode_push":
-            resp = await _post("/push")
-            if resp.status_code != 200:
-                return _text(f"Push failed: {resp.text}")
-            return _text(resp.json().get("result", "Pushed."))
-
-        # ── trigger ───────────────────────────────────────────────────────
-        elif name == "palinode_trigger":
-            action = arguments.get("action", "create")
-            if action == "list":
-                resp = await _get("/triggers")
-                if resp.status_code != 200:
-                    return _text(f"Error: {resp.text}")
-                return _text(json.dumps(resp.json(), indent=2))
-
-            elif action == "delete":
-                tid = arguments.get("trigger_id")
-                if not tid:
-                    return _text("Error: trigger_id required for delete")
-                resp = await _delete(f"/triggers/{tid}")
-                if resp.status_code != 200:
-                    return _text(f"Error: {resp.text}")
-                return _text(f"Deleted trigger {tid}")
-
-            else:  # create
-                desc = arguments.get("description")
-                mem = arguments.get("memory_file")
-                if not desc or not mem:
-                    return _text("Error: description and memory_file required for create")
-                body = {
-                    "description": desc,
-                    "memory_file": mem,
-                }
-                if arguments.get("trigger_id"):
-                    body["trigger_id"] = arguments["trigger_id"]
-                if arguments.get("threshold") is not None:
-                    body["threshold"] = arguments["threshold"]
-                if arguments.get("cooldown_hours") is not None:
-                    body["cooldown_hours"] = arguments["cooldown_hours"]
-                resp = await _post("/triggers", json=body)
-                if resp.status_code != 200:
-                    return _text(f"Error: {resp.text}")
-                data = resp.json()
-                return _text(f"Created trigger {data.get('id', '?')} for {mem}")
-
-        # ── session_end ───────────────────────────────────────────────────
-        elif name == "palinode_session_end":
-            body: dict[str, Any] = {"summary": arguments.get("summary", "")}
-            # Forward empty arrays rather than dropping them. The server's
-            # envelope guard reads the absence of these two as the signature of
-            # an absorbed tool call, so eliding `[]` here manufactured that
-            # signature for callers who had simply nothing to report.
-            # `is not None` keeps "sent, but empty" distinguishable from "never
-            # sent" all the way to the guard.
-            if arguments.get("decisions") is not None:
-                body["decisions"] = _coerce_str_array(arguments["decisions"])
-            if arguments.get("blockers") is not None:
-                body["blockers"] = _coerce_str_array(arguments["blockers"])
-            if arguments.get("project"):
-                body["project"] = arguments["project"]
-            if arguments.get("source"):
-                body["source"] = arguments["source"]
-            if arguments.get("push") is not None:
-                body["push"] = bool(arguments["push"])
-            if arguments.get("dry_run") is not None:
-                body["dry_run"] = bool(arguments["dry_run"])
-
-            resp = await _post("/session-end", json=body, timeout=_SESSION_END_TIMEOUT)
-            if resp.status_code != 200:
-                return _text(f"Session-end failed: {resp.text}")
-            data = resp.json()
-            if data.get("dry_run"):
-                # Lead with the fact that nothing was written. A dry run that
-                # reads like a capture is worse than no dry run — the caller
-                # moves on believing the session is recorded.
-                targets = [data["daily_file"]]
-                if data.get("status_file"):
-                    targets.append(data["status_file"])
-                return _text(
-                    "DRY RUN — nothing written, committed, or pushed.\n"
-                    f"Would append to: {', '.join(targets)}\n\n"
-                    f"{data.get('entry', '')}"
-                )
-            status_msg = f" + status → {data['status_file']}" if data.get("status_file") else ""
-            # Report push outcome so the wrap flow can say "pushed" vs "pending"
-            # without a second tool call.
-            if body.get("push"):
-                push_msg = " + pushed" if data.get("pushed") else " (push pending — commit local, push did not succeed)"
-            else:
-                push_msg = ""
-            return _text(f"Session captured → {data['daily_file']}{status_msg}{push_msg}\n\n{data.get('entry', '')}")
-
-        # ── dedup_suggest ─────────────────────────────────────────────────
-        elif name == "palinode_dedup_suggest":
-            body: dict[str, Any] = {"content": arguments.get("content", "")}
-            if arguments.get("min_similarity") is not None:
-                body["min_similarity"] = float(arguments["min_similarity"])
-            if arguments.get("top_k") is not None:
-                body["top_k"] = int(arguments["top_k"])
-            resp = await _post("/dedup-suggest", json=body, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            if not data:
-                return _text("No semantically similar files found.")
-            lines = []
-            for r in data:
-                fp = r.get("file_path", "")
-                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
-                tag = " ⚠ STRONG-DUP (likely should update, not create)" if r.get("strong_dup") else ""
-                pct = int(r.get("similarity", 0) * 100)
-                snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
-                lines.append(f"[{rel}] ({pct}% similar){tag}\n  {snippet}")
-            return _text("\n\n".join(lines))
-
-        # ── orphan_repair ─────────────────────────────────────────────────
-        elif name == "palinode_orphan_repair":
-            body: dict[str, Any] = {"broken_link": arguments.get("broken_link", "")}
-            if arguments.get("min_similarity") is not None:
-                body["min_similarity"] = float(arguments["min_similarity"])
-            if arguments.get("top_k") is not None:
-                body["top_k"] = int(arguments["top_k"])
-            resp = await _post("/orphan-repair", json=body, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            if not data:
-                return _text("No semantically related files found.")
-            lines = []
-            for r in data:
-                fp = r.get("file_path", "")
-                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
-                pct = int(r.get("similarity", 0) * 100)
-                snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
-                lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
-            return _text("\n\n".join(lines))
-
-        # ── cluster_neighbors ─────────────────────────────────────────────
-        elif name == "palinode_cluster_neighbors":
-            body: dict[str, Any] = {"file_path": arguments.get("file_path", "")}
-            if arguments.get("min_similarity") is not None:
-                body["min_similarity"] = float(arguments["min_similarity"])
-            if arguments.get("top_k") is not None:
-                body["top_k"] = int(arguments["top_k"])
-            resp = await _post("/cluster-neighbors", json=body, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            if not data:
-                return _text("No unlinked semantic neighbours found above threshold.")
-            lines = []
-            for r in data:
-                fp = r.get("file_path", "")
-                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
-                pct = int(r.get("similarity", 0) * 100)
-                snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
-                lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
-            return _text("\n\n".join(lines))
-
-        # ── topic_coverage ────────────────────────────────────────────────
-        elif name == "palinode_topic_coverage":
-            body: dict[str, Any] = {"query": arguments.get("query", "")}
-            if arguments.get("min_similarity") is not None:
-                body["min_similarity"] = float(arguments["min_similarity"])
-            resp = await _post("/topic-coverage", json=body, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Error: {resp.text}")
-            data = resp.json()
-            covered = data.get("covered", False)
-            best = data.get("best_match")
-            sim = data.get("similarity", 0.0)
-            if covered and best:
-                fp = best.rsplit("/palinode/", 1)[-1] if "/palinode/" in best else best
-                pct = int(sim * 100)
-                return _text(f"COVERED — {fp} ({pct}% similar). Consider updating the existing page.")
-            return _text(f"NOT COVERED — no existing page matches above threshold (best similarity: {sim:.2f}). Safe to create new.")
-
-        # ── doctor ────────────────────────────────────────────────────────
-        elif name == "palinode_doctor":
-            resp = await _get("/doctor", params={"fast": "true"}, timeout=10.0)
-            if resp.status_code != 200:
-                return _text(f"Doctor failed: {resp.text}")
-            data = resp.json()
-            return _text(json.dumps(data, indent=2))
-
-        elif name == "palinode_doctor_deep":
-            resp = await _get("/doctor", params={"canary": "true"}, timeout=60.0)
-            if resp.status_code != 200:
-                return _text(f"Doctor (deep) failed: {resp.text}")
-            data = resp.json()
-            return _text(json.dumps(data, indent=2))
-
-        # ── lint ──────────────────────────────────────────────────────────
-        elif name == "palinode_lint":
-            resp = await _post("/lint", timeout=120.0)
-            if resp.status_code != 200:
-                return _text(f"Lint failed: {resp.text}")
-            return _text(json.dumps(resp.json(), indent=2))
-
-        # ── review ───────────────────────────────────────────────────
-        elif name == "palinode_review":
-            body: dict[str, Any] = {}
-            if arguments.get("project"):
-                body["project"] = arguments["project"]
-            resp = await _post("/review", json=body, timeout=120.0)
-            if resp.status_code != 200:
-                return _text(f"Review failed: {resp.text}")
-            return _text(json.dumps(resp.json(), indent=2))
-
-        # ── prompt ────────────────────────────────────────────────────────
-        elif name == "palinode_prompt":
-            action = arguments.get("action", "list")
-
-            if action == "list":
-                params: dict[str, str] = {}
-                if arguments.get("task"):
-                    params["task"] = arguments["task"]
-                resp = await _get("/prompts", params=params)
-                if resp.status_code != 200:
-                    return _text(f"Error listing prompts: {resp.text}")
-                data = resp.json()
-                if not data:
-                    return _text("No prompts found.")
-                lines = []
-                for p in data:
-                    active_tag = " [active]" if p.get("active") else ""
-                    lines.append(
-                        f"{p['name']} (task={p.get('task','')}, "
-                        f"model={p.get('model','')}, "
-                        f"v{p.get('version','')}){active_tag}"
-                    )
-                return _text("\n".join(lines))
-
-            elif action == "read":
-                pname = arguments.get("name")
-                if not pname:
-                    return _text("Error: name required for 'read'")
-                resp = await _get(f"/prompts/{pname}")
-                if resp.status_code == 404:
-                    return _text(f"Prompt '{pname}' not found.")
-                if resp.status_code != 200:
-                    return _text(f"Error reading prompt: {resp.text}")
-                data = resp.json()
-                header = (
-                    f"# {data['name']} (task={data.get('task','')}, "
-                    f"model={data.get('model','')}, v{data.get('version','')})"
-                )
-                active_note = " [ACTIVE]" if data.get("active") else ""
-                return _text(f"{header}{active_note}\n\n{data.get('content','')}")
-
-            elif action == "activate":
-                pname = arguments.get("name")
-                if not pname:
-                    return _text("Error: name required for 'activate'")
-                resp = await _post(f"/prompts/{pname}/activate")
-                if resp.status_code == 404:
-                    return _text(f"Prompt '{pname}' not found.")
-                if resp.status_code != 200:
-                    return _text(f"Error activating prompt: {resp.text}")
-                data = resp.json()
-                return _text(f"Activated '{data['activated']}' for task={data['task']}")
-
-            else:
-                return _text(f"Unknown action: {action}. Use 'list', 'read', or 'activate'.")
-
-        # ── depends ───────────────────────────────────────────────────────
-        elif name == "palinode_depends":
-            if arguments.get("unblocked"):
-                resp = await _get("/depends/_unblocked")
-                if resp.status_code != 200:
-                    return _text(f"API Error: {resp.text}")
-                items = resp.json()
-                if not items:
-                    return _text("No unblocked items found.")
-                lines = [
-                    f"{it['slug']}" + (f" (status={it['status']})" if it.get("status") else "")
-                    for it in items
-                ]
-                return _text("Unblocked items:\n" + "\n".join(lines))
-            else:
-                slug = arguments.get("slug", "").strip()
-                if not slug:
-                    return _text("Error: 'slug' is required unless unblocked=true")
-                resp = await _get(f"/depends/{slug}")
-                if resp.status_code != 200:
-                    return _text(f"API Error: {resp.text}")
-                import json as _json
-                return _text(_json.dumps(resp.json(), indent=2))
-
-        else:
+    The error handling below is the reason this stays a function rather than a
+    bare dict lookup at the call site: every handler shares one translation of
+    transport failures into the dispatcher's text-response contract.
+    """
+    try:
+        handler = _TOOL_HANDLERS.get(name)
+        if handler is None:
             return _text(f"Unknown tool: {name}")
-
+        return await handler(arguments)
     except httpx.ConnectError:
         return _text(f"Error: Cannot reach Palinode API at {_api_url('')}. Is palinode-api running?")
     except httpx.TimeoutException:

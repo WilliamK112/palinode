@@ -20,7 +20,9 @@ or skip, never overwrite without --force.
 import json
 import re
 import stat
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import click
 
@@ -95,6 +97,26 @@ CLAUDE_MD_BLOCK = (
 #: .cursor/rules/ (Cursor) receive: the same recall / save-with-rationale /
 #: session-end contract, none of the Claude-Code-only machinery.
 MEMORY_BLOCK_CORE = _MEMORY_BLOCK_TOP + _NEUTRAL_SESSION_END + _MEMORY_BLOCK_TAIL
+
+
+#: Canonical detector for "an instruction file already has the Palinode
+#: memory block". The ONE definition shared by `palinode init` (create-vs-
+#: append idempotency below), the `claude_md_palinode_block` doctor check
+#: (what gets reported), and its `--fix` (what gets repaired) — so the three
+#: can never again disagree about what "already wired up" means. Checks both
+#: heading levels so a hand-rolled top-level "# Memory (Palinode)" heading is
+#: also recognised, not only the "##" level this module writes.
+MEMORY_BLOCK_MARKERS = ("## Memory (Palinode)", "# Memory (Palinode)")
+
+
+def has_memory_block(content: str) -> bool:
+    """True if *content* already carries a Palinode memory block heading.
+
+    Deliberately NOT a substring match on "palinode" anywhere in the file —
+    a CLAUDE.md that merely mentions the project in prose has not been wired
+    up; only the section heading counts as the block being present.
+    """
+    return any(marker in content for marker in MEMORY_BLOCK_MARKERS)
 
 
 # Appended to the CLAUDE.md memory block only when `--wrap-policy heavy` is
@@ -593,6 +615,24 @@ MCP_JSON_BLOCK = {
 }
 
 
+@dataclass(frozen=True)
+class PlannedWrite:
+    """One filesystem mutation `palinode init` may perform.
+
+    `build_plan()` produces the single, complete list of these. `--dry-run`
+    prints `label`/`path`/`payload` for every entry without ever calling
+    `writer`; the real run calls `writer()` for every entry and prints
+    `label` + the returned status. Both walk the SAME list, so the plan and
+    the write-set are the same object — dry-run cannot under- or
+    over-report relative to what actually happens.
+    """
+
+    label: str
+    path: Path
+    payload: str
+    writer: Callable[[], str]
+
+
 def _slugify(name: str) -> str:
     """Turn a directory name into a safe project slug."""
     s = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip().lower())
@@ -608,8 +648,8 @@ def _write_memory_block(path: Path, block: str, force: bool) -> str:
     """Create-or-append a rendered memory block with marker idempotency.
 
     The shared write idiom for every instruction-file surface (CLAUDE.md,
-    AGENTS.md, .cursor/rules): create the file with the block if absent; if it
-    already carries a ``## Memory (Palinode)`` section, skip unless forced;
+    AGENTS.md, .cursor/rules): create the file with the block if absent; if
+    ``has_memory_block()`` already finds a section, skip unless forced;
     otherwise append — never clobber a user's existing file content.
     """
     _ensure_parent(path)
@@ -617,7 +657,7 @@ def _write_memory_block(path: Path, block: str, force: bool) -> str:
         path.write_text(block)
         return "created"
     existing = path.read_text()
-    if "## Memory (Palinode)" in existing and not force:
+    if has_memory_block(existing) and not force:
         return "skipped (already has Palinode section)"
     with path.open("a") as f:
         if not existing.endswith("\n"):
@@ -882,7 +922,7 @@ OBSIDIAN_GRAPH_JSON: dict = {
 # hand-edit it.  We set a minimal structure so Obsidian opens without
 # complaining about a malformed workspace.
 # NOTE: --force-obsidian deliberately skips this file (it's Obsidian-owned
-# post-launch).  The skip is implemented in _write_obsidian_scaffold().
+# post-launch).  The skip is implemented in _obsidian_plan().
 OBSIDIAN_WORKSPACE_JSON: dict = {
     "main": {
         "id": "main",
@@ -1016,16 +1056,35 @@ def _write_text_file(path: Path, content: str, force: bool) -> str:
     return "created"
 
 
-def _write_obsidian_scaffold(
-    target: Path,
-    force: bool,
-    force_obsidian: bool,
-) -> list[tuple[str, str]]:
-    """Write all Obsidian scaffold files into *target*.
+# The standard memory category directories so the Obsidian graph has seed
+# nodes to render and Obsidian's file tree isn't empty.
+_VAULT_DIRS = (
+    "people", "projects", "decisions", "insights",
+    "research", "daily", "archive", "logs",
+)
 
-    Returns a list of (label, status) pairs suitable for the output table.
 
-    Idempotency rules:
+def _write_vault_dir(d: Path) -> str:
+    """Create one Obsidian vault category directory with a `.gitkeep`.
+
+    A `.gitkeep` is placed in each so git tracks the (otherwise empty)
+    directory. Status is keyed on the `.gitkeep`, not the directory itself,
+    matching the pre-existing idempotency rule: re-running never disturbs a
+    directory a user has since populated.
+    """
+    d.mkdir(exist_ok=True)
+    gitkeep = d / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.write_text("")
+        return "created"
+    return "skipped"
+
+
+def _obsidian_plan(target: Path, force: bool, force_obsidian: bool) -> list[PlannedWrite]:
+    """Enumerate every Obsidian scaffold write into *target* — 8 vault
+    category directories plus 5 files, 13 entries total.
+
+    Idempotency rules (mirrored per-entry in each `writer`):
       - ``force=False, force_obsidian=False`` — skip any file that already exists
       - ``force_obsidian=True`` — overwrite all scaffold files EXCEPT
         ``.obsidian/workspace.json`` (Obsidian owns that post-launch)
@@ -1037,46 +1096,38 @@ def _write_obsidian_scaffold(
     workspace_force = force  # only overwrite on global --force, not --force-obsidian
 
     obsidian_dir = target / ".obsidian"
-    results: list[tuple[str, str]] = []
+    plan: list[PlannedWrite] = []
 
-    # Create the standard memory category directories so the Obsidian graph
-    # has seed nodes to render and Obsidian's file tree isn't empty.
-    # A .gitkeep is placed in each so git tracks empty dirs.
-    _VAULT_DIRS = (
-        "people", "projects", "decisions", "insights",
-        "research", "daily", "archive", "logs",
-    )
     for dir_name in _VAULT_DIRS:
         d = target / dir_name
-        d.mkdir(exist_ok=True)
-        gitkeep = d / ".gitkeep"
-        if not gitkeep.exists():
-            gitkeep.write_text("")
-            results.append((dir_name + "/", "created"))
-        else:
-            results.append((dir_name + "/", "skipped"))
+        plan.append(PlannedWrite(
+            dir_name + "/", d, "vault category directory",
+            lambda d=d: _write_vault_dir(d),
+        ))
 
-    results.append((
-        ".obsidian/app.json",
-        _write_json_file(obsidian_dir / "app.json", OBSIDIAN_APP_JSON, obsidian_force),
+    plan.append(PlannedWrite(
+        ".obsidian/app.json", obsidian_dir / "app.json", "Obsidian app config",
+        lambda: _write_json_file(obsidian_dir / "app.json", OBSIDIAN_APP_JSON, obsidian_force),
     ))
-    results.append((
-        ".obsidian/graph.json",
-        _write_json_file(obsidian_dir / "graph.json", OBSIDIAN_GRAPH_JSON, obsidian_force),
+    plan.append(PlannedWrite(
+        ".obsidian/graph.json", obsidian_dir / "graph.json", "graph view settings",
+        lambda: _write_json_file(obsidian_dir / "graph.json", OBSIDIAN_GRAPH_JSON, obsidian_force),
     ))
-    results.append((
-        ".obsidian/workspace.json",
-        _write_json_file(obsidian_dir / "workspace.json", OBSIDIAN_WORKSPACE_JSON, workspace_force),
+    plan.append(PlannedWrite(
+        ".obsidian/workspace.json", obsidian_dir / "workspace.json", "workspace layout",
+        lambda: _write_json_file(
+            obsidian_dir / "workspace.json", OBSIDIAN_WORKSPACE_JSON, workspace_force
+        ),
     ))
-    results.append((
-        "_index.md",
-        _write_text_file(target / "_index.md", OBSIDIAN_INDEX_MD, obsidian_force),
+    plan.append(PlannedWrite(
+        "_index.md", target / "_index.md", "MOC at vault root",
+        lambda: _write_text_file(target / "_index.md", OBSIDIAN_INDEX_MD, obsidian_force),
     ))
-    results.append((
-        "_README.md",
-        _write_text_file(target / "_README.md", OBSIDIAN_README_MD, obsidian_force),
+    plan.append(PlannedWrite(
+        "_README.md", target / "_README.md", "vault orientation",
+        lambda: _write_text_file(target / "_README.md", OBSIDIAN_README_MD, obsidian_force),
     ))
-    return results
+    return plan
 
 
 def _merge_mcp_json(path: Path, force: bool) -> str:
@@ -1096,6 +1147,137 @@ def _merge_mcp_json(path: Path, force: bool) -> str:
     servers["palinode"] = MCP_JSON_BLOCK["mcpServers"]["palinode"]
     path.write_text(json.dumps(existing, indent=2) + "\n")
     return "merged"
+
+
+@dataclass(frozen=True)
+class InitOptions:
+    """Resolved inputs to `build_plan()`.
+
+    Tri-state CLI flags (``agents``/``cursor`` auto-detect) and role-derived
+    lists (``skill_roots``/``session_skill_roots``) are already resolved by
+    the caller — `build_plan()` only branches on plain booleans and lists,
+    it never re-derives them, so all the "which harness footprint did we
+    detect" logic stays in one place (the `init` command below).
+    """
+
+    slug: str
+    claudemd: bool
+    agents: bool
+    cursor: bool
+    hook: bool
+    slash: bool
+    wrap_policy: str
+    skill_roots: list[tuple[str, Path]]
+    session_skill_roots: list[tuple[str, Path]]
+    mcp: bool
+    obsidian: bool
+    force: bool
+    force_obsidian: bool
+
+
+def build_plan(target: Path, opts: InitOptions) -> list[PlannedWrite]:
+    """Enumerate every write ``palinode init`` may perform — ONCE.
+
+    Previously the dry-run branch (a run of ``click.echo`` lines) and the
+    real-write branch (a run of ``results.append`` calls) were two
+    hand-maintained enumerations of the same thing, and they had already
+    drifted: the Obsidian scaffold's 8 vault-directory ``mkdir``s were
+    invisible to ``--dry-run`` because it printed 5 hard-coded lines instead
+    of walking what the real run walked. Building the list once and having
+    both modes iterate it makes that class of drift structurally impossible
+    — ``--dry-run`` prints ``label``/``path``/``payload`` without calling
+    ``writer``; the real run calls ``writer()`` for the same entries.
+    """
+    plan: list[PlannedWrite] = []
+
+    claude_md = target / ".claude" / "CLAUDE.md"
+    agents_md = target / "AGENTS.md"
+    cursor_rules = target / ".cursor" / "rules" / "palinode.md"
+    settings = target / ".claude" / "settings.json"
+    hook_script = target / ".claude" / "hooks" / "palinode-session-end.sh"
+    start_hook_script = target / ".claude" / "hooks" / "palinode-session-start.sh"
+    mcp_json = target / ".mcp.json"
+    wrap_cmd = target / ".claude" / "commands" / "wrap.md"
+
+    if opts.claudemd:
+        plan.append(PlannedWrite(
+            "CLAUDE.md", claude_md, "memory instructions",
+            lambda: _write_claude_md(claude_md, opts.slug, opts.force, opts.wrap_policy),
+        ))
+    if opts.agents:
+        plan.append(PlannedWrite(
+            "AGENTS.md", agents_md, "memory instructions — Antigravity/Codex",
+            lambda: _write_agents_md(agents_md, opts.slug, opts.force),
+        ))
+    if opts.cursor:
+        plan.append(PlannedWrite(
+            ".cursor/rules/palinode.md", cursor_rules, "memory instructions — Cursor rules",
+            lambda: _write_cursor_rules(cursor_rules, opts.slug, opts.force),
+        ))
+    if opts.hook:
+        plan.append(PlannedWrite(
+            "session-start hook", start_hook_script, "SessionStart hook script",
+            lambda: _write_hook_script(start_hook_script, opts.force, SESSION_START_HOOK_SCRIPT),
+        ))
+        plan.append(PlannedWrite(
+            "session-end hook", hook_script, "SessionEnd hook script",
+            lambda: _write_hook_script(hook_script, opts.force),
+        ))
+        plan.append(PlannedWrite(
+            "settings.json", settings, "hook registration",
+            lambda: _merge_settings(settings, opts.force),
+        ))
+    if opts.slash:
+        wrap_body = WRAP_HEAVY_COMMAND_BODY if opts.wrap_policy == "heavy" else WRAP_COMMAND_BODY
+        plan.append(PlannedWrite(
+            f"/wrap command ({opts.wrap_policy})", wrap_cmd,
+            f"/wrap slash command — {opts.wrap_policy} policy",
+            lambda: _write_slash_command(wrap_cmd, wrap_body, opts.force),
+        ))
+
+    # optional skill-format install. Same body as the slash command (single
+    # source — no drift); 'personal' scope makes /wrap typeable in every
+    # project, not just this one.
+    skill_specs = [
+        ("wrap", WRAP_HEAVY_COMMAND_BODY if opts.wrap_policy == "heavy" else WRAP_COMMAND_BODY),
+    ]
+    for scope_label, root in opts.skill_roots:
+        for name, body in skill_specs:
+            path = root / name / "SKILL.md"
+            plan.append(PlannedWrite(
+                f"/{name} skill ({scope_label})", path, f"/{name} skill — {scope_label} scope",
+                lambda root=root, name=name, body=body: _write_skill(root, name, body, opts.force),
+            ))
+
+    for scope_label, root in opts.session_skill_roots:
+        path = root / "palinode-session" / "SKILL.md"
+        plan.append(PlannedWrite(
+            f"palinode-session skill ({scope_label})", path,
+            f"memory skill — {scope_label} scope",
+            lambda root=root: _write_session_skill(root, opts.force),
+        ))
+
+    if opts.mcp:
+        plan.append(PlannedWrite(
+            ".mcp.json", mcp_json, "MCP server block",
+            lambda: _merge_mcp_json(mcp_json, opts.force),
+        ))
+
+    if opts.obsidian:
+        plan.extend(_obsidian_plan(target, opts.force, opts.force_obsidian))
+
+    return plan
+
+
+def _display_path(path: Path, target: Path) -> str:
+    """Render *path* for the ``--dry-run`` listing: relative to *target*
+    when it's under the project (the common case), absolute otherwise
+    (personal-scope skills under ``~/.claude/skills``, or a custom
+    ``--skill-path``)."""
+    try:
+        return str(path.relative_to(target))
+    except ValueError:
+        return str(path)
 
 
 @click.command("init")
@@ -1290,9 +1472,7 @@ def init(
     if force_obsidian:
         obsidian = True
 
-    claude_md = target / ".claude" / "CLAUDE.md"
     agents_md = target / "AGENTS.md"
-    cursor_rules = target / ".cursor" / "rules" / "palinode.md"
     # ADR-012 Layer 1 detection defaults: scaffold the other instruction-file
     # surfaces only where the harness footprint already exists, unless the
     # caller opts in/out explicitly (tri-state flags: None = auto-detect).
@@ -1300,20 +1480,11 @@ def init(
         agents = agents_md.exists() or (target / ".agent").is_dir()
     if cursor is None:
         cursor = (target / ".cursor").is_dir()
-    settings = target / ".claude" / "settings.json"
-    hook_script = target / ".claude" / "hooks" / "palinode-session-end.sh"
-    start_hook_script = target / ".claude" / "hooks" / "palinode-session-start.sh"
-    mcp_json = target / ".mcp.json"
-    wrap_cmd = target / ".claude" / "commands" / "wrap.md"
 
-    # optional skill-format install. Same body as the slash command
-    # (single source — no drift); 'personal' scope makes /wrap typeable in every
-    # project, not just this one. /wrap is the sole lifecycle command — /save
-    # and /ps are deprecated and no longer scaffolded (mid-session checkpoints
-    # call the palinode_save tool directly).
-    skill_specs = [
-        ("wrap", WRAP_HEAVY_COMMAND_BODY if wrap_policy == "heavy" else WRAP_COMMAND_BODY),
-    ]
+    # 'personal' scope makes /wrap typeable in every project, not just this
+    # one. /wrap is the sole lifecycle command — /save and /ps are
+    # deprecated and no longer scaffolded (mid-session checkpoints call the
+    # palinode_save tool directly).
     skill_roots: list[tuple[str, Path]] = []
     if skills in ("project", "both"):
         skill_roots.append(("project", target / ".claude" / "skills"))
@@ -1337,86 +1508,37 @@ def init(
             if (target / ".agent").is_dir():
                 session_skill_roots.append(("agent-dir", target / ".agent" / "skills"))
 
+    opts = InitOptions(
+        slug=slug,
+        claudemd=claudemd,
+        agents=agents,
+        cursor=cursor,
+        hook=hook,
+        slash=slash,
+        wrap_policy=wrap_policy,
+        skill_roots=skill_roots,
+        session_skill_roots=session_skill_roots,
+        mcp=mcp,
+        obsidian=obsidian,
+        force=force,
+        force_obsidian=force_obsidian,
+    )
+    plan = build_plan(target, opts)
+
     click.echo(f"Palinode init → {target}")
     click.echo(f"  project slug: {slug}")
     click.echo("")
 
     if dry_run:
         click.echo("[dry-run] Would write:")
-        if claudemd:
-            click.echo(f"  {claude_md.relative_to(target)}  (memory instructions)")
-        if agents:
-            click.echo(f"  {agents_md.relative_to(target)}  (memory instructions — Antigravity/Codex)")
-        if cursor:
-            click.echo(f"  {cursor_rules.relative_to(target)}  (memory instructions — Cursor rules)")
-        if hook:
-            click.echo(f"  {start_hook_script.relative_to(target)}  (SessionStart hook script)")
-            click.echo(f"  {hook_script.relative_to(target)}  (SessionEnd hook script)")
-            click.echo(f"  {settings.relative_to(target)}  (hook registration)")
-        if slash:
-            click.echo(
-                f"  {wrap_cmd.relative_to(target)}  (/wrap slash command — {wrap_policy} policy)"
-            )
-        for scope_label, root in skill_roots:
-            for name, _ in skill_specs:
-                click.echo(f"  {root / name / 'SKILL.md'}  (/{name} skill — {scope_label} scope)")
-        for scope_label, root in session_skill_roots:
-            click.echo(
-                f"  {root / 'palinode-session' / 'SKILL.md'}  (memory skill — {scope_label} scope)"
-            )
-        if mcp:
-            click.echo(f"  {mcp_json.relative_to(target)}  (MCP server block)")
-        if obsidian:
-            click.echo("  .obsidian/app.json  (Obsidian app config)")
-            click.echo("  .obsidian/graph.json  (graph view settings)")
-            click.echo("  .obsidian/workspace.json  (workspace layout)")
-            click.echo("  _index.md  (MOC at vault root)")
-            click.echo("  _README.md  (vault orientation)")
+        for pw in plan:
+            click.echo(f"  {_display_path(pw.path, target)}  ({pw.payload})")
         return
 
-    results = []
-    if claudemd:
-        results.append(
-            ("CLAUDE.md", _write_claude_md(claude_md, slug, force, wrap_policy))
-        )
-    if agents:
-        results.append(("AGENTS.md", _write_agents_md(agents_md, slug, force)))
-    if cursor:
-        results.append(
-            (".cursor/rules/palinode.md", _write_cursor_rules(cursor_rules, slug, force))
-        )
-    if hook:
-        results.append((
-            "session-start hook",
-            _write_hook_script(start_hook_script, force, SESSION_START_HOOK_SCRIPT),
-        ))
-        results.append(("session-end hook", _write_hook_script(hook_script, force)))
-        results.append(("settings.json", _merge_settings(settings, force)))
-    if slash:
-        wrap_body = WRAP_HEAVY_COMMAND_BODY if wrap_policy == "heavy" else WRAP_COMMAND_BODY
-        results.append(
-            (f"/wrap command ({wrap_policy})", _write_slash_command(wrap_cmd, wrap_body, force))
-        )
-    for scope_label, root in skill_roots:
-        for name, body in skill_specs:
-            results.append(
-                (f"/{name} skill ({scope_label})", _write_skill(root, name, body, force))
-            )
-    for scope_label, root in session_skill_roots:
-        results.append(
-            (
-                f"palinode-session skill ({scope_label})",
-                _write_session_skill(root, force),
-            )
-        )
-    if mcp:
-        results.append((".mcp.json", _merge_mcp_json(mcp_json, force)))
-    if obsidian:
-        results.extend(_write_obsidian_scaffold(target, force, force_obsidian))
-
-    for label, status in results:
+    for pw in plan:
+        status = pw.writer()
         mark = "✓" if status in ("created", "appended", "merged") else "·"
-        click.echo(f"  {mark} {label}: {status}")
+        click.echo(f"  {mark} {pw.label}: {status}")
 
     click.echo("")
     click.echo("Next steps:")

@@ -24,6 +24,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+# ── This module imports NOTHING outside the standard library. Keep it that way.
+#
+# `plugin/test/parity.test.ts` regenerates `plugin/parity-registry.json` from
+# this file at `pretest`, running a bare `python` in a Node-only CI job with no
+# project dependencies installed. Any third-party import here — directly, or
+# transitively via another palinode module — breaks the TypeScript side of the
+# parity contract with a `ModuleNotFoundError` that has nothing to do with
+# parity. That is why the canonical enums below live *here* and are re-exported
+# by their consumers, rather than being imported from a module that parses
+# frontmatter. `tests/test_parity_is_dependency_free.py` enforces it.
+
 ParamType = Literal["string", "boolean", "array", "integer", "number", "object"]
 Surface = Literal["cli", "mcp", "api", "plugin"]
 
@@ -137,6 +148,27 @@ MEMORY_TYPES: tuple[str, ...] = (
     "ActionItem",
 )
 
+#: The canonical write-semantics enum (ADR-015 §5). ``append`` is episodic;
+#: ``replace`` marks a living/current-state document. Defined here rather than
+#: in ``core/parser.py`` for the same reason ``CATEGORIES`` and ``MEMORY_TYPES``
+#: are: the surfaces that must agree on it should all import one tuple, and this
+#: module is the one every surface can import (see the dependency note at the
+#: top). ``core/parser.py`` re-exports it, so the many
+#: ``from palinode.core.parser import VALID_UPDATE_POLICIES`` call sites are
+#: unaffected.
+VALID_UPDATE_POLICIES: tuple[str, ...] = ("append", "replace")
+
+#: The canonical epistemic-marker enum (ADR-018) — the KIND of claim a memory
+#: makes, orthogonal to ``type``. The ABSENCE of the field is its own state
+#: (``unmarked``) and is deliberately NOT a member: for an audit-grade store,
+#: "nobody declared this" must not silently inherit the authority of "verified".
+VALID_EPISTEMICS: tuple[str, ...] = (
+    "fact",
+    "inference",
+    "open_question",
+    "unverified",
+)
+
 #: The canonical prompt-task enum.  Single source replacing the duplicate
 #: ``"enum"`` keys at ``palinode/mcp.py:624-625``. ADR-010, finding.
 PROMPT_TASKS: tuple[str, ...] = (
@@ -245,7 +277,18 @@ REGISTRY: tuple[Operation, ...] = (
             CanonicalParam(
                 name="update_policy",
                 type="string",
-                enum=("append", "replace"),
+                enum=VALID_UPDATE_POLICIES,
+            ),
+            # ADR-018: epistemic marker — the KIND of claim the memory makes
+            # (fact / inference / open_question / unverified), orthogonal to
+            # ``type``. It shipped first-class on all four surfaces while going
+            # unregistered here, because the param test only walks this registry
+            # outward: an unregistered param was not a case, so nothing could
+            # fail. Registering it is what makes it enforceable.
+            CanonicalParam(
+                name="epistemic",
+                type="string",
+                enum=VALID_EPISTEMICS,
             ),
             # source-citation anchors. A list of {ref, quote, quote_hash}
             # dicts; the quote_hash is computed/verified on save. First-class on

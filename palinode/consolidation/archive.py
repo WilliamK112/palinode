@@ -39,7 +39,7 @@ from typing import Any
 
 import frontmatter
 
-from palinode.core import git_tools, store
+from palinode.core import git_tools, path_guard, store
 from palinode.core.config import config
 
 logger = logging.getLogger("palinode.archive")
@@ -50,18 +50,19 @@ ARCHIVED_STATUS = "archived"
 def resolve_memory_ref(ref: str) -> tuple[str, str]:
     """Validate a caller-supplied memory ref; return ``(rel_path, abs_path)``.
 
-    Rejects null bytes, ``..`` traversal, and symlinks that resolve outside
-    ``config.memory_dir`` (``git_tools._resolve_memory_path`` realpath-resolves
-    before the containment check, so a symlink pointing out of the tree fails
-    here). Raises :class:`ValueError` on rejection.
+    Rejects null bytes, absolute paths, ``..`` traversal, and symlinks that
+    resolve outside ``config.memory_dir``, via the shared
+    :func:`palinode.core.path_guard.resolve_memory_path` guard — this used to
+    go through ``git_tools._resolve_memory_path``'s weaker, now-retired
+    ``os.path.realpath``-based check. Raises
+    :class:`~palinode.core.path_guard.PathTraversalError` (a ``ValueError``
+    subclass) on rejection.
 
     ``rel_path`` is the canonical memory-dir-relative spelling and ``abs_path``
     is ``memory_dir`` joined with it — the *un*-realpath'd form the indexer
     stores in ``chunks.file_path``, so :func:`store.set_status_for_path` matches.
     """
-    git_tools._resolve_memory_path(ref)  # raises ValueError on traversal
-    base = os.path.realpath(config.memory_dir)
-    resolved = os.path.realpath(os.path.join(base, ref))
+    base, resolved = path_guard.resolve_memory_path(ref)
     rel = os.path.relpath(resolved, base)
     return rel, os.path.join(config.memory_dir, rel)
 

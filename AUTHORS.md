@@ -10,6 +10,9 @@ Contributions welcome via pull request. Names appear here once a PR is merged.
 - [Ching Wei Kang](https://github.com/WilliamK112)
 - [Guan Tong](https://github.com/happykawayigt)
 - [Nolan Efe Elbirlik](https://github.com/nolanefe)
+- [Aditya Datta](https://github.com/adity982)
+- [Deepak Nayak](https://github.com/deepunyk)
+- [Floze](https://github.com/floze-the-genius)
 
 ## Acknowledgements
 

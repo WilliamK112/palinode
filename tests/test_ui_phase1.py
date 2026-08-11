@@ -225,6 +225,66 @@ def test_history_sibling_not_counted_and_not_flagged(client):
     assert "decisions/a-history.md" not in qual
 
 
+def test_private_and_restricted_memories_hidden_from_ui(client):
+    """The UI's memory count, list, and file-sourced Quality bucket must apply
+    the same visibility gate as GET /list — private/restricted memories
+    withheld with no chain, exactly like /list.
+
+    ``description``/``entities`` are populated on the private/restricted rows
+    so lint's own (deliberately ungated — it's a maintenance scan, per
+    ``core.visibility``'s module docstring) stale/orphaned/missing-description
+    buckets don't independently flag them; that isolates the assertion to the
+    file-sourced enumeration this fix actually changes (the memory list, the
+    sidebar/dashboard count, and the "No extraction metadata" queue, which is
+    built directly from that same enumeration).
+    """
+    _write_file(
+        "decisions/open.md",
+        "---\ncategory: decisions\ntype: Decision\ndescription: open\n"
+        "entities:\n  - person/nobody\n---\nbody",
+    )
+    _write_file(
+        "decisions/secret.md",
+        "---\ncategory: decisions\ntype: Decision\ndescription: gated\n"
+        "entities:\n  - person/nobody\nvisibility: private\n---\nbody",
+    )
+    _write_file(
+        "decisions/gated.md",
+        "---\ncategory: decisions\ntype: Decision\ndescription: gated\n"
+        "entities:\n  - person/nobody\nvisibility: restricted\n"
+        "access:\n  - member/alice\n---\nbody",
+    )
+
+    import re
+
+    def _memories_card_num(html: str) -> str:
+        m = re.search(r'<div class="num">([\d,]+)</div>\s*<div class="lbl">memories</div>', html)
+        return m.group(1) if m else "??"
+
+    # Dashboard count reflects only the visible memory.
+    dash = client.get("/ui").text
+    assert _memories_card_num(dash) == "1"
+    assert "decisions/secret.md" not in dash
+    assert "decisions/gated.md" not in dash
+
+    # Memory list: same gate GET /list applies.
+    mem = client.get("/ui/memory").text
+    assert "decisions/open.md" in mem
+    assert "decisions/secret.md" not in mem
+    assert "decisions/gated.md" not in mem
+
+    # Quality's "No extraction metadata" queue is built straight from the same
+    # file enumeration as the list above — must not surface them either.
+    qual = client.get("/ui/quality").text
+    no_extraction_section = qual.split("No extraction metadata")[-1]
+    assert "decisions/secret.md" not in no_extraction_section
+    assert "decisions/gated.md" not in no_extraction_section
+
+    # Cross-check against the real GET /list contract: same set, same gate.
+    list_files = {d["file"] for d in client.get("/list").json()}
+    assert list_files == {"decisions/open.md"}
+
+
 def test_nav_links_wired_on_dashboard(client):
     """The previously-inert sidebar nav items now have hrefs.
 

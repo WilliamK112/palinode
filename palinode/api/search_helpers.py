@@ -23,6 +23,7 @@ from palinode.core.defaults import (
     SESSION_END_DEDUP_THRESHOLD,
     SESSION_END_DEDUP_WINDOW_MINUTES,
 )
+from palinode.core.path_guard import to_rel_path
 
 from palinode.api._util import _utc_now
 from palinode.api.path_safety import _open_memory_file_text, _resolve_memory_path
@@ -161,6 +162,21 @@ def _enrich_with_snippets(
             r["content_truncated"] = True
 
 
+def _enrich_with_rel_path(results: list[dict[str, Any]]) -> None:
+    """In-place add ``rel_path`` (memory-relative) alongside each ``file_path``.
+
+    ``chunks.file_path`` is always stored absolute (see ``core/store.py``),
+    so every result carries a filesystem path. ``rel_path`` is the
+    server-computed relative spelling — derived from ``config.memory_dir``,
+    the one place that knows it — so MCP/CLI never have to guess it from a
+    hardcoded literal. Additive: ``file_path`` is left untouched.
+    """
+    for r in results:
+        fp = r.get("file_path")
+        if fp:
+            r["rel_path"] = to_rel_path(fp)
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two equal-length vectors.
 
@@ -284,6 +300,7 @@ def _rerank_with_preprocessing(
         snippet = preprocessed[:200].strip()
         seen[fp] = {
             "file_path": fp,
+            "rel_path": to_rel_path(fp),
             "similarity": round(sim, 4),
             "snippet": snippet,
         }

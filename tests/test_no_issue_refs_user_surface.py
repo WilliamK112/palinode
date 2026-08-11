@@ -1,21 +1,24 @@
-"""Guard: private issue refs (`#NNN`) must not appear in shipping source.
+"""Guard: unfollowable issue refs must not appear in shipping source.
 
 Palinode is developed in a private repo whose issue numbers are meaningful, then
 synced to a public repo where the same `#NNN` resolves to a different (or
-nonexistent) issue. Two surfaces are guarded here:
+nonexistent) issue. Guarded here: CLI ``--help`` output, MCP tool/param schema
+descriptions, Python comments, docstrings, CI workflow comments, and a short
+list of root config files. Each is enumerated live and fails the build.
 
-1. **User-visible text** — CLI ``--help`` output and MCP tool/param schema
-   descriptions. A public user reads these directly, so a leaked `#NNN` is
-   actively misleading.
-2. **Code comments** — cleaned in the comment-scrub. `#NNN` in a comment
-   is only recurring public-sync noise (the sync operator eyeballs every ref),
-   so the baseline is held at zero to stop it creeping back.
+**A bare `#NNN` is the problem, not the reference.** It is unfollowable — the
+reader cannot tell which tracker it belongs to, and in the public repo it
+silently resolves to the wrong issue. A reference qualified with the full
+public-repo URL is fine and always has been the intended escape hatch; cite
+provenance that way rather than deleting it. See ``_issue_refs``.
 
-Both are enumerated live and fail the build if a `#NNN` reappears.
+That distinction matters for contributors working *in* the public repo, where
+citing a public issue by number is a natural and correct-looking thing to do.
+The guard cannot tell those apart from a bare number, so it asks for the URL.
 
-Scope note: docstrings and shipped docs (docs/*.md) are NOT yet scanned — that
-tail stays deferred on the issue-ref scrub. `ADR-` string refs are always fine (mirrors the
-scrub policy: ADR refs in comments ship, only ADR `.md` files don't).
+`ADR-` string refs are always fine (mirrors the scrub policy: ADR refs in
+comments ship, only ADR `.md` files don't). Shipped docs (docs/*.md) are still
+not scanned — `docs/CHANGELOG.md` cites issues on purpose.
 """
 from __future__ import annotations
 
@@ -29,11 +32,40 @@ import pytest
 
 from palinode.cli import main as cli_root
 
-# A private issue reference: `#` followed by 2–4 digits (a bare `#<NNN>` tag).
+# A bare issue reference: `#` followed by 2–4 digits (a bare tag).
 # Two digits min avoids matching enumerations like "fix" / "ranks"; four
 # max avoids long digit runs that aren't issue numbers. (This comment is kept
 # ref-free on purpose so the source-comment guard below doesn't flag itself.)
 _ISSUE_REF = re.compile(r"#\d{2,4}\b")
+
+# A reference qualified to the PUBLIC repository. These are allowed: a public
+# reader can follow them, and they cannot be mistaken for a different tracker's
+# numbering. This is the escape hatch for genuine provenance — cite the full
+# URL rather than a bare number.
+_PUBLIC_ISSUE_URL = re.compile(
+    r"https://github\.com/phasespace-labs/palinode/(?:issues|pull)/\d+"
+)
+
+# A reference qualified to some OTHER repository. Rejected, and worth rejecting
+# explicitly: these contain no `#`, so the bare-tag pattern above never saw
+# them. A full dev-tracker URL used to pass this guard untouched, which is a
+# worse leak than the bare number it was written to catch.
+_FOREIGN_ISSUE_URL = re.compile(
+    r"https?://(?:www\.)?github\.com/(?!phasespace-labs/palinode/)"
+    r"[\w.-]+/[\w.-]+/(?:issues|pull)/\d+"
+)
+
+
+def _issue_refs(text: str) -> list[str]:
+    """Every unfollowable issue reference in *text*.
+
+    Public-repo URLs are removed first, so they neither match nor mask a bare
+    tag elsewhere in the same string. What remains is reported: bare `#NNN`
+    tags, and issue URLs pointing at any other repository.
+    """
+    remaining = _PUBLIC_ISSUE_URL.sub("", text)
+    return _ISSUE_REF.findall(remaining) + _FOREIGN_ISSUE_URL.findall(remaining)
+
 
 # Shipping Python roots whose COMMENT tokens must stay issue-ref-free.
 _SOURCE_ROOTS = ("palinode", "tests")
@@ -73,13 +105,13 @@ def _cli_help_strings() -> list[tuple[str, str]]:
 def test_no_issue_refs_in_cli_help() -> None:
     """No CLI ``--help`` text may contain a private issue reference."""
     offenders = [
-        (loc, _ISSUE_REF.findall(text))
+        (loc, _issue_refs(text))
         for loc, text in _cli_help_strings()
-        if _ISSUE_REF.search(text)
+        if _issue_refs(text)
     ]
     assert not offenders, (
-        "Private issue refs found in user-visible CLI help "
-        "(strip them — see #597):\n"
+        "Unfollowable issue refs found in user-visible CLI help. Replace the bare "
+        "number with the full public issue URL, or name the change instead:\n"
         + "\n".join(f"  {loc}: {refs}" for loc, refs in offenders)
     )
 
@@ -97,21 +129,21 @@ async def test_no_issue_refs_in_mcp_tool_schema(
 
     offenders: list[tuple[str, list[str]]] = []
     for tool in await list_tools():
-        if tool.description and _ISSUE_REF.search(tool.description):
+        if tool.description and _issue_refs(tool.description):
             offenders.append(
-                (f"tool {tool.name} (description)", _ISSUE_REF.findall(tool.description))
+                (f"tool {tool.name} (description)", _issue_refs(tool.description))
             )
         props = (tool.input_schema or {}).get("properties", {}) or {}
         for pname, prop in props.items():
             desc = prop.get("description") if isinstance(prop, dict) else None
-            if desc and _ISSUE_REF.search(desc):
+            if desc and _issue_refs(desc):
                 offenders.append(
-                    (f"tool {tool.name}.{pname} (description)", _ISSUE_REF.findall(desc))
+                    (f"tool {tool.name}.{pname} (description)", _issue_refs(desc))
                 )
 
     assert not offenders, (
-        "Private issue refs found in user-visible MCP schema text "
-        "(strip them — see #597):\n"
+        "Unfollowable issue refs found in user-visible MCP schema text. Replace the "
+        "bare number with the full public issue URL, or name the change instead:\n"
         + "\n".join(f"  {loc}: {refs}" for loc, refs in offenders)
     )
 
@@ -126,7 +158,7 @@ def _comment_refs_in(path: Path) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(src).readline):
-            if tok.type == tokenize.COMMENT and _ISSUE_REF.search(tok.string):
+            if tok.type == tokenize.COMMENT and _issue_refs(tok.string):
                 found.append((tok.start[0], tok.string.strip()))
     except tokenize.TokenError:
         pass
@@ -145,11 +177,11 @@ def test_no_issue_refs_in_source_comments() -> None:
         for py in sorted((repo_root / root).rglob("*.py")):
             for line, text in _comment_refs_in(py):
                 rel = py.relative_to(repo_root)
-                offenders.append(f"  {rel}:{line}: {_ISSUE_REF.findall(text)}  →  {text[:80]}")
+                offenders.append(f"  {rel}:{line}: {_issue_refs(text)}  →  {text[:80]}")
 
     assert not offenders, (
-        "Private issue refs found in source comments (strip them — see #597; "
-        "the scrub keeps comments issue-ref-free):\n" + "\n".join(offenders)
+        "Unfollowable issue refs found in source comments. Replace the bare number "
+        "with the full public issue URL, or name the change instead:\n" + "\n".join(offenders)
     )
 
 
@@ -184,8 +216,8 @@ def test_no_issue_refs_in_root_config() -> None:
         if not path.exists():
             continue
         for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if _ISSUE_REF.search(line):
-                offenders.append(f"  {name}:{i}: {_ISSUE_REF.findall(line)}  →  {line[:80]}")
+            if _issue_refs(line):
+                offenders.append(f"  {name}:{i}: {_issue_refs(line)}  →  {line[:80]}")
 
     assert not offenders, (
         "Private issue refs found in shipping root config. These reach the "
@@ -210,7 +242,7 @@ def _docstring_refs_in(path: Path) -> list[tuple[int, str]]:
         ):
             continue
         text = ast.get_docstring(node)
-        if text and _ISSUE_REF.search(text):
+        if text and _issue_refs(text):
             found.append((getattr(node, "lineno", 1), text))
     return found
 
@@ -237,11 +269,12 @@ def test_no_issue_refs_in_docstrings() -> None:
         for py in sorted((repo_root / root).rglob("*.py")):
             for line, text in _docstring_refs_in(py):
                 rel = py.relative_to(repo_root)
-                offenders.append(f"  {rel}:{line}: {_ISSUE_REF.findall(text)}")
+                offenders.append(f"  {rel}:{line}: {_issue_refs(text)}")
 
     assert not offenders, (
-        "Private issue refs found in docstrings. Name the change instead of "
-        "citing its number:\n" + "\n".join(offenders)
+        "Unfollowable issue refs found in docstrings. A bare number cannot be "
+        "followed by a public reader and may resolve to the wrong issue — use the "
+        "full public issue URL, or name the change instead:\n" + "\n".join(offenders)
     )
 
 
@@ -251,9 +284,51 @@ def test_no_issue_refs_in_ci_workflows() -> None:
     offenders: list[str] = []
     for wf in sorted((repo_root / ".github" / "workflows").glob("*.yml")):
         for i, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
-            if _ISSUE_REF.search(line):
-                offenders.append(f"  {wf.name}:{i}: {_ISSUE_REF.findall(line)}  →  {line.strip()[:70]}")
+            if _issue_refs(line):
+                offenders.append(f"  {wf.name}:{i}: {_issue_refs(line)}  →  {line.strip()[:70]}")
 
     assert not offenders, (
-        "Private issue refs found in CI workflow comments:\n" + "\n".join(offenders)
+        "Unfollowable issue refs found in CI workflow comments. Replace the bare "
+        "number with the full public issue URL, or name the change instead:\n"
+        + "\n".join(offenders)
     )
+
+
+# ── What counts as an unfollowable reference ─────────────────────────────────
+# The guards above are only as good as this distinction, and it is the part a
+# contributor actually collides with, so it is pinned directly.
+
+
+def test_bare_number_is_rejected() -> None:
+    """The original case: a bare tag, whichever tracker the author meant."""
+    assert _issue_refs("Issue #100: the body was mangled.") == ["#100"]
+
+
+def test_public_url_is_allowed() -> None:
+    """The escape hatch — a reference a public reader can actually follow.
+
+    Someone working in the public repo who cites the issue they are fixing is
+    doing the right thing. The guard cannot read intent from a bare tag, so
+    this is the form it asks for instead of refusing provenance outright.
+    """
+    text = "Fixes https://github.com/phasespace-labs/palinode/issues/100 — see there."
+    assert _issue_refs(text) == []
+
+
+def test_url_to_another_repository_is_rejected() -> None:
+    """A qualified URL to a *different* tracker is worse than a bare number.
+
+    It carries no ``#``, so the bare-tag pattern never saw it: a full
+    dev-tracker link used to pass this guard untouched, while the same issue
+    written as a bare tag beside it would have failed.
+    """
+    text = "Context: https://github.com/some-owner/some-private-repo/issues/715"
+    assert _issue_refs(text) == [
+        "https://github.com/some-owner/some-private-repo/issues/715"
+    ]
+
+
+def test_allowed_url_does_not_mask_a_bare_ref_beside_it() -> None:
+    """Stripping the permitted form must not swallow an offender next to it."""
+    text = "https://github.com/phasespace-labs/palinode/issues/100 and also #715"
+    assert _issue_refs(text) == ["#715"]

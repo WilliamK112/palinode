@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from palinode.core import store
 from palinode.core.config import config
+from palinode.core.path_guard import to_rel_path
 
 from palinode.api._util import _reindex_lock, _reindex_state, _safe_500, _utc_now
 from palinode.api.path_safety import _memory_base_dir
@@ -63,7 +64,7 @@ def ingest_url_api(req: dict[str, str]) -> dict[str, str]:
     try:
         result = ingest_url(url, name)
         if result:
-            return {"status": "success", "file_path": result}
+            return {"status": "success", "file_path": result, "rel_path": to_rel_path(result)}
         return {"status": "no_content"}
     except Exception as e:
         raise _safe_500(e, "URL ingestion failed")

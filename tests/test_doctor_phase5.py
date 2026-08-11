@@ -675,7 +675,9 @@ class TestClaudeMdPalinodeBlock:
         home.mkdir()
         project = home / "myproject"
         project.mkdir()
-        (project / "CLAUDE.md").write_text("Use palinode.\n")
+        (project / "CLAUDE.md").write_text(
+            "# Project\n\n## Memory (Palinode)\nUse palinode_search.\n"
+        )
 
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
         monkeypatch.chdir(project)
@@ -722,14 +724,19 @@ class TestClaudeMdPalinodeBlock:
         assert result.passed is False
         assert result.severity == "warn"
 
-    def test_case_insensitive_palinode_match(
+    def test_prose_mention_without_block_heading_warns(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A CLAUDE.md that merely mentions "palinode" in prose — even with a
+        mixed-case match — must NOT satisfy the check. Only the
+        '## Memory (Palinode)' block heading counts; a bare word mention is
+        not evidence the LLM was told to use the tools at session
+        boundaries."""
         home = tmp_path / "home"
         home.mkdir()
         claude_dir = home / ".claude"
         claude_dir.mkdir()
-        # Mixed-case mention
+        # Mixed-case prose mention, no block heading.
         (claude_dir / "CLAUDE.md").write_text("PALINODE is configured here.\n")
 
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
@@ -738,17 +745,21 @@ class TestClaudeMdPalinodeBlock:
         ctx = _ctx(home)
         result = run_one(ctx, "claude_md_palinode_block")
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.severity == "warn"
 
     def test_only_global_with_palinode_covers_project(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Global ~/.claude/CLAUDE.md with palinode is sufficient even if project CLAUDE.md lacks it."""
+        """Global ~/.claude/CLAUDE.md with the block is sufficient even if the
+        project CLAUDE.md lacks it."""
         home = tmp_path / "home"
         home.mkdir()
         claude_dir = home / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "CLAUDE.md").write_text("palinode_save after milestones.\n")
+        (claude_dir / "CLAUDE.md").write_text(
+            "## Memory (Palinode)\nCall palinode_save after milestones.\n"
+        )
 
         project = home / "myproject"
         project.mkdir()

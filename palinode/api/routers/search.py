@@ -8,11 +8,13 @@ from pydantic import BaseModel, Field
 from palinode.core import store, embedder
 from palinode.core.config import config
 from palinode.core.parity import CATEGORIES, MEMORY_TYPES
+from palinode.core.path_guard import to_rel_path
 from palinode.api._util import _retrieval_logger, _safe_500
 from palinode.api.rate_limit import _RATE_LIMIT_SEARCH, _check_rate_limit
 from palinode.api.search_helpers import (
     _compute_effective_date_after,
     _embedding_candidates,
+    _enrich_with_rel_path,
     _enrich_with_snippets,
     _filter_min_priority,
     _filter_type_deny,
@@ -182,9 +184,8 @@ class DedupSuggestRequest(BaseModel):
     """Find existing files semantically near the supplied draft content.
 
     Used by the LLM at write-time to decide "create new vs update existing".
-    Both ``min_similarity`` and ``top_k`` are kwarg-tunable per the design
-    doc — defaults match the BGE-M3 thresholds research-validated in
-    `artifacts/obsidian-integration/design.md`.
+    Both ``min_similarity`` and ``top_k`` are kwarg-tunable; defaults match
+    the BGE-M3 thresholds validated for this search surface.
     """
     content: str
     min_similarity: float | None = 0.80
@@ -303,6 +304,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
             recent = recent[:limit]
             # enrich with snippet so MCP callers stay within budget.
             _enrich_with_snippets(recent, "", _resolve_snippet_max_chars(req.max_chars))
+            _enrich_with_rel_path(recent)
             return recent
 
         # ADR-008: Augment query with project context before embedding
@@ -355,8 +357,15 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
                     record_access=record_access,
                 )
         else:
+            # Vector-only search routes through search_hybrid(use_fts=False):
+            # rank_hybrid ranks the vector candidates alone (empty FTS arm) so
+            # this path gets the same decay re-rank, priority nudge, ambient-
+            # context boost, once-only daily penalty, per-file dedup, and
+            # date-window handling as hybrid=true, instead of the second,
+            # undocumented ranking policy `store.search` used to be.
             def _run(n: int, record_access: bool = True) -> list[dict[str, Any]]:
-                return store.search(
+                return store.search_hybrid(
+                    query_text=req.query,
                     query_embedding=query_emb,
                     category=req.category,
                     top_k=n,
@@ -369,6 +378,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
                     mode=recall_mode,
                     session_id=req.session_id,
                     record_access=record_access,
+                    use_fts=False,
                 )
 
         # The store fetch records ADR-007 recall metadata itself; when the
@@ -396,6 +406,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
         # `content` is preserved untouched for CLI/API consumers.
         # Per-request max_chars overrides config default when supplied.
         _enrich_with_snippets(final, req.query, _resolve_snippet_max_chars(req.max_chars))
+        _enrich_with_rel_path(final)
 
         # Issue emit retrieval events (explicit — came in via /search API).
         # Source attribution: the X-Palinode-Source header tells us the surface
@@ -457,6 +468,7 @@ def search_associative_api(req: SearchAssociativeRequest) -> list[dict[str, Any]
         # /search treatment shipped in the associative path was
         # overlooked there and still returned un-truncated content fields.
         _enrich_with_snippets(results, req.query, config.search.snippet_max_chars)
+        _enrich_with_rel_path(results)
 
         return results
     except Exception as e:
@@ -656,10 +668,13 @@ def cluster_neighbors_api(req: ClusterNeighborsRequest) -> list[dict[str, Any]]:
 def topic_coverage_api(req: TopicCoverageRequest) -> dict[str, Any]:
     """Check whether any wiki page already covers a topic phrase.
 
-    Returns ``{covered: bool, best_match: str | None, similarity: float}``
-    where ``best_match`` is a relative file_path.  The LLM calls this
-    before ingesting new content to avoid creating a page for a topic that
-    is already well-covered.
+    Returns ``{covered: bool, best_match: str | None, rel_path: str | None,
+    similarity: float}``. ``best_match`` is the absolute filesystem path
+    (matching ``file_path`` elsewhere); ``rel_path`` is the same file
+    relative to ``memory_dir``, for callers (MCP, CLI) that want the
+    display/round-trippable spelling without guessing it themselves. The LLM
+    calls this before ingesting new content to avoid creating a page for a
+    topic that is already well-covered.
 
     Uses the same preprocessing pipeline as the other embedding tools so
     that the query is compared against de-noised file bodies.
@@ -696,6 +711,7 @@ def topic_coverage_api(req: TopicCoverageRequest) -> dict[str, Any]:
             return {
                 "covered": True,
                 "best_match": best["file_path"],
+                "rel_path": best.get("rel_path", to_rel_path(best["file_path"])),
                 "similarity": best["similarity"],
             }
         return {"covered": False, "best_match": None, "similarity": 0.0}

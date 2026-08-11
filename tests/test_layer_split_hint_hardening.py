@@ -22,6 +22,15 @@ from palinode.consolidation import layer_split
 from palinode.core.config import config
 
 
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    # write_memory_file (layer_split's write primitive) validates its target
+    # resolves inside config.memory_dir — every fixture/test here writes
+    # under tmp_path, so point memory_dir there by default. Individual tests
+    # that already set it explicitly just re-set the same value.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+
+
 # Two sections straddling the identity and status keyword lists, so heuristic
 # classification demonstrably routes them to *different* layers — which is how a
 # test can tell "the hint was ignored" apart from "the hint was applied".

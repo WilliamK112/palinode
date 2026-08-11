@@ -1,6 +1,5 @@
 import logging
 import os
-import tempfile
 
 import pytest
 
@@ -10,7 +9,14 @@ import palinode.consolidation.executor as executor_module
 from palinode.consolidation.executor import apply_operations, _is_replace_policy, _nightly_merge_allowed
 
 @pytest.fixture
-def temp_memory_file():
+def temp_memory_file(tmp_path, monkeypatch):
+    # write_memory_file (the executor's write primitive) now validates its
+    # target resolves inside config.memory_dir — point it at this fixture's
+    # tmp_path rather than the system temp dir apply_operations would
+    # otherwise be asked to write outside of.
+    from palinode.core.config import config
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+
     content = """---
 id: project-alpha
 category: project
@@ -22,11 +28,9 @@ category: project
 - [2024-01-02] An update occurred <!-- fact:f2 -->
 - [2024-01-03] Another update <!-- fact:f3 -->
 """
-    fd, path = tempfile.mkstemp(suffix=".md")
-    with os.fdopen(fd, 'w') as f:
-        f.write(content)
-    yield path
-    os.remove(path)
+    path = tmp_path / "project-alpha.md"
+    path.write_text(content)
+    return str(path)
 
 def test_keep_operation(temp_memory_file):
     ops = [{"op": "KEEP", "id": "f1"}]
@@ -104,7 +108,10 @@ def test_missing_fields_are_skipped(temp_memory_file):
         {"op": "SUPERSEDE", "new_text": "Replacement"},
         {"op": "ARCHIVE"},
     ])
-    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0}
+    # UPDATE (no new_text), MERGE (no new_text), SUPERSEDE (no id), and
+    # ARCHIVE (no id) each hit the missing-required-field guard and count
+    # as unmatched.
+    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0, "unmatched": 4}
 
 def test_missing_fact_id_is_noop(temp_memory_file):
     stats = apply_operations(temp_memory_file, [{"op": "SUPERSEDE", "id": "missing", "new_text": "Replacement"}])
@@ -118,7 +125,7 @@ def test_empty_operations_leave_file_unchanged(temp_memory_file):
     with open(temp_memory_file) as f:
         after = f.read()
     assert before == after
-    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0}
+    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0, "unmatched": 0}
 
 
 def test_atomic_main_write_failure_preserves_original_file(temp_memory_file, monkeypatch):
@@ -384,8 +391,11 @@ def test_retract_missing_id_is_skipped(temp_memory_file):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def temp_same_day_file():
+def temp_same_day_file(tmp_path, monkeypatch):
     """Two facts on the same date — nightly MERGE should be allowed."""
+    from palinode.core.config import config
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+
     content = """---
 id: project-beta
 category: project
@@ -397,11 +407,9 @@ category: project
 - [2026-04-28] Afternoon session note <!-- fact:s2 -->
 - [2026-04-27] Yesterday's note <!-- fact:s3 -->
 """
-    fd, path = tempfile.mkstemp(suffix=".md")
-    with os.fdopen(fd, 'w') as f:
-        f.write(content)
-    yield path
-    os.remove(path)
+    path = tmp_path / "project-beta.md"
+    path.write_text(content)
+    return str(path)
 
 
 def test_nightly_merge_accepts_same_day(temp_same_day_file):

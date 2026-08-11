@@ -25,12 +25,20 @@ clearer or more correct are worth more here than contributions that make it bigg
   way to start. If a setup step confused you, that is a bug in the docs.
 - **Pick up an issue.** Issues labelled `good first issue` are scoped to be
   self-contained. `help wanted` means the maintainer would genuinely like a hand.
+  Comment on the one you want and it is yours — and **start with one.** Holding
+  several at a time usually means several sit still, and a claimed issue nobody is
+  moving is worse than an unclaimed one.
 - **Report a security issue.** Please do not open a public issue — see
   [`SECURITY.md`](SECURITY.md).
 
 If you are planning something substantial, **open an issue before writing the code.**
 Palinode is maintained by one person and has a deliberately narrow scope; the worst
 outcome for both of us is you finishing a large PR that does not fit.
+
+**There is no payment or bounty programme.** Everything here is volunteer work, and
+`good first issue` marks a good way into the codebase rather than a listing. Offers to
+implement an issue for a fee get declined — politely, and every time. Saying so here so
+nobody spends their time writing one.
 
 ## Before you start: scope
 

@@ -113,6 +113,33 @@ def test_missing_op_kind_logs_as_keep_not_update(tmp_path, monkeypatch):
     assert "[UPDATE]" not in body
 
 
+def test_nightly_missing_op_kind_resolves_like_weekly(tmp_path, monkeypatch):
+    """The nightly allowed-ops filter must resolve a missing op-kind the same
+    way the weekly filter does: ``op_kind(op) or "KEEP"``, matching the
+    executor's own default. Before that fix, nightly compared the op's kind
+    as an empty string against ``allowed_ops`` — which can never match any
+    configured list, so the op was silently dropped no matter what an
+    operator set ``allowed_ops`` to. Nightly's own default excludes KEEP, so
+    this extends it to include KEEP to observe the same resolution weekly
+    gets under its (KEEP-inclusive) default — the point is that the op now
+    reaches the same KEEP-vs-drop decision point nightly's config controls,
+    not that it is unconditionally kept.
+    """
+    target = _seed(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        config.consolidation.nightly,
+        "allowed_ops",
+        ["KEEP", "UPDATE", "SUPERSEDE", "MERGE"],
+    )
+    ops = [{"id": "f1", "reason": "Still current."}]
+
+    runner.run_nightly(dry_run=False, llm_fn=_fake_llm(ops))
+
+    body = target.read_text(encoding="utf-8")
+    assert "- [KEEP] f1: Still current." in body
+    assert "[UPDATE]" not in body
+
+
 def test_keep_without_rationale_emits_no_line(tmp_path, monkeypatch):
     """A KEEP with nothing to say is a no-op — it is not audit data."""
     target = _seed(tmp_path, monkeypatch)

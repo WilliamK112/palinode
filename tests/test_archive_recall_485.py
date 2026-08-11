@@ -73,7 +73,10 @@ def test_ensure_archived_frontmatter_prepends_when_no_frontmatter():
 
 
 @pytest.fixture()
-def memory_file(tmp_path):
+def memory_file(tmp_path, monkeypatch):
+    from palinode.core.config import config
+
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     path = os.path.join(str(tmp_path), "foo-status.md")
     with open(path, "w") as f:
         f.write(

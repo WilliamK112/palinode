@@ -29,7 +29,7 @@ similarity for the vector arm, normalized BM25 for the FTS arm), applied
 before RRF ever sees the candidates.
 
 The decay/predicate helpers (:func:`effective_importance`,
-:func:`score_with_decay`, :func:`_is_daily_file`, :func:`_priority_value`) moved
+:func:`_is_daily_file`, :func:`_priority_value`) moved
 here with the pipeline; ``store`` re-exports them so ``store.effective_importance``
 and friends keep resolving for existing callers and tests.
 """
@@ -89,49 +89,6 @@ def effective_importance(
     return max(eff, base)
 
 
-def score_with_decay(
-    base_score: float,
-    importance: float,
-    last_recalled_date: str | None,
-    recall_count: int,
-    memory_type: str = "general",
-) -> float:
-    """Apply temporal decay to a search score.
-
-    Formula: Score = base × importance × e^(-Δt/τ) × (1 + log(1 + freq))
-
-    Args:
-        base_score: Original similarity score (0.0-1.0).
-        importance: LLM-rated importance (0.0-1.0, default 0.5).
-        last_recalled_date: ISO date of last retrieval (None = never recalled).
-        recall_count: Number of times this chunk was returned in search.
-        memory_type: Type for selecting τ constant.
-
-    Returns:
-        Adjusted score after decay (still 0.0-1.0 range).
-    """
-    cfg = config.decay
-    TAU = {
-        "critical": cfg.tau_critical, "decisions": cfg.tau_decisions, "insights": cfg.tau_insights,
-        "general": cfg.tau_general, "status": cfg.tau_status, "ephemeral": cfg.tau_ephemeral,
-    }
-    tau = TAU.get(memory_type, cfg.tau_general)
-
-    if last_recalled_date:
-        try:
-            last = datetime.fromisoformat(last_recalled_date[:10])
-            delta_days = (datetime.now(UTC) - last.replace(tzinfo=UTC)).days
-        except Exception:
-            delta_days = 0
-    else:
-        delta_days = 30  # Default decay for never-recalled memories
-
-    decay = math.exp(-delta_days / tau)
-    frequency_boost = 1 + math.log1p(recall_count)
-
-    return min(base_score * importance * decay * frequency_boost, 1.0)
-
-
 def _is_daily_file(file_path: str) -> bool:
     """Check if a file path belongs to the daily/ directory."""
     return "/daily/" in file_path or file_path.startswith("daily/")
@@ -170,10 +127,12 @@ def rank_hybrid(
     Stages, in order: per-arm relevance floor (``threshold``) → Reciprocal Rank
     Fusion (RRF, k=60) → demand-decay re-rank (ADR-007, when
     ``config.decay.enabled``) → human-priority nudge → ambient context boost
-    (ADR-008) → daily-file penalty → per-file dedup → top_k → date window.
-    Returns the merged, ranked result dicts (each carrying ``score`` and
-    ``raw_score``); recall + freshness are recorded by the caller on this
-    output.
+    (ADR-008) → daily-file penalty → per-file dedup → date window → top_k.
+    Date window runs BEFORE top_k, not after: filtering the already-truncated
+    top-k slice silently under-returns whenever the top-scoring candidates
+    skew outside the window.  Returns the merged, ranked result dicts (each
+    carrying ``score`` and ``raw_score``); recall + freshness are recorded by
+    the caller on this output.
 
     ``threshold`` filters ``vec_results`` by their own (real cosine) score and
     ``fts_results`` by their own (normalized BM25) score, BEFORE fusion — a
@@ -311,6 +270,28 @@ def rank_hybrid(
         elif file_best[fp] - score <= gap:
             deduped_keys.append(key)
 
+    # Date window is applied to the FULL deduped candidate list, BEFORE the
+    # top_k slice below — not after. Applying it after (the old order)
+    # truncates to top_k first, so a date-windowed hybrid search silently
+    # under-returns whenever the top-k-by-score candidates are disproportionately
+    # outside the window: they consume the slice and are then discarded, even
+    # though later-ranked in-window candidates existed. Matches the vector-only
+    # path's semantics, which filters inside the row loop before its own top_k
+    # break.
+    if date_after or date_before:
+        filtered_keys = []
+        for key in deduped_keys:
+            r = result_map[key]
+            meta = r.get("metadata", {})
+            updated = meta.get("last_updated", r.get("created_at", ""))
+            if updated:
+                if date_after and updated < date_after:
+                    continue
+                if date_before and updated > date_before:
+                    continue
+            filtered_keys.append(key)
+        deduped_keys = filtered_keys
+
     # top_k is the sole cardinality control past this point — no post-fusion
     # score cutoff (see the ``threshold`` paragraph on the docstring above).
     merged = []
@@ -320,20 +301,5 @@ def rank_hybrid(
         # BM25-only results (no vector match) get raw_score=None.
         result["raw_score"] = raw_cosine.get(key)
         merged.append(result)
-
-    if date_after or date_before:
-        filtered = []
-        for r in merged:
-            meta = r.get("metadata", {})
-            updated = meta.get("last_updated", r.get("created_at", ""))
-            if not updated:
-                filtered.append(r)
-                continue
-            if date_after and updated < date_after:
-                continue
-            if date_before and updated > date_before:
-                continue
-            filtered.append(r)
-        merged = filtered
 
     return merged

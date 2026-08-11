@@ -408,9 +408,13 @@ def test_archive_endpoint_404_for_missing(api_client):
 
 
 def test_archive_endpoint_rejects_traversal(api_client):
+    # Traversal returns 403 (generic "Invalid path"), consistently with
+    # every other path-guarded route — it used to be a blanket 400 that
+    # echoed the legacy guard's path-bearing message.
     client, _ = api_client
     res = client.post("/archive", json={"file_path": "../../etc/passwd"})
-    assert res.status_code == 400
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Invalid path"
 
 
 def test_archive_endpoint_requires_file_path(api_client):

@@ -372,12 +372,19 @@ def test_canonical_param_present(case: tuple[Operation, Surface, CanonicalParam]
     [
         case
         for case in _flatten_cases()
-        if case[2].enum in (CATEGORIES, MEMORY_TYPES)
+        if case[2].enum
     ],
     ids=_case_id,
 )
 def test_canonical_enum_matches(case: tuple[Operation, Surface, CanonicalParam]) -> None:
-    """Every category/type enum exposes the exact canonical values."""
+    """Every registered enum exposes the exact canonical values.
+
+    This used to be filtered to ``enum in (CATEGORIES, MEMORY_TYPES)``, which
+    silently exempted every *other* registered enum from the contract —
+    ``update_policy`` was registered with an enum and never asserted, and
+    survived as five hand-copies across the surfaces as a result. The filter
+    was the bug; any registered enum is now asserted on every surface.
+    """
     op, surface, cp = case
     expected = tuple(cp.enum or ())
     actual = _surface_param_enum(op, surface, cp.name)

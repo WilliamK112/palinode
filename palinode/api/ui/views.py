@@ -3,9 +3,10 @@
 Store-agnostic by intent: each ``build_*`` function takes plain inputs (or
 calls an injected capability callable) and returns template-ready dicts/lists.
 They contain no business logic the store/API doesn't already expose — they
-*shape* the output of existing capabilities (``list_api`` file scan,
-``search_api``, ``git_tools.recent_commits``/``diff``, ``run_lint_pass``) for
-rendering. Keeping them here (not in the router) lets ``weir`` reuse the same
+*shape* the output of existing capabilities (``collect_memory_files`` — the
+same walk + visibility gate behind ``GET /list`` — ``search_api``,
+``git_tools.recent_commits``/``diff``, ``run_lint_pass``) for rendering.
+Keeping them here (not in the router) lets ``weir`` reuse the same
 list/search/diff/quality shaping against equivalent inputs.
 
 Read-only throughout. None of these trigger a write — the compaction view, in
@@ -18,8 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-# Memory-list scan skips the same non-browsable dirs ``list_api`` does, so the
-# UI list matches the canonical "memories a human browses" definition.
+# Passed to collect_memory_files(skip_dirs=...): the same non-browsable dirs
+# ``list_api`` skips, plus ``.obsidian`` (UI-only), so the UI list matches the
+# canonical "memories a human browses" definition.
 _LIST_SKIP_DIRS = frozenset({"daily", "archive", "inbox", "logs", "prompts", ".obsidian"})
 
 # Freshness buckets (days since last_updated). "stale" mirrors lint's 90-day
@@ -108,50 +110,38 @@ def _freshness(days: int | None) -> str:
     return "stale"
 
 
-def scan_memory_files(
-    memory_dir: str,
-    read_frontmatter: Callable[[str], dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """One file walk of *memory_dir* → list of memory rows (markdown = truth).
+def scan_memory_files() -> list[dict[str, Any]]:
+    """UI-shaped memory rows, newest first — one walk, one skip-dir set, one gate.
 
-    Mirrors ``list_api``'s skip-dir set so the count and contents agree with the
-    dashboard's file-based "memories" total. ``read_frontmatter`` is injected
-    (the router passes a parser-backed reader) so this stays store-agnostic.
+    Delegates the file walk and the (load-bearing) visibility gate to
+    :func:`palinode.api.routers.memory.collect_memory_files` — the same
+    selection path behind ``GET /list`` — passing the UI's skip-dir set
+    (``_LIST_SKIP_DIRS``, which adds ``.obsidian`` on top of ``list_api``'s)
+    and ``include_history=False`` so ``-history.md`` consolidation siblings
+    never surface as browsable memories. This used to be a second, parallel
+    file walk that never imported ``core.visibility`` — ``private`` and
+    ``restricted`` memories rendered here even though ``collect_memory_files``
+    withholds them everywhere else.
 
     Each row: ``path`` (rel), ``id`` (path sans .md), ``name``, ``type``,
     ``category``, ``core`` (bool), ``last_updated``, ``days_old``, ``freshness``.
     """
-    import glob
+    from palinode.api.routers.memory import collect_memory_files
 
     now = datetime.now(timezone.utc)
-    base = os.path.realpath(memory_dir)
     rows: list[dict[str, Any]] = []
-    for filepath in glob.glob(os.path.join(base, "**/*.md"), recursive=True):
-        try:
-            if os.path.commonpath([base, os.path.realpath(filepath)]) != base:
-                continue
-        except ValueError:
-            continue
-        rel = os.path.relpath(filepath, base)
-        # Single source of truth for "is this a browsable memory" — shared with
-        # the sidebar/dashboard count and the Quality queues so they can't drift.
-        if not is_browsable_memory(rel):
-            continue
-        parts = rel.split(os.sep)
-        try:
-            meta = read_frontmatter(filepath)
-        except Exception:
-            meta = {}
-        last_updated = meta.get("last_updated") or meta.get("created_at") or ""
+    for r in collect_memory_files(skip_dirs=_LIST_SKIP_DIRS, include_history=False):
+        rel = r["file"]
+        last_updated = r.get("last_updated") or ""
         days_old = _days_since(last_updated, now)
         rows.append(
             {
                 "path": rel,
                 "id": _rel_to_id(rel),
-                "name": meta.get("title") or meta.get("name") or parts[-1][:-3],
-                "type": meta.get("type"),
-                "category": meta.get("category") or parts[0],
-                "core": bool(meta.get("core", False)),
+                "name": r.get("title") or r.get("name"),
+                "type": r.get("type"),
+                "category": r.get("category"),
+                "core": bool(r.get("core", False)),
                 "last_updated": str(last_updated),
                 "days_old": days_old,
                 "freshness": _freshness(days_old),

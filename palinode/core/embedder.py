@@ -196,14 +196,6 @@ def check_model_context(
         )
 
 
-def get_local_timeout() -> httpx.Timeout:
-    """Gets the HTTPX timeout tuple for local embeddings from config."""
-    return httpx.Timeout(
-        config.embeddings.primary.timeout_seconds,
-        connect=config.embeddings.primary.connect_timeout_seconds
-    )
-
-
 def get_gemini_timeout() -> httpx.Timeout:
     """Gets the HTTPX timeout tuple for Gemini embeddings from config."""
     return httpx.Timeout(

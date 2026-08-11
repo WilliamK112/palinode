@@ -63,7 +63,9 @@ UNRESOLVED = "(unresolved)"
 _FACT_MARKER_RE = re.compile(r"<!-- fact:(\S+) -->")
 # Anchored at line start so a `### Consolidation Log` sub-heading can't be
 # mistaken for the section, and tolerant of the legacy
-# `## Consolidation Log (<timestamp>)` form written by `_write_project_summary`.
+# `## Consolidation Log (<timestamp>)` form. Nothing emits that form any more
+# (its writer was removed as dead code), but memory files written before then
+# still carry it, so the tolerance stays.
 _LOG_HEADING_RE = re.compile(r"^## Consolidation Log.*$", re.MULTILINE)
 _DATE_HEADING_RE = re.compile(r"^### (\d{4}-\d{2}-\d{2})\s*$")
 _OP_LINE_RE = re.compile(r"^- \[([A-Z_]+)\] (.*?):[ \t]?(.*)$")

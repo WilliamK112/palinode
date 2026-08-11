@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from palinode.cli.init import MEMORY_BLOCK_CORE, _slugify, has_memory_block
 from palinode.diagnostics.registry import register_fix
 from palinode.diagnostics.types import CheckResult, DoctorContext, FixResult
 
@@ -131,29 +132,13 @@ def fix_audit_log_writable(ctx: DoctorContext, result: CheckResult) -> FixResult
 # fix #3: claude_md_palinode_block
 # ---------------------------------------------------------------------------
 
-# Default block appended when CLAUDE.md exists but is missing the Palinode
-# section.  Mirrors the block scaffolded by `palinode init`.  Newline at the
-# top guarantees separation from any prior content.
-_PALINODE_BLOCK = """
-## Memory (Palinode)
-
-This project uses Palinode for persistent memory (MCP server: palinode).
-
-### At session start:
-- Call `palinode_search` with the current task or project name for prior context
-
-### During work:
-- After major milestones: call `palinode_save` with the decision or outcome
-- When making architectural decisions: save the decision AND the rationale
-
-### At session end:
-- Call `palinode_session_end` with summary, decisions, and blockers
-"""
-
-
-# Marker used to detect an existing block.  Both possible header forms are
-# checked so a hand-rolled "Memory (Palinode)" subheading is not duplicated.
-_PALINODE_HEADER_MARKERS = ("## Memory (Palinode)", "# Memory (Palinode)")
+# The block this fix appends, and the marker it uses to detect one is
+# already present, are imported from `palinode.cli.init` — the SAME block
+# `palinode init` writes and the SAME marker the `claude_md_palinode_block`
+# check tests for. `MEMORY_BLOCK_CORE` is the harness-neutral rendering (no
+# Claude-Code-only machinery: hooks, /wrap, /clear) because this fix only
+# ever appends to an existing file — it never installs hooks or slash
+# commands the way `palinode init` does.
 
 
 def fix_claude_md_palinode_block(ctx: DoctorContext, result: CheckResult) -> FixResult:
@@ -186,7 +171,7 @@ def fix_claude_md_palinode_block(ctx: DoctorContext, result: CheckResult) -> Fix
             applied=False,
             message=f"Could not read {candidate}: {exc}",
         )
-    if any(marker in content for marker in _PALINODE_HEADER_MARKERS):
+    if has_memory_block(content):
         return FixResult(
             applied=False,
             message=(
@@ -194,11 +179,16 @@ def fix_claude_md_palinode_block(ctx: DoctorContext, result: CheckResult) -> Fix
                 "nothing to do."
             ),
         )
-    # Ensure exactly one blank line of separation before the appended block.
-    sep = "" if content.endswith("\n\n") else ("\n" if content.endswith("\n") else "\n\n")
+    slug = _slugify(candidate.parent.name)
+    block = MEMORY_BLOCK_CORE.format(project_slug=slug)
     try:
         with candidate.open("a", encoding="utf-8") as fh:
-            fh.write(sep + _PALINODE_BLOCK)
+            # Same separator convention as `palinode init`'s
+            # `_write_memory_block`: guarantee the file ends in a newline,
+            # then add one blank line before the block.
+            if not content.endswith("\n"):
+                fh.write("\n")
+            fh.write("\n" + block)
     except OSError as exc:
         return FixResult(
             applied=False,

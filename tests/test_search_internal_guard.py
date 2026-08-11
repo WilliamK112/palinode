@@ -188,9 +188,9 @@ def _iter_python_files(root: Path):
     """Yield .py files under *root/palinode/* only.
 
     We scope the guard to the shipping source tree (``palinode/``) — tests and
-    internal artifacts are excluded because:
+    non-shipping records are excluded because:
     - ``tests/`` calls ``store.search()`` intentionally to exercise the API.
-    - ``artifacts/`` are historical snapshots of old code (pre-search_internal).
+    - historical snapshots can contain old code (pre-search_internal).
     Neither should be gate-broken by this guard.
     """
     for path in (root / "palinode").rglob("*.py"):

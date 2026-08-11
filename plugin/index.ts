@@ -282,27 +282,6 @@ function resolveWithin(baseDir: string, ...segments: string[]): string | null {
   return null;
 }
 
-/** Load scrub patterns from specs/scrub-patterns.yaml and apply to text */
-function scrubSensitive(text: string, palinodeDir: string): string {
-  const scrubFile = resolveWithin(palinodeDir, "specs", "scrub-patterns.yaml");
-  if (!scrubFile) return text;
-  const raw = readFileIfExists(scrubFile);
-  if (!raw) return text;
-
-  let result = text;
-  // Simple YAML pattern extraction (avoid adding a yaml dependency)
-  const patternBlocks = raw.matchAll(/- pattern: '(.+?)'\s*\n\s*replace: '(.+?)'/g);
-  for (const match of patternBlocks) {
-    try {
-      const regex = new RegExp(match[1], "g");
-      result = result.replace(regex, match[2]);
-    } catch {
-      // Invalid regex — skip
-    }
-  }
-  return result;
-}
-
 /** Check if a file's YAML frontmatter contains core: true */
 function isCoreFile(content: string): boolean {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
@@ -1072,9 +1051,6 @@ const palinodePlugin = {
             injection = injection.slice(0, profile.totalBudget) +
               `\n…[truncated by recallProfile total budget: ${profile.totalBudget} chars]\n</palinode-memory>`;
           }
-
-          // Scrub sensitive content before injection
-          injection = scrubSensitive(injection, cfg.palinodeDir);
 
           api.logger.info(
             `openclaw-palinode: turn ${sessionTurnCount} — profile="${cfg.recallProfile}" ` +

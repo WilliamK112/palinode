@@ -61,10 +61,6 @@ def _first_commit(history: list[dict[str, Any]]) -> dict[str, Any] | None:
     return history[0] if history else None
 
 
-def _oldest_commit(history: list[dict[str, Any]]) -> dict[str, Any] | None:
-    return history[-1] if history else None
-
-
 def build_provenance(
     *,
     file_path: str,

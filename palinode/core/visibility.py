@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable
 
 from palinode.core.config import config
 from palinode.core.scope import ScopeChain, access_allows, visible_on_chain
@@ -186,9 +186,3 @@ def filter_visible(
         ):
             out.append(row)
     return out
-
-
-def visible_count(chain: ScopeChain | None, paths: Sequence[str]) -> int:
-    """Count how many of ``paths`` are visible — for diagnostics/tests."""
-    cache: dict[str, dict[str, Any]] = {}
-    return sum(1 for p in paths if is_visible(chain, p, cache=cache))

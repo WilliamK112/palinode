@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from palinode.core import git_tools
+from palinode.core.config import config
 
 def test_blame_attribution():
     with patch("palinode.core.git_tools._run_git") as mock_run:
@@ -57,8 +58,13 @@ def test_history_returns_structured_data():
 
 
 def test_history_rejects_path_traversal():
-    with pytest.raises(ValueError, match="Path traversal rejected"):
+    # The shared guard's message is deliberately generic (never echoes the
+    # offending input) — it used to be
+    # "Path traversal rejected: ../../etc/passwd".
+    with pytest.raises(ValueError, match="^Invalid path$") as exc_info:
         git_tools.history("../../etc/passwd")
+    assert isinstance(exc_info.value, git_tools.PathTraversalError)
+    assert exc_info.value.malformed is False
 
 
 def test_git_operations_on_non_git_fail_gracefully():
@@ -142,8 +148,16 @@ def test_push_failure_logs_warning(caplog):
 
 def test_write_memory_file_skips_directory_fsync_on_windows(tmp_path, monkeypatch):
     """Windows cannot open a directory as a file descriptor for fsync."""
+    # `write_memory_file` validates its target against `config.memory_dir`
+    # before writing, so a test writing into a bare `tmp_path` must point
+    # memory_dir at that same tmp_path or the write is (correctly) rejected
+    # as an out-of-tree path.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     target = tmp_path / "memory.md"
-    monkeypatch.setattr(git_tools.os, "name", "nt")
+    # Fake the platform through git_tools' own probe rather than flipping the
+    # real `os.name`: the latter is global, and the path guard that now runs
+    # first uses pathlib, which would try to build a WindowsPath on POSIX.
+    monkeypatch.setattr(git_tools, "_is_windows", lambda: True)
     with patch.object(git_tools, "_fsync_directory") as fsync_directory:
         git_tools.write_memory_file(str(target), "UTF-8 content: “quotes”\n")
 
@@ -153,6 +167,9 @@ def test_write_memory_file_skips_directory_fsync_on_windows(tmp_path, monkeypatc
 
 def test_write_memory_file_overwrite_works_without_fchmod(tmp_path, monkeypatch):
     """Python 3.11/3.12 Windows needs the path-based chmod fallback."""
+    # See the note in the sibling test above: the write target must live under
+    # `config.memory_dir` for `write_memory_file`'s path guard to accept it.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     target = tmp_path / "memory.md"
     target.write_text("old\n", encoding="utf-8")
     monkeypatch.delattr(git_tools.os, "fchmod", raising=False)

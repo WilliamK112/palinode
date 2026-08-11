@@ -133,3 +133,27 @@ jobs:
 
       - name: Run ruff
         run: ruff check palinode/ tests/ scripts/
+
+  httpx-monopoly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce the CLI HTTP-client boundary
+        run: bash scripts/check-httpx-monopoly.sh
+
+      - name: Run monopoly-linter test suite
+        run: bash tests/test_check_httpx_monopoly.sh
+
+  write-choke-point:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce the memory mutation choke point
+        run: bash scripts/check-write-choke-point.sh
+
+      - name: Run choke-point-linter test suite
+        run: bash tests/test_check_write_choke_point.sh

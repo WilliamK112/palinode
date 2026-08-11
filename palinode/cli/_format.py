@@ -58,9 +58,3 @@ def print_result(data: Any, fmt: Optional[OutputFormat] = None):
             console.print(data)
         else:
             console.print(str(data))
-
-def print_error(msg: str):
-    console.print(f"[red]Error:[/red] {msg}")
-
-def print_success(msg: str):
-    console.print(f"[green]✓[/green] {msg}")

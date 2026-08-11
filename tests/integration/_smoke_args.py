@@ -85,25 +85,14 @@ SKIP_TOOLS: dict[str, str] = {
 
 
 # Error-prefix strings the dispatcher uses to signal a failed call.
-# Keep this in sync with the `_text(f"... failed: {resp.text}")` /
-# `_text(f"Error: {e}")` patterns in palinode/mcp.py::_dispatch_tool.
-DISPATCH_ERROR_PREFIXES: tuple[str, ...] = (
-    "Error:",
-    "API Error:",
-    "API unreachable",
-    "Search failed",
-    "Save failed",
-    "Session-end failed",
-    "Doctor failed",
-    "Doctor (deep) failed",
-    "Lint failed",
-    "Consolidation failed",
-    "Archive failed",
-    "Archive-expired sweep failed",
-    "Push failed",
-    "Ingest failed",
-    "Unknown tool",
-)
+#
+# Imported, not mirrored. This was a hand-maintained copy under a "keep this in
+# sync" comment, and it had drifted: `Review failed:`, `Unknown action:` and the
+# four `Error <verb> …` messages matched nothing here, so `test_every_tool_
+# dispatches` scored those failures as successes — including for
+# `palinode_review`, which is registered strict. Re-exported so existing
+# importers keep working.
+from palinode.mcp import DISPATCH_ERROR_PREFIXES  # noqa: E402,F401
 
 
 def registered_tool_names() -> list[str]:

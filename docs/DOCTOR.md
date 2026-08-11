@@ -224,13 +224,13 @@ When `audit.enabled=true`, validates that `audit.log_path` is absolute and that 
 
 | Check | Severity | Catches |
 |---|---|---|
-| `claude_md_palinode_block` | warn | Neither the global nor any project `CLAUDE.md` mentions palinode |
+| `claude_md_palinode_block` | warn | Neither the global nor any project `CLAUDE.md` has a `## Memory (Palinode)` block |
 
 #### `claude_md_palinode_block`
 
-Walks `~/.claude/CLAUDE.md` (the global Claude Code config) and every `CLAUDE.md` in cwd and its ancestors up to `$HOME`. Warns when *none* of them mention palinode (case-insensitive substring match).
+Walks `~/.claude/CLAUDE.md` (the global Claude Code config) and every `CLAUDE.md` in cwd and its ancestors up to `$HOME`. Warns when *none* of them carry the `## Memory (Palinode)` block heading (`palinode init` and `doctor --fix` share one detector for this — see below — so a file that merely mentions "palinode" in prose does not pass).
 
-Rationale: this is the #1 install-day footgun for self-hosted users. The MCP tools register and work fine, but the LLM never reaches for them at session boundaries unless told to. A passing palinode install with no CLAUDE.md mention is technically correct and operationally invisible.
+Rationale: this is the #1 install-day footgun for self-hosted users. The MCP tools register and work fine, but the LLM never reaches for them at session boundaries unless told to. A passing palinode install with no CLAUDE.md block is technically correct and operationally invisible.
 
 **Fixable via `--fix`** (appends a Memory (Palinode) block to an *existing* `CLAUDE.md` in cwd — never creates the file from scratch; that file is user-owned).
 
@@ -349,7 +349,7 @@ These are the recurring incident shapes that motivated each check. Names are ano
 
 **Which checks catch it.**
 
-- `claude_md_palinode_block` — warn: neither the global `~/.claude/CLAUDE.md` nor any project `CLAUDE.md` in scope mentions palinode.
+- `claude_md_palinode_block` — warn: neither the global `~/.claude/CLAUDE.md` nor any project `CLAUDE.md` in scope has a `## Memory (Palinode)` block.
 
 **Resolution.** `palinode init` scaffolds the Memory (Palinode) block; `palinode doctor --fix` appends it to an existing `CLAUDE.md`. The block tells the LLM to call `palinode_search` at session start, `palinode_save` at milestones, and `palinode_session_end` before `/clear`.
 

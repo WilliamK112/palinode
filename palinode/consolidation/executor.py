@@ -135,7 +135,16 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
 
     Returns:
         Stats dict: {kept, updated, merged, superseded, archived, retracted,
-                     merge_rejected, protected_rejected, contradicts_proposed}.
+                     merge_rejected, protected_rejected, contradicts_proposed,
+                     unmatched}. ``unmatched`` counts UPDATE/MERGE/SUPERSEDE/
+                     ARCHIVE/RETRACT ops that were dropped without effect —
+                     either a required field (e.g. ``new_text``) was
+                     missing/empty, or the op's fact id(s) were not found in
+                     the file. Both cases are logged as a warning; previously
+                     both were silent. This is distinct from
+                     ``merge_rejected``, which counts a MERGE deliberately
+                     refused by the nightly same-day policy — a rejection
+                     with a reason, not a drop.
     """
     with open(file_path) as f:
         content = f.read()
@@ -160,7 +169,7 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
     # consolidation entirely.
     is_replace_doc = _is_replace_policy(content)
 
-    stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0}
+    stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0, "protected_rejected": 0, "contradicts_proposed": 0, "unmatched": 0}
 
     for op in operations:
         if not isinstance(op, dict):
@@ -199,6 +208,19 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                 if updated_body != body:
                     body = updated_body
                     stats["updated"] += 1
+                else:
+                    logger.warning(
+                        "UPDATE unmatched: fact id=%r not found in %s",
+                        fact_id, file_path,
+                    )
+                    stats["unmatched"] += 1
+            else:
+                logger.warning(
+                    "UPDATE dropped: missing required field(s) (id=%r, "
+                    "new_text present=%s) in %s",
+                    fact_id, bool(new_text), file_path,
+                )
+                stats["unmatched"] += 1
 
         elif op_type == "MERGE":
             ids = op.get("ids", [])
@@ -216,6 +238,19 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                 if merged_body != body:
                     body = merged_body
                     stats["merged"] += 1
+                else:
+                    logger.warning(
+                        "MERGE unmatched: fact id(s)=%r not found in %s",
+                        ids, file_path,
+                    )
+                    stats["unmatched"] += 1
+            else:
+                logger.warning(
+                    "MERGE dropped: missing required field(s) (ids=%r, "
+                    "new_text present=%s) in %s",
+                    ids, bool(new_text), file_path,
+                )
+                stats["unmatched"] += 1
 
         elif op_type == "SUPERSEDE":
             fact_id = op.get("id")
@@ -226,6 +261,19 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                 if superseded_body != body:
                     body = superseded_body
                     stats["superseded"] += 1
+                else:
+                    logger.warning(
+                        "SUPERSEDE unmatched: fact id=%r not found in %s",
+                        fact_id, file_path,
+                    )
+                    stats["unmatched"] += 1
+            else:
+                logger.warning(
+                    "SUPERSEDE dropped: missing required field(s) (id=%r, "
+                    "new_text present=%s) in %s",
+                    fact_id, bool(new_text), file_path,
+                )
+                stats["unmatched"] += 1
 
         elif op_type == "ARCHIVE":
             fact_id = op.get("id")
@@ -235,6 +283,18 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                 if archived_body != body:
                     body = archived_body
                     stats["archived"] += 1
+                else:
+                    logger.warning(
+                        "ARCHIVE unmatched: fact id=%r not found in %s",
+                        fact_id, file_path,
+                    )
+                    stats["unmatched"] += 1
+            else:
+                logger.warning(
+                    "ARCHIVE dropped: missing required field id in %s",
+                    file_path,
+                )
+                stats["unmatched"] += 1
 
         elif op_type == "RETRACT":
             fact_id = op.get("id")
@@ -244,6 +304,18 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                 if retracted_body != body:
                     body = retracted_body
                     stats["retracted"] += 1
+                else:
+                    logger.warning(
+                        "RETRACT unmatched: fact id=%r not found in %s",
+                        fact_id, file_path,
+                    )
+                    stats["unmatched"] += 1
+            else:
+                logger.warning(
+                    "RETRACT dropped: missing required field id in %s",
+                    file_path,
+                )
+                stats["unmatched"] += 1
 
         elif op_type == "PROPOSE_CONTRADICTS":
             # (G4): the executor may PROPOSE a typed contradiction link but

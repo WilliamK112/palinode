@@ -295,12 +295,23 @@ def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str
             "pushed": False,
         }
 
-    # Write to daily notes
+    # Write to daily notes through the git_tools choke point. write_memory_file
+    # takes whole-file content, not a fragment, so "append" here means
+    # read-then-atomic-rewrite (temp + fsync + rename) rather than an
+    # O_APPEND open(): the same trade every other choke-point write already
+    # makes, in exchange for crash-safety and one observation point for every
+    # memory-file mutation. Two session-end calls racing on the same daily
+    # note can now last-writer-win on the append, where O_APPEND previously
+    # let both survive — narrow, since same-day same-project concurrent
+    # session-ends are rare, but real.
     daily_dir = os.path.join(_memory_base_dir(), "daily")
     os.makedirs(daily_dir, exist_ok=True)
     daily_path = os.path.join(daily_dir, f"{today}.md")
-    with open(daily_path, "a") as f:
-        f.write(f"\n{session_entry}\n")
+    existing_daily = ""
+    if os.path.exists(daily_path):
+        with open(daily_path, encoding="utf-8") as f:
+            existing_daily = f.read()
+    git_tools.write_memory_file(daily_path, f"{existing_daily}\n{session_entry}\n")
 
     # Semantic dedup against recent saves. The daily note + project
     # status file are append-only logs we always write — only the indexed
@@ -344,7 +355,14 @@ def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str
                 source=source,
                 metadata=extra_meta or None,
             )
-            save_result = save_api(save_req)
+            # Propagate an explicit push=False so it suppresses this internal
+            # save's own auto-push too, not just session-end's final push
+            # below — save_api's auto-push is otherwise an independent
+            # decision keyed on config.git.auto_push alone. push=True/None
+            # deliberately do NOT propagate: session-end still does its own
+            # explicit push after every write is committed (below), so
+            # forwarding push=True here would just push twice.
+            save_result = save_api(save_req, push=False if req.push is False else None)
             individual_file = save_result.get("file_path")
         except Exception as e:
             logger.error(f"Individual session-end file save failed (non-fatal): {e}")
@@ -365,8 +383,11 @@ def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str
                 req.blockers,
                 _status_pointer(individual_file, f"daily/{today}.md"),
             )
-            with open(status_path, "a") as f:
-                f.write(f"\n{line}\n")
+            # Same read-then-atomic-rewrite trade as the daily note above —
+            # through write_memory_file, not an O_APPEND open().
+            with open(status_path, encoding="utf-8") as f:
+                existing_status = f.read()
+            git_tools.write_memory_file(status_path, f"{existing_status}\n{line}\n")
             status_file = f"projects/{project}-status.md"
             logger.info(
                 "session_end status append: file=%s decisions=%d blockers=%d",

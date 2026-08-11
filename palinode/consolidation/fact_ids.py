@@ -61,6 +61,11 @@ def add_fact_ids_to_file(file_path: str) -> int:
     
     if modified:
         git_tools.write_memory_file(file_path, frontmatter_block + "".join(new_lines))
+        if config.git.auto_commit:
+            git_tools.commit_memory_file(
+                file_path,
+                f"{config.git.commit_prefix} bootstrap fact ids: {os.path.basename(file_path)}",
+            )
 
     return count
 

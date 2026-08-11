@@ -6,33 +6,361 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Added
 
-- **`palinode dream` command alias.** The alias runs the existing consolidation
+### Changed
+
+### Fixed
+
+### Removed
+
+### Security
+
+## [0.12.0] — 2026-08-11
+
+### Added
+
+- **README positioning for `palinode dream`** — "dreaming" is the vocabulary
+  the field now uses for memory consolidation, and the README never used the word, so
+  people searching for it could not find that Palinode has done this since the March
+  2026 compaction architecture. The new paragraph names the alias, points to
+  `--dry-run`, and explains that each pass is a git commit you can inspect and revert.
+  Paired with a guard test that fails if the README documents a CLI command that does
+  not exist.
+- **`palinode dream` command alias** ([#89](https://github.com/phasespace-labs/palinode/pull/89)). The alias runs the existing consolidation
   command, while its help text keeps `palinode consolidate` visible as the
   canonical name.
 
 ### Changed
 
+- **MCP tools are now individually addressable handlers, not branches of a
+  647-line `if/elif`**. `_dispatch_tool` held all thirty tools in one
+  chain, so a tool's logic could only be reached by dispatching to it — and the
+  function is private, which is why the test suite referenced it 48 times across
+  12 files against 4 for the public `call_tool`. Each tool is now an
+  `@_handles("palinode_…")`-registered coroutine and `_dispatch_tool` is a
+  nine-line lookup that dispatches exactly as before, so every existing caller
+  keeps working. New in the bargain: `tests/test_mcp_tool_registry.py` can
+  assert that every advertised tool has a handler and vice versa — an invariant
+  that held before but could not be checked without reading the chain.
+- **One normalise seam below the write surfaces**. The
+  JSON-string-array tolerance MCP clients need (`_coerce_str_array`) existed
+  once, in `mcp.py`, applied at ten sites all inside `mcp.py` — CLI, API and
+  plugin had no equivalent. It now lives in `core/write_input.py` as
+  `coerce_str_array`, alongside a declarative `SAVE_PARAMS` /
+  `SESSION_END_PARAMS` spec and a `build_payload()` that both `mcp.py` and
+  `cli/_api.py` assemble their request bodies with, so the two adapters can no
+  longer drift apart per-param. `palinode.mcp._coerce_str_array` remains as an
+  alias for the canonical implementation.
+- **Security-scan CI now retains readable logs and JSON reports**
+  ([#95](https://github.com/phasespace-labs/palinode/pull/95)), so contributors
+  can inspect Bandit and pip-audit findings without reproducing the run locally.
+
+- **The save capability is now a module, not a route handler**. `POST
+  /save`'s logic — the envelope guard, the validation
+  ladder, frontmatter assembly, the choke-point write and commit, reciprocal
+  `contradicts` back-links, inline indexing, and the write-time-contradiction
+  and forget hooks — was ~616 lines inside `api/routers/memory.py::save_api`,
+  reachable only over HTTP and testable only through `TestClient`. It now lives
+  in `core/save.py::save_memory()`, with the router reduced to what is
+  genuinely transport: rate limiting, the request-size cap, the
+  `X-Palinode-Source` header lookup, and a map from the new
+  `SaveValidationError` onto HTTP 400. This is the shape `core/lint.py`,
+  `core/review.py` and `consolidation/archive.py` already use. Behaviour is
+  unchanged on every surface — same frontmatter, same status codes, same
+  response fields, same non-fatal degradation when indexing or push fails.
+  The transport-independent save-path normalizers (`_TYPE_TO_CATEGORY`,
+  `_normalize_entities`, `_apply_wiki_footer`) moved down to
+  `core/memory_write.py` so `core` does not import `api`; `api/memory_write.py`
+  re-exports them, so existing import paths are unaffected.
+
 ### Fixed
 
+- **MCP tool failures were logged to the audit log as successes**.
+  `call_tool` classified a call's outcome by prefix-matching its response text
+  against a *third* hand-written copy of the dispatcher's failure contract, and
+  that copy had drifted too: `Archive failed`, `Archive-expired sweep failed`,
+  `Review failed`, `API unreachable`, `Unknown action:` and `Unknown tool`
+  matched nothing in it, so those calls were recorded with `status="success"`
+  and an operator reading the audit log saw a clean run. It now reads the one
+  declaration in `palinode/mcp.py`, so a reworded or newly added message updates
+  the audit log by construction. Also declares `Timeout:` — emitted by
+  `_timeout_message()` for a timed-out `palinode_save`/`palinode_session_end`,
+  and previously undeclared, so that response read as success to both the audit
+  log and the smoke suite. The coverage guard now reads every string literal in
+  the module rather than only `_text(...)` call sites, since that message is
+  assembled one function away and any guard tied to a single syntactic form is
+  dodged by moving the string.
+- **The MCP dispatcher's failure-prefix list had drifted, blinding the hermetic
+  tool smoke test**. The dispatcher reports failure in-band — a normal
+  `TextContent` whose text starts with a known prefix — so that list is the only
+  thing distinguishing `"Save failed: connection refused"` from a successful
+  result. It lived in `tests/integration/_smoke_args.py` as a hand-maintained
+  copy under a "keep this in sync" comment, and six messages the dispatcher
+  really emits matched nothing in it: `Review failed:`, `Unknown action:`, and
+  the four `Error <verb> …` forms (`"Error reading prompt:"` does not start with
+  `"Error:"`, so the assumed catch-all is not one). `test_every_tool_dispatches`
+  scored those failures as passes — including for `palinode_review`, which is
+  registered strict. The list now lives in `palinode/mcp.py` beside the code
+  that emits it, the smoke suite imports it instead of mirroring it, and
+  `tests/test_mcp_error_contract.py` derives the messages from source and fails
+  if any is undeclared. No tool was actively failing behind the hole; it was a
+  latent one that would have hidden the next failure.
+- **`POST /save` and `save_memory()` now reject the same input the same way.**
+  Since the save capability was extracted there are two public entry
+  points, and they disagreed: `sources` was annotated
+  `list[dict[str, Any]] | None` while its three siblings (`contradicts`,
+  `backed_by`, `claims`) were `Any`, so a non-list `sources` was rejected by
+  Pydantic with a 422 blob before `_normalize_sources` could return its
+  "sources must be a list" message — which is exactly what the identical call
+  through `save_memory()` produced. `sources` is now loosely typed like its
+  siblings and the normalizer owns the rejection, so all four fields return a
+  400 carrying an actionable message on either path. Deliberately collapsed
+  toward the 400 rather than the 422: that is the intent the model already
+  documented ("a bad value must reach the handler so it returns a 400 with an
+  actionable message, not Pydantic's 422"), and tightening instead would have
+  turned the documented bare-string `contradicts` shorthand into a 422. The
+  OpenAPI document keeps the real shape for all four via `json_schema_extra` —
+  the same trick `epistemic` uses — and `contradicts`/`backed_by`/`claims`
+  gained shape information they never advertised before.
+- **An explicitly-empty `contradicts` or `backed_by` no longer vanishes when
+  saving from the CLI**. `cli/_api.py` tested `if contradicts:` while
+  `mcp.py` tested `is not None`, so the identical explicit "no conflicts"
+  claim reached the server over MCP and was silently dropped over the CLI —
+  where an absent value lets the capability fall back to a `metadata`-supplied
+  one instead. Both surfaces now share a single inclusion rule: a parameter is
+  sent when it is not `None`, so an empty list survives as the assertion the
+  caller made, while the free-text strings (`title`, `slug`, `source`,
+  `project`) still elide when blank. This is the same bug `session_end`'s
+  `decisions`/`blockers` were fixed for once before; the rule now lives in one
+  place rather than being re-derived per-param.
+- The provenance UI's memory list, sidebar/dashboard count, and "No
+  extraction metadata" queue were built by a second, parallel file-walk
+  (`api/ui/views.py`'s `scan_memory_files`) that never imported
+  `core.visibility` — `private`/`restricted` memories rendered there even
+  though the shared listing path behind `GET /list` (`collect_memory_files`)
+  withholds them. `collect_memory_files` now takes
+  `skip_dirs`/`include_history` parameters and the UI calls it directly: one
+  walk, one skip-dir set, one visibility gate.
+- `cli/read.py`'s `_strip_frontmatter` split on the first two `---`
+  occurrences anywhere in the string rather than on frontmatter fence lines,
+  mis-splitting (and truncating the body) whenever a frontmatter value — a
+  title, a quote anchor, an em-dash-heavy description — itself contained
+  `---`. It and `api/ui/router.py`'s frontmatter stripper now both
+  delegate to the canonical, lossless `core.parser.split_frontmatter`.
+- MCP no longer relativizes memory paths by string-splitting on the literal
+  `"/palinode/"`. Seven call sites in `mcp.py` derived the display path this
+  way; the fallback returned the untouched absolute path whenever
+  `PALINODE_DIR` didn't happen to contain that substring — every custom
+  install (`~/memory`, `/srv/notes`, a "second-brain" directory) — and
+  mis-split when a directory segment repeated (e.g. `.../palinode/palinode/`).
+  The API now computes `rel_path` server-side (the one place that reliably
+  knows `config.memory_dir`) and returns it additively alongside `file_path`
+  (and `best_match` for `/topic-coverage`) from `/search`,
+  `/search-associative`, `/save`, `/ingest-url`, `/dedup-suggest`,
+  `/orphan-repair`, `/cluster-neighbors`, and `/topic-coverage`. MCP renders
+  it directly, with a same-host `config.memory_dir`-derived fallback (via
+  `core.path_guard.to_rel_path`, never a hardcoded literal) for an older API
+  server that hasn't started sending it yet. CLI's dedup-suggest,
+  orphan-repair, cluster-neighbors, topic-coverage, save, and ingest commands
+  now prefer the same `rel_path` field for parity with MCP/API.
+- The `core/git_tools.py` mutation choke point now actually holds. Its
+  own module docstring stated the invariant — every memory-file write through
+  `write_memory_file` (now `move_memory_file` too, for a relocation), every
+  commit through `commit_memory_file(s)`, never a repo-wide `git add *.md`
+  sweep — but `push()` itself broke it (`_run_git("add", "*.md", "**/*.md")`),
+  and seven other sites bypassed it entirely: `/session-end`'s daily-note and
+  project-status appends used a raw `open(..., "a")`; `repair-status --execute`
+  used a raw `open(..., "w")`; nightly/weekly daily-note archival used
+  `shutil.move`; write-time dedup and `/save`'s auto-push shelled out to `git`
+  directly; `rollback()` staged and committed via raw `_run_git` calls rather
+  than `commit_memory_file(s)` — a fourth commit-message shape; and
+  `POST /split-layers` / `POST /bootstrap-fact-ids` wrote correctly via
+  `write_memory_file` but never committed, leaving changes on disk and in the
+  index but uncommitted. All eight now route through the choke point.
+  `write_memory_file` also gained the previously deferred traversal-guard
+  precondition (`palinode.core.path_guard`), so the write path is now the guarded
+  path, not just the read path. A new `scripts/check-write-choke-point.sh` (+
+  `tests/test_check_write_choke_point.sh`, wired into CI) makes the invariant
+  a test instead of prose, following the `check-httpx-monopoly.sh` pattern:
+  it fails on any raw `open(<path>, "w"|"a")` or raw `git add`/`commit`/`push`
+  outside `git_tools.py`, with an explicit allowlist for genuine non-memory
+  writes (audit/diagnostic logs, migration scratch files, the CLI scaffolder).
+  Behaviour note: the session-end daily-note/status-file appends are now a
+  read-then-atomic-rewrite through `write_memory_file` rather than an
+  `O_APPEND` `open()` — the choke point's write primitive takes whole-file
+  content, not a fragment — which trades the OS-level concurrent-append
+  guarantee for crash-safety and one observation point for every write.
+- Consolidating `/save`'s auto-push onto `git_tools.push()` (above) surfaced a
+  real bug it had been hiding: `/session-end`'s explicit `push=False` never
+  actually suppressed the push. The individual indexed file
+  session-end saves internally via `save_api` carries its *own* auto-push,
+  keyed only on `config.git.auto_push` with no way for a caller to override
+  it — only session-end's own final push respected `push=False`. This was
+  invisible to the test asserting the contract because that auto-push
+  previously called a raw `subprocess.run(["git", "push"])` no test observed;
+  once it started calling `git_tools.push()` (the same choke-point primitive
+  the test's mock watches), the gap became visible rather than silently
+  passing. `save_api` now accepts a `push` override (`None` defers to
+  `config.git.auto_push`, unchanged for every existing caller; `False`
+  suppresses that save's own auto-push) and `/session-end` threads its
+  `push=False` through to the internal save it makes.
+- The HTTP-layer monopoly linter now actually runs. The design names three
+  forcing functions; the registry and the parity test have been live since
+  v0.5.x, but the third — `scripts/check-httpx-monopoly.sh` — was wired to
+  nothing. It was described as "a pre-commit grep", there is no
+  `.pre-commit-config.yaml` in the repo, and no workflow invoked it, so an
+  documented gate silently enforced nothing for months. It also aborted under
+  macOS's system bash 3.2, where expanding a deliberately-empty array under
+  `set -u` is treated as an unbound variable — so the one developer who did run
+  it by hand got a crash indistinguishable from a finding. Both fixed: the array
+  expansions are guarded, the check runs in CI, and it now has a test suite
+  (`tests/test_check_httpx_monopoly.sh`) alongside the other two scrub scripts,
+  which is what would have caught the crash in the first place. Its single real
+  finding is also fixed: `cli/_api.py` now re-exports `ReadTimeout` alongside
+  `HTTPStatusError`/`RequestError`, so `cli/session_end.py` no longer imports
+  `httpx` directly just to name one exception — the call path always went
+  through the client, but the adapter's *exception* surface had a hole.
+- Closed the parity contract's one-directional blind spot. The
+  param test walks the registry *outward*, so a parameter that never entered the
+  registry was not a case and could not fail — which is how `epistemic`
+  shipped first-class on all four surfaces while the contract had no opinion about
+  it. `epistemic` is now registered. The enum assertion was also filtered to
+  `CATEGORIES`/`MEMORY_TYPES`, silently exempting every other registered enum:
+  `update_policy` carried an enum in the registry that was never asserted and had
+  drifted into five hand-written copies. The filter is removed, so any registered
+  enum is now checked on every surface, and `VALID_UPDATE_POLICIES` /
+  `VALID_EPISTEMICS` are defined once in `parity.py` — alongside `CATEGORIES` and
+  `MEMORY_TYPES`, in the one module every surface can import without it taking a
+  dependency — with `core/parser.py` re-exporting them so existing call sites are
+  unaffected. `SaveRequest` advertises both enums in its OpenAPI schema via
+  `json_schema_extra`; the fields stay `str` rather than `Literal` deliberately,
+  so an invalid value still reaches the handler and returns an actionable 400
+  instead of Pydantic's 422 — validation behaviour and status codes are unchanged.
+- Write-time contradiction `DELETE`s no longer vanish silently: the
+  `_translate_ops` DELETE→SUPERSEDE translation now carries `new_text`
+  (previously omitted, so the executor's `if fact_id and new_text` guard
+  dropped the op with no mutation, stats increment, or log line). The
+  executor's `apply_operations` also gained an `unmatched` stats counter and
+  a warning on every op it drops — missing required field or fact id absent
+  from the file — so a dropped op is now always accounted for.
+- Hybrid search applied the daily-file penalty twice (once inside
+  `store.search`'s vector-arm fetch, once in `ranker.rank_hybrid`), so daily
+  files scored `daily_penalty²` instead of `daily_penalty` — a 3.3x
+  over-penalty on the default search path, and `include_daily=True` only
+  half-disabled it. `rank_hybrid` is now the only place a score is mutated:
+  the vector-only (`hybrid=false`) search path also routes through it (empty
+  FTS arm), gaining the decay re-rank, priority nudge, and per-file dedup it
+  previously lacked, and a date-windowed hybrid search no longer
+  under-returns from filtering after the `top_k` truncation instead of
+  before.
+- `palinode init`, the `claude_md_palinode_block` doctor check, and
+  `doctor --fix` used to disagree about what "CLAUDE.md is wired up for
+  Palinode" means: the check passed on any file merely containing the word
+  "palinode" in prose, while the fix's own append text used a different,
+  shorter block than `init` scaffolds. `doctor` no longer goes green on a
+  prose mention — all three now share one marker (the `## Memory (Palinode)`
+  heading) and one block rendering (`MEMORY_BLOCK_CORE`), so `doctor --fix`
+  now appends the same full block `palinode init` writes to AGENTS.md and
+  `.cursor/rules` (session-start/during-work/session-end, "What NOT to
+  save", and the project-slug section — previously absent from the
+  `--fix` path). Also: `palinode init --dry-run` and the real write now
+  walk a single enumerated plan (`build_plan`), fixing `--obsidian
+  --dry-run` under-reporting its own 8 vault-directory `mkdir`s.
+- `compaction.allowed_ops` — a safety knob that restricted which consolidation
+  operations may run — was read by nothing; the only filter that actually
+  applied was `consolidation.nightly.allowed_ops`, and only on the nightly
+  pass. A user who set it to make consolidation conservative got zero
+  protection on the weekly pass. Honoured now: `consolidation.allowed_ops`
+  (a new key, same nesting depth as `nightly.allowed_ops`) filters the weekly
+  pass's proposed operations the same way nightly already filters its own,
+  and `compaction.allowed_ops` / `compaction.aggressiveness` are gone —
+  `aggressiveness` had no defined semantics anywhere in the tree, and keeping
+  two differently-named, differently-scoped "restrict the ops" keys was the
+  ambiguity that let the first one go unread.
+- The nightly consolidation pass no longer silently drops an operation whose
+  kind is missing/unrecognised. Its `allowed_ops` filter compared the raw
+  `op.get("op", op.get("operation", ""))` string, so an op with neither key
+  resolved to `""` — which can never appear in any configured `allowed_ops`
+  list, so the op was dropped unconditionally, independent of what an
+  operator set the config to. The nightly filter now resolves a missing kind
+  to `KEEP` first (`op_kind(op) or "KEEP"`, the same default the executor
+  itself applies and the weekly filter above already used), so the op is
+  filtered on what it will actually become rather than on a value that can
+  never match. The executor-side `unmatched` counter follows the same fix shape:
+  the read is the fix.
 - **Concurrent consolidation runs now refuse instead of racing over store
   mutations and git commits.** Weekly and nightly runs share a store-local,
-  stale-recoverable lock across API, CLI/MCP, and cron entry points.
+  stale-recoverable lock across API, CLI/MCP, and cron entry points
+  ([#107](https://github.com/phasespace-labs/palinode/pull/107)).
 
-- **The live search smoke test is now self-contained.** It saves and queries a
+- **The live search smoke test is now self-contained**
+  ([#98](https://github.com/phasespace-labs/palinode/pull/98)). It saves and queries a
   unique marker instead of depending on unrelated content already being present
   in the tested instance.
 - **Embedding-dependent search now reports unavailable backends as HTTP 503
   instead of an internal-server error.** API, CLI, and MCP callers preserve
   the typed backend/model diagnostic and `palinode doctor` recovery hint,
-  while save continues to succeed with its existing deferred-index warning.
+  while save continues to succeed with its existing deferred-index warning
+  ([#106](https://github.com/phasespace-labs/palinode/pull/106)).
 
 - **Native Windows memory writes now avoid unsupported directory fsync and
   preserve overwrite permissions on Python 3.11/3.12.** Source-capture tests
-  read Palinode-written files as UTF-8 instead of using the locale default.
+  read Palinode-written files as UTF-8 instead of using the locale default
+  ([#94](https://github.com/phasespace-labs/palinode/pull/94)).
 
 ### Removed
 
+- Dead code removed after an AST-based reachability sweep (~165 LOC): the
+  consolidation runner's `_write_project_summary`, `_handle_superseded_decisions`
+  and `_extract_insights` (the last was still *called*, but its return value was
+  discarded — it had been a documented no-op since March); `ranker.score_with_decay`
+  and its `store` re-export (the legacy type-based decay ranker, superseded by the
+  demand-decay band in `rank_hybrid` and read by nothing); and six
+  unreachable helpers — `cli/_format.print_error`, `cli/_format.print_success`,
+  `import_/vault._build_slug_map`, `core/embedder.get_local_timeout`,
+  `core/visibility.visible_count`, `api/ui/provenance._oldest_commit`. No
+  behaviour change; the suite passes unchanged. The `decay.tau_*` config keys were
+  marked dead in place pending removal with the other dead config keys — see
+  below.
+- Three documented config subtrees that nothing reads: `recall:` (60 shipped
+  lines — the 4-phase injection pipeline it configured is gone,
+  and the OpenClaw plugin hardcodes its own equivalents rather than loading
+  it), `security:` (`scrub_patterns_file` pointed at `specs/scrub-patterns.yaml`,
+  a file deleted pre-launch for holding a real credential and never shipped —
+  the plugin's load attempt for it is also removed), and the dead two-thirds
+  of `capture:` (`extraction`/`daily`/`quick_capture` — only `cross_refs` was
+  ever read; the example now documents `cross_refs` instead of the dead
+  siblings). Also removed the six `decay.tau_*` config keys marked dead during
+  the sweep: their only reader, the legacy `score_with_decay` re-rank term, is
+  already gone. `TypeAdapter(Config).validate_python()` ignores unknown keys,
+  so an existing YAML carrying any of these stanzas keeps loading — the keys
+  just stop doing anything, same as they already did. Added a test asserting
+  every top-level section in `palinode.config.yaml.example` is read somewhere
+  in `palinode/`, so a documented no-op knob fails CI instead of shipping
+  silently.
+
 ### Security
+
+- **Unified the two divergent path-traversal guards**. `core/git_tools.py`
+  carried its own weaker `_resolve_memory_path` (`os.path.realpath` +
+  `str.startswith`, no absolute-path rejection, no symlink-loop handling, and a
+  `ValueError` that echoed the caller-supplied path back into its message) that
+  guarded `blame`, `history`, `first_commit`, `last_commit`, and — the write
+  operation — `rollback`, plus `consolidation/archive.py`'s `resolve_memory_ref`
+  (the single guard for `archive_memory` and `retract_mentions`). It diverged
+  from the hardened `pathlib.Path.resolve()` + `is_relative_to()` guard already
+  used by the HTTP read routes, and `api/routers/git_history.py` propagated its
+  path-bearing message to callers at `400`, while the hardened guard returned a
+  generic message at `403` for the same attack class. Both implementations are
+  now the same `palinode.core.path_guard.resolve_memory_path`, raising one typed
+  `PathTraversalError`; `git_tools`, `archive`, and every route in
+  `api/routers/git_history.py` (`/history`, `/timeline`, `/blame`, `/trace`,
+  `/rollback`) and `api/routers/consolidation.py`'s `/archive` map it to the same
+  status code (403 for a path that resolves outside `memory_dir`, 400 for input
+  that's malformed on its face). Two of those routes (`/rollback`, `/history`,
+  and the base `/blame`) previously had no exception handling for this at all —
+  a traversal attempt returned an uncaught `500`, not a rejection. `write_memory_file`
+  (the write choke point) now calls the same guard through the mutation path
+  described above.
 
 ## [0.11.0] — 2026-08-08
 

@@ -28,8 +28,8 @@ Concretely, that means a memory record can carry:
   here is the hash proving the words have not changed
 - a **git commit** recording who wrote it and when, so it can be diffed and reverted
 
-…and that every proposed change passes schema validation before Palinode applies it
-as a reviewable git commit.
+…and that the model **never writes any of it directly**. It proposes operations; a
+deterministic executor validates and applies them.
 
 Being the *reference* implementation is the goal, not a consolation prize. Palinode is
 not trying to out-scale hosted memory services or win on install base. It is trying to

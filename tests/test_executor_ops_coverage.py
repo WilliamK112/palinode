@@ -25,11 +25,22 @@ Pure file-mutation layer — no DB, no Ollama.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
 from palinode.consolidation.executor import apply_operations
+from palinode.core.config import config
+
+
+@pytest.fixture(autouse=True)
+def _memory_dir(tmp_path, monkeypatch):
+    # write_memory_file (the executor's write primitive) validates its target
+    # resolves inside config.memory_dir — every fixture/test in this module
+    # writes its memory file under tmp_path, so point memory_dir there.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+
 
 ZERO_STATS = {
     "kept": 0,
@@ -41,6 +52,7 @@ ZERO_STATS = {
     "merge_rejected": 0,
     "protected_rejected": 0,
     "contradicts_proposed": 0,
+    "unmatched": 0,
 }
 
 # The seed facts, as their plain *active* bullet lines. Asserting one of these is
@@ -364,6 +376,40 @@ def test_retract_without_reason_still_demotes_and_records(memory_file: Path) -> 
 # ── malformed / validation gaps ──────────────────────────────────────────────
 
 @pytest.mark.parametrize(
+    ("operation", "expected_unmatched"),
+    [
+        # UPDATE/MERGE/SUPERSEDE/ARCHIVE/RETRACT: missing a required field
+        # hits the falsy-guard fall-through and counts as unmatched.
+        ({"op": "UPDATE", "id": "f1", "new_text": ""}, 1),
+        ({"op": "MERGE", "ids": ["f1", "f2"], "new_text": ""}, 1),
+        ({"op": "SUPERSEDE", "id": "f1", "new_text": ""}, 1),
+        ({"op": "ARCHIVE"}, 1),
+        ({"op": "RETRACT"}, 1),
+    ],
+)
+def test_malformed_or_incomplete_operations_are_skipped(
+    memory_file: Path,
+    operation: dict[str, object],
+    expected_unmatched: int,
+) -> None:
+    before = _read(memory_file)
+    stats = apply_operations(str(memory_file), [operation])
+
+    assert stats == {**ZERO_STATS, "unmatched": expected_unmatched}
+    assert _read(memory_file) == before
+    assert not _history_path(memory_file).exists()
+
+
+# ── unmatched accounting ──────────────────────────────────────────────────────
+#
+# Before this fix, an op that couldn't be applied — a required field missing,
+# or a fact id absent from the file — was dropped with no mutation, no stats
+# increment, and no log line. That silence is exactly the mechanism that hid
+# the write-time DELETE bug (see write_time._translate_ops): a SUPERSEDE op
+# built without `new_text` sailed through `apply_operations` leaving no trace
+# it had ever been dropped. These tests assert the op is now *accounted for*.
+
+@pytest.mark.parametrize(
     "operation",
     [
         {"op": "UPDATE", "id": "f1", "new_text": ""},
@@ -373,16 +419,40 @@ def test_retract_without_reason_still_demotes_and_records(memory_file: Path) -> 
         {"op": "RETRACT"},
     ],
 )
-def test_malformed_or_incomplete_operations_are_skipped(
+def test_missing_required_field_increments_unmatched_and_logs(
     memory_file: Path,
     operation: dict[str, object],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    before = _read(memory_file)
-    stats = apply_operations(str(memory_file), [operation])
+    with caplog.at_level(logging.WARNING, logger="palinode.consolidation.executor"):
+        stats = apply_operations(str(memory_file), [operation])
 
-    assert stats == ZERO_STATS
-    assert _read(memory_file) == before
-    assert not _history_path(memory_file).exists()
+    assert stats["unmatched"] == 1
+    assert "dropped" in caplog.text.lower()
+
+
+@pytest.mark.parametrize(
+    ("operation", "counter"),
+    [
+        ({"op": "UPDATE", "id": "missing", "new_text": "- Replacement"}, "updated"),
+        ({"op": "MERGE", "ids": ["missing", "f2"], "new_text": "- Merged"}, "merged"),
+        ({"op": "SUPERSEDE", "id": "missing", "new_text": "- Replacement"}, "superseded"),
+        ({"op": "ARCHIVE", "id": "missing", "reason": "not found"}, "archived"),
+        ({"op": "RETRACT", "id": "missing", "reason": "not found"}, "retracted"),
+    ],
+)
+def test_id_not_found_increments_unmatched_and_logs(
+    memory_file: Path,
+    operation: dict[str, object],
+    counter: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="palinode.consolidation.executor"):
+        stats = apply_operations(str(memory_file), [operation])
+
+    assert stats[counter] == 0
+    assert stats["unmatched"] == 1
+    assert "unmatched" in caplog.text.lower()
 
 
 # The next three document validation gaps the executor docstring implies but the
@@ -432,7 +502,9 @@ def test_invalid_fact_ids_field_is_ignored_for_single_id_ops(memory_file: Path) 
     before = _read(memory_file)
     stats = apply_operations(str(memory_file), [{"op": "UPDATE", "fact_ids": "f1"}])
 
-    assert stats == ZERO_STATS
+    # UPDATE only reads "id"; "fact_ids" is a no-op field, so this is really
+    # the missing-id-and-new_text case and counts as unmatched.
+    assert stats == {**ZERO_STATS, "unmatched": 1}
     assert _read(memory_file) == before
 
 
@@ -597,7 +669,10 @@ def test_nightly_merge_rejects_empty_ids(memory_file: Path) -> None:
         nightly_policy=True,
     )
 
-    assert stats == ZERO_STATS
+    # Empty ids never reaches the nightly same-day check — it's the
+    # missing-required-field guard, so this counts as unmatched rather than
+    # merge_rejected (a rejection with a reason).
+    assert stats == {**ZERO_STATS, "unmatched": 1}
     assert _read(memory_file) == before
 
 

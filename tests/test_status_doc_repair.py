@@ -40,6 +40,20 @@ from palinode.consolidation.status_doc import (
 )
 from palinode.core.config import config
 
+
+@pytest.fixture(autouse=True)
+def _default_write_choke_point_memory_dir(tmp_path, monkeypatch):
+    # write_memory_file (fact_ids' and the executor's write primitive)
+    # validates its target resolves inside config.memory_dir — every
+    # fixture/test in this module writes its memory file under tmp_path, so
+    # point memory_dir there by default. Named distinctly from the
+    # `_memory_dir` plain helper below (not a fixture) so this autouse
+    # fixture isn't shadowed by that later same-name module-level def.
+    # Fixtures further down that already set it explicitly (e.g.
+    # _isolate_store) just re-set the same value.
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+
+
 #: Undamaged, but *not* canonical: its frontmatter does not yet carry the
 #: derived ``memory_count`` / ``date_range``, so a repair legitimately adds
 #: them. Deliberately not named "clean" — a "leaves a clean document alone"
