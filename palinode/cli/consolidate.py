@@ -1,5 +1,5 @@
 import click
-from palinode.cli._api import api_client
+from palinode.cli._api import HTTPStatusError, api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
 
 @click.command()
@@ -36,6 +36,15 @@ def consolidate(nightly, dry_run, sources, fmt):
                 console.print("[green]Consolidation complete.[/green]")
                 console.print(f"Stats: {data.get('stats', 'none')}")
                 
+    except HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        raise click.ClickException(
+            detail or f"Consolidation request failed ({e.response.status_code})"
+        ) from e
     except Exception as e:
         console.print(f"[red]Error consolidating: {str(e)}[/red]")
         click.Abort()

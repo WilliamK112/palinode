@@ -837,6 +837,24 @@ def run_consolidation(
     llm_fn: LlmFn | None = None,
     sources: Sequence[str] | None = None,
 ) -> dict[str, Any]:
+    """Run weekly consolidation under the memory store's shared run lock."""
+    from palinode.consolidation.run_lock import consolidation_run_lock
+
+    with consolidation_run_lock():
+        return _run_consolidation_unlocked(
+            lookback_days=lookback_days,
+            dry_run=dry_run,
+            llm_fn=llm_fn,
+            sources=sources,
+        )
+
+
+def _run_consolidation_unlocked(
+    lookback_days: int | None = None,
+    dry_run: bool = False,
+    llm_fn: LlmFn | None = None,
+    sources: Sequence[str] | None = None,
+) -> dict[str, Any]:
     """Orchestrator for the entire memory consolidation process.
 
     ``sources`` selects which directories under ``memory_dir`` to consolidate,
@@ -978,6 +996,18 @@ def run_consolidation(
 
 
 def run_nightly(lookback_days: int | None = None, dry_run: bool = False, llm_fn: LlmFn | None = None) -> dict[str, Any]:
+    """Run nightly consolidation under the memory store's shared run lock."""
+    from palinode.consolidation.run_lock import consolidation_run_lock
+
+    with consolidation_run_lock():
+        return _run_nightly_unlocked(
+            lookback_days=lookback_days,
+            dry_run=dry_run,
+            llm_fn=llm_fn,
+        )
+
+
+def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = False, llm_fn: LlmFn | None = None) -> dict[str, Any]:
     """Lightweight nightly consolidation — process today's daily notes only.
 
     Restricted to UPDATE and SUPERSEDE ops. No ARCHIVE or MERGE (those

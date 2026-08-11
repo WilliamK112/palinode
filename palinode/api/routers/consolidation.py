@@ -28,6 +28,7 @@ def consolidate_api(req: ConsolidateRequest = None) -> dict[str, Any]:
     for testing or after a busy week.
     """
     from palinode.consolidation.runner import run_consolidation, run_nightly
+    from palinode.consolidation.run_lock import ConsolidationAlreadyRunning
 
     req = req or ConsolidateRequest()
     try:
@@ -36,6 +37,8 @@ def consolidate_api(req: ConsolidateRequest = None) -> dict[str, Any]:
         else:
             result = run_consolidation(dry_run=req.dry_run, sources=req.sources)
         return result
+    except ConsolidationAlreadyRunning as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     except Exception as e:
         raise _safe_500(e, "Consolidation failed")
 
