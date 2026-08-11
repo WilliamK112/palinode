@@ -14,6 +14,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- **`palinode read --meta --format text` now preserves bodies when a frontmatter
+  value contains `---`.** The CLI uses the canonical fence-line-aware splitter
+  instead of treating any three hyphens inside the YAML block as its closing fence.
+
 - **Concurrent consolidation runs now refuse instead of racing over store
   mutations and git commits.** Weekly and nightly runs share a store-local,
   stale-recoverable lock across API, CLI/MCP, and cron entry points.
