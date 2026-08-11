@@ -14,6 +14,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- **Concurrent consolidation runs now refuse instead of racing over store
+  mutations and git commits.** Weekly and nightly runs share a store-local,
+  stale-recoverable lock across API, CLI/MCP, and cron entry points.
+
 - **The live search smoke test is now self-contained.** It saves and queries a
   unique marker instead of depending on unrelated content already being present
   in the tested instance.

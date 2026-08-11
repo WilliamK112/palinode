@@ -20,6 +20,7 @@ import sys
 
 from palinode.core.config import config
 from palinode.consolidation.runner import run_consolidation, run_nightly
+from palinode.consolidation.run_lock import ConsolidationAlreadyRunning
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("palinode.consolidation.cron")
@@ -44,10 +45,14 @@ def main() -> None:
     mode = "nightly" if nightly else "weekly"
     logger.info(f"Starting {mode} consolidation (lookback: {lookback or 'config default'} days)...")
 
-    if nightly:
-        result = run_nightly(lookback_days=lookback)
-    else:
-        result = run_consolidation(lookback_days=lookback)
+    try:
+        if nightly:
+            result = run_nightly(lookback_days=lookback)
+        else:
+            result = run_consolidation(lookback_days=lookback)
+    except ConsolidationAlreadyRunning as error:
+        logger.error("%s", error)
+        raise SystemExit(1) from None
 
     logger.info(f"Consolidation complete: {result}")
 
