@@ -381,7 +381,24 @@ Palinode memory files optionally carry three fields from the [IETF Knowledge Uni
 
 **Auto-population:** Set `ku_compat: enabled: true` in `palinode.config.yaml` to automatically write `ku_version` and `lifecycle` on every save.
 
-## 7d. Dependency Frontmatter (ProjectSnapshot)
+## 7d. Source Citation Anchors (`quote_hash`)
+
+A memory can cite an exact passage from another file with a `sources:` frontmatter entry:
+
+```yaml
+sources:
+  - ref: research/some-paper.md
+    quote: "The exact cited passage."
+    quote_hash: "sha256:<64-hex-digest>"
+```
+
+`quote_hash` uses the explicit `<algorithm>:<hex>` format. New hashes use `sha256`; `md5` is also understood for older anchors. For compatibility, Palinode resolves a bare 32-character hexadecimal digest as MD5 and a bare 64-character digest as SHA-256, but hand-written anchors should include the algorithm prefix.
+
+The digest is computed from the normalized quote: smart punctuation is folded to its ASCII equivalent, each run of whitespace is collapsed to one space, and leading or trailing whitespace is removed. These smart-punctuation and spacing differences therefore do not invalidate an otherwise identical quote.
+
+The `quote_hash` field may be omitted when saving through Palinode. Palinode computes and stores the default `sha256:` hash automatically. If a hash is supplied, it must match the normalized `quote`; a mismatched value is rejected as an inconsistent anchor. This hash checks citation integrity and is not a cryptographic signature or attestation.
+
+## 7e. Dependency Frontmatter (ProjectSnapshot)
 
 ProjectSnapshot memories can carry optional dependency fields that model milestone and task sequencing:
 
