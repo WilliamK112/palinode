@@ -156,6 +156,7 @@ def _build_file_content(
     section: dict[str, Any],
     now_iso: str,
     source_path: str,
+    source_name: str = "openclaw",
 ) -> tuple[str, str]:
     """Return (relative_path, file_content) for a section.
 
@@ -171,7 +172,7 @@ def _build_file_content(
         "category": subdir,
         "name": section["heading"],
         "last_updated": now_iso,
-        "source": "openclaw-migration",
+        "source": f"{source_name}-migration",
         "source_file": os.path.basename(source_path),
     }
     fm_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
@@ -179,7 +180,12 @@ def _build_file_content(
     return rel_path, content
 
 
-def _git_commit(memory_dir: str, staged_files: list[str], log_file: str | None) -> None:
+def _git_commit(
+    staged_files: list[str],
+    log_file: str | None,
+    source_name: str,
+    source_path: str,
+) -> None:
     """Commit each migrated file in its own per-file commit.
 
     Each imported section is a genesis mutation, so each created memory gets its
@@ -193,13 +199,105 @@ def _git_commit(memory_dir: str, staged_files: list[str], log_file: str | None) 
             continue
         base = os.path.basename(fp)
         git_tools.commit_memory_file(
-            fp, f"palinode migrate openclaw: import {base} from MEMORY.md ({date_str})"
+            fp,
+            f"palinode migrate {source_name}: import {base} from "
+            f"{os.path.basename(source_path)} ({date_str})",
         )
     if log_file:
         git_tools.commit_memory_file(
             log_file,
-            f"palinode migrate openclaw: import log ({date_str})",
+            f"palinode migrate {source_name}: import log ({date_str})",
         )
+
+
+def run_sections_migration(
+    source_path: str,
+    sections: list[dict[str, Any]],
+    *,
+    source_name: str,
+    display_name: str,
+    dry_run: bool = False,
+    review_callback: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Write parsed sections through the canonical migration path."""
+    memory_dir = os.path.realpath(config.memory_dir)
+    validated_source = _validate_source_path(source_path)
+
+    if review_callback is not None:
+        sections = review_callback(sections)
+
+    now_iso = datetime.now(UTC).isoformat()
+    existing_hashes: set[str] = set() if dry_run else _existing_hashes(memory_dir)
+
+    files_created: list[str] = []
+    files_skipped: list[str] = []
+    written_abs: list[str] = []
+
+    for section in sections:
+        rel_path, content = _build_file_content(
+            section,
+            now_iso,
+            validated_source,
+            source_name,
+        )
+        content_hash = _sha256(content)
+
+        if content_hash in existing_hashes:
+            files_skipped.append(rel_path)
+            continue
+
+        if dry_run:
+            files_created.append(rel_path)
+            continue
+
+        abs_path = os.path.join(memory_dir, rel_path)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        git_tools.write_memory_file(abs_path, content)
+
+        existing_hashes.add(content_hash)
+        files_created.append(rel_path)
+        written_abs.append(abs_path)
+        logger.info("Created %s", rel_path)
+
+    log_rel: str | None = None
+    log_abs: str | None = None
+    if not dry_run and (files_created or files_skipped):
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        log_rel = f"migrations/{source_name}-{date_str}.md"
+        log_abs = os.path.join(memory_dir, log_rel)
+        os.makedirs(os.path.dirname(log_abs), exist_ok=True)
+
+        log_lines = [
+            f"# {display_name} Migration — {date_str}",
+            "",
+            f"Source: `{os.path.basename(validated_source)}`",
+            f"Sections found: {len(sections)}",
+            f"Files created: {len(files_created)}",
+            f"Files skipped (dedup): {len(files_skipped)}",
+            "",
+            "## Created",
+            "",
+        ]
+        for fp in files_created:
+            log_lines.append(f"- `{fp}`")
+        if files_skipped:
+            log_lines.extend(["", "## Skipped (duplicate content)", ""])
+            for fp in files_skipped:
+                log_lines.append(f"- `{fp}`")
+        log_lines.append("")
+
+        git_tools.write_memory_file(log_abs, "\n".join(log_lines))
+
+    if not dry_run and written_abs:
+        _git_commit(written_abs, log_abs, source_name, validated_source)
+
+    return {
+        "sections_found": len(sections),
+        "files_created": files_created,
+        "files_skipped": files_skipped,
+        "log_file": log_rel,
+        "dry_run": dry_run,
+    }
 
 
 def run_migration(
@@ -225,84 +323,15 @@ def run_migration(
             log_file: str | None       — relative path of the migration log
             dry_run: bool
     """
-    memory_dir = os.path.realpath(config.memory_dir)
     validated_source = _validate_source_path(source_path)
 
     with open(validated_source, "r", encoding="utf-8") as f:
         sections = _parse_raw(f.read())
-
-    if review_callback is not None:
-        sections = review_callback(sections)
-
-    # timezone-aware UTC ISO-8601 (``+00:00``). The previous
-    # ``strftime("...Z")`` form emitted UTC stamped as ``Z`` and dropped
-    # sub-second precision — switch to the project timestamp standard.
-    now_iso = datetime.now(UTC).isoformat()
-
-    existing_hashes: set[str] = set() if dry_run else _existing_hashes(memory_dir)
-
-    files_created: list[str] = []
-    files_skipped: list[str] = []
-    written_abs: list[str] = []
-
-    for section in sections:
-        rel_path, content = _build_file_content(section, now_iso, validated_source)
-        content_hash = _sha256(content)
-
-        if content_hash in existing_hashes:
-            files_skipped.append(rel_path)
-            continue
-
-        if dry_run:
-            files_created.append(rel_path)
-            continue
-
-        abs_path = os.path.join(memory_dir, rel_path)
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        git_tools.write_memory_file(abs_path, content)
-
-        existing_hashes.add(content_hash)
-        files_created.append(rel_path)
-        written_abs.append(abs_path)
-        logger.info(f"Created {rel_path}")
-
-    # Write migration log
-    log_rel: str | None = None
-    log_abs: str | None = None
-    if not dry_run and (files_created or files_skipped):
-        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-        log_rel = f"migrations/openclaw-{date_str}.md"
-        log_abs = os.path.join(memory_dir, log_rel)
-        os.makedirs(os.path.dirname(log_abs), exist_ok=True)
-
-        log_lines = [
-            f"# OpenClaw Migration — {date_str}",
-            "",
-            f"Source: `{os.path.basename(validated_source)}`",
-            f"Sections found: {len(sections)}",
-            f"Files created: {len(files_created)}",
-            f"Files skipped (dedup): {len(files_skipped)}",
-            "",
-            "## Created",
-            "",
-        ]
-        for fp in files_created:
-            log_lines.append(f"- `{fp}`")
-        if files_skipped:
-            log_lines.extend(["", "## Skipped (duplicate content)", ""])
-            for fp in files_skipped:
-                log_lines.append(f"- `{fp}`")
-        log_lines.append("")
-
-        git_tools.write_memory_file(log_abs, "\n".join(log_lines))
-
-    if not dry_run and written_abs:
-        _git_commit(memory_dir, written_abs, log_abs)
-
-    return {
-        "sections_found": len(sections),
-        "files_created": files_created,
-        "files_skipped": files_skipped,
-        "log_file": log_rel,
-        "dry_run": dry_run,
-    }
+    return run_sections_migration(
+        validated_source,
+        sections,
+        source_name="openclaw",
+        display_name="OpenClaw",
+        dry_run=dry_run,
+        review_callback=review_callback,
+    )
