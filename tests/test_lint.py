@@ -1,6 +1,131 @@
 from datetime import datetime, timedelta, timezone
-from palinode.core.lint import run_lint_pass
+import pytest
+
+from palinode.core.lint import check_relative_dates, run_lint_pass
 from palinode.core.config import config
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "yesterday",
+        "today",
+        "tomorrow",
+        "last week",
+        "last month",
+        "last year",
+        "next week",
+        "next month",
+        "next year",
+        "this week",
+        "this month",
+        "recently",
+        "lately",
+        "currently",
+        "right now",
+        "these days",
+    ]
+    + [
+        f"{number} {unit} ago"
+        for number in [
+            "3",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+            "eleven",
+            "twelve",
+        ]
+        for unit in ["days", "weeks", "months", "years"]
+    ],
+)
+def test_check_relative_dates_matches_specified_expressions(expression):
+    body = f"First line.\nWe wrote {expression} in a memory."
+
+    assert check_relative_dates(body) == [{"line": "2", "expression": expression}]
+
+
+def test_check_relative_dates_is_case_insensitive_and_flags_quoted_text():
+    body = 'She said, "YESTERDAY we decided it."\nRIGHT NOW it still applies.'
+
+    assert check_relative_dates(body) == [
+        {"line": "1", "expression": "YESTERDAY"},
+        {"line": "2", "expression": "RIGHT NOW"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The decision was recorded on 2026-08-03.",
+        "The launch month is August.",
+        "TodaysStatus is a legacy identifier.",
+    ],
+)
+def test_check_relative_dates_ignores_out_of_scope_text(body):
+    assert check_relative_dates(body) == []
+
+
+def test_lint_relative_dates_exempts_daily_logs(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    daily_dir = tmp_path / "daily"
+    insights_dir = tmp_path / "insights"
+    daily_dir.mkdir()
+    insights_dir.mkdir()
+
+    (daily_dir / "2026-08-11.md").write_text(
+        "Yesterday we shipped the release.\n", encoding="utf-8"
+    )
+    (insights_dir / "drifting.md").write_text(
+        "---\nid: insights-drifting\ncategory: insights\ntype: Insight\n---\n"
+        "Stable first line.\nTomorrow we will revisit it.\n",
+        encoding="utf-8",
+    )
+
+    result = run_lint_pass()
+
+    assert result["relative_dates"] == [
+        {
+            "file": "insights/drifting.md",
+            "matches": [{"line": "2", "expression": "Tomorrow"}],
+        }
+    ]
+
+
+def test_lint_cli_renders_relative_dates(monkeypatch):
+    import importlib
+
+    from click.testing import CliRunner
+
+    lint_module = importlib.import_module("palinode.cli.lint")
+
+    data = {
+        "missing_fields": [],
+        "orphaned_files": [],
+        "stale_files": [],
+        "contradictions": [],
+        "missing_entities": [],
+        "missing_descriptions": [],
+        "relative_dates": [
+            {
+                "file": "decisions/launch.md",
+                "matches": [{"line": "4", "expression": "next month"}],
+            }
+        ],
+    }
+    monkeypatch.setattr(lint_module.api_client, "lint", lambda: data)
+
+    result = CliRunner().invoke(lint_module.lint, ["--format", "text"])
+
+    assert result.exit_code == 0
+    assert "Relative Dates (1)" in result.output
+    assert "decisions/launch.md:4: next month" in result.output
 
 def test_lint_pass(tmp_path, monkeypatch):
     """Test the lint logic with simulated memory files."""

@@ -113,6 +113,20 @@ def lint(fmt, deep_contradictions, max_llm_calls, similarity_threshold):
 
     console.print("")
 
+    relative_dates = data.get("relative_dates", [])
+    if relative_dates:
+        match_count = sum(len(item.get("matches", [])) for item in relative_dates)
+        console.print(f"[bold yellow]Relative Dates ({match_count})[/bold yellow]")
+        for item in relative_dates:
+            for match in item.get("matches", []):
+                console.print(
+                    f"  - {item['file']}:{match['line']}: {match['expression']}"
+                )
+    else:
+        console.print("[green]✓ No relative dates[/green]")
+
+    console.print("")
+
     # source-citation anchor integrity (drifted / missing / tampered).
     source_issues = data.get("source_anchor_issues", [])
     if source_issues:
