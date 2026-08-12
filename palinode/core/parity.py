@@ -83,6 +83,14 @@ class Operation:
     known_drift: dict[tuple[Surface, str], int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class InventoryBacklogEntry:
+    """One unregistered capability, including alternate surface names."""
+
+    issue: int
+    aliases: tuple[str, ...] = ()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin carve-out
 # ─────────────────────────────────────────────────────────────────────────────
@@ -647,19 +655,18 @@ INVENTORY_INFRA: dict[Surface, frozenset[str]] = {
 #: neither registered, infra, nor backlog.  Promoting one of these into
 #: ``REGISTRY`` means removing its entry here (the guard fails on the overlap,
 #: telling you the move is done).
-INVENTORY_BACKLOG: dict[Surface, dict[str, int]] = {
+INVENTORY_BACKLOG: dict[Surface, dict[str, int | InventoryBacklogEntry]] = {
     "mcp": {
         "palinode_dedup_suggest": 170,
         "palinode_diff": 170,
         "palinode_entities": 170,
-        "palinode_history": 170,
+        "palinode_history": InventoryBacklogEntry(170, aliases=("palinode_timeline",)),
         "palinode_ingest": 170,
         "palinode_lint": 170,
         "palinode_orphan_repair": 170,
         "palinode_prompt": 170,
         "palinode_push": 170,
         "palinode_session_end": 170,
-        "palinode_timeline": 170,
     },
     "api": {
         "DELETE /triggers/{trigger_id}": 170,
@@ -728,6 +735,15 @@ def registered_capabilities(surface: Surface) -> frozenset[str]:
     return frozenset(ids)
 
 
+def inventory_backlog_capabilities(surface: Surface) -> frozenset[str]:
+    """Return canonical backlog identifiers plus their alternate names."""
+    capabilities = set(INVENTORY_BACKLOG[surface])
+    for entry in INVENTORY_BACKLOG[surface].values():
+        if isinstance(entry, InventoryBacklogEntry):
+            capabilities.update(entry.aliases)
+    return frozenset(capabilities)
+
+
 def by_name(op_name: str) -> Operation:
     """Look up an operation by name.  Raises ``KeyError`` if missing."""
     for op in REGISTRY:
@@ -747,6 +763,7 @@ __all__ = [
     "CATEGORIES",
     "CanonicalParam",
     "INVENTORY_BACKLOG",
+    "InventoryBacklogEntry",
     "INVENTORY_INFRA",
     "MEMORY_TYPES",
     "Operation",
@@ -755,6 +772,7 @@ __all__ = [
     "REGISTRY",
     "Surface",
     "by_name",
+    "inventory_backlog_capabilities",
     "registered_capabilities",
     "required_surfaces",
 ]

@@ -40,11 +40,13 @@ from palinode.core.parity import (
     CATEGORIES,
     INVENTORY_BACKLOG,
     INVENTORY_INFRA,
+    InventoryBacklogEntry,
     MEMORY_TYPES,
     REGISTRY,
     CanonicalParam,
     Operation,
     Surface,
+    inventory_backlog_capabilities,
     registered_capabilities,
     required_surfaces,
 )
@@ -560,7 +562,7 @@ def test_no_unregistered_capabilities(surface: Surface) -> None:
     accounted = (
         registered_capabilities(surface)
         | INVENTORY_INFRA[surface]
-        | set(INVENTORY_BACKLOG[surface])
+        | inventory_backlog_capabilities(surface)
     )
     unaccounted = live - accounted
     assert not unaccounted, (
@@ -581,7 +583,7 @@ def test_inventory_accounting_is_not_stale(surface: Surface) -> None:
     hygiene rule).
     """
     live = _LIVE_CAPABILITIES[surface]()
-    stale = (INVENTORY_INFRA[surface] | set(INVENTORY_BACKLOG[surface])) - live
+    stale = (INVENTORY_INFRA[surface] | inventory_backlog_capabilities(surface)) - live
     assert not stale, (
         f"{surface}: inventory-accounting entries no longer present on the "
         f"surface: {sorted(stale)}. Remove them from INVENTORY_INFRA / "
@@ -593,7 +595,7 @@ def test_inventory_accounting_is_not_stale(surface: Surface) -> None:
 def test_inventory_buckets_are_disjoint(surface: Surface) -> None:
     """A capability is classified once: infra XOR backlog XOR registered."""
     infra = INVENTORY_INFRA[surface]
-    backlog = set(INVENTORY_BACKLOG[surface])
+    backlog = inventory_backlog_capabilities(surface)
     registered = registered_capabilities(surface)
     assert not (infra & backlog), (
         f"{surface}: in both INVENTORY_INFRA and INVENTORY_BACKLOG: "
@@ -607,3 +609,13 @@ def test_inventory_buckets_are_disjoint(surface: Surface) -> None:
         f"{surface}: a registered operation is also marked infra: "
         f"{sorted(registered & infra)}"
     )
+
+
+def test_inventory_alias_does_not_add_a_capability_row() -> None:
+    """An alternate name annotates its canonical row instead of inflating inventory."""
+    history = INVENTORY_BACKLOG["mcp"]["palinode_history"]
+
+    assert history == InventoryBacklogEntry(170, aliases=("palinode_timeline",))
+    assert "palinode_timeline" not in INVENTORY_BACKLOG["mcp"]
+    assert "palinode_timeline" in inventory_backlog_capabilities("mcp")
+    assert len(inventory_backlog_capabilities("mcp")) == len(INVENTORY_BACKLOG["mcp"]) + 1
