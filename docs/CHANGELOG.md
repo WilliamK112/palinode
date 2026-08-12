@@ -6,6 +6,9 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+- **Deterministic bullet-list migration** adds `palinode migrate bullets FILE`
+  for flat mem0-style exports, grouping leading undated bullets and subsequent
+  dated bullets into sections before reusing the existing migration writer.
 - **Relative-date lint findings** flag the finite set of unanchored time
   expressions that become misleading as living memories age, while exempting
   dated `daily/` notes and reporting each expression with its source line.

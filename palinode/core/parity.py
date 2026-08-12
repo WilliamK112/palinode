@@ -631,6 +631,7 @@ INVENTORY_INFRA: dict[Surface, frozenset[str]] = {
             "init",
             "mcp-config",
             "mcp-smoke",
+            "migrate bullets",
             "migrate frontmatter",
             "migrate openclaw",
             "migrate-mem0",
