@@ -17,6 +17,21 @@ from palinode.core import parser
 # deliberately links every frontmatter entity that has no inline body link.
 _AUTO_FOOTER_MARKER = "<!-- palinode-auto-footer -->"
 
+_RELATIVE_DATE_NUMBER = (
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+)
+_RELATIVE_DATE_RE = re.compile(
+    rf"(?<!\w)(?:"
+    rf"{_RELATIVE_DATE_NUMBER} (?:days|weeks|months|years) ago|"
+    r"last (?:week|month|year)|"
+    r"next (?:week|month|year)|"
+    r"this (?:week|month)|"
+    r"right now|these days|"
+    r"yesterday|today|tomorrow|recently|lately|currently"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
 def _alias_key(name: str) -> str:
     """Separator-and-case-insensitive form of an entity ref's name part.
 
@@ -355,6 +370,17 @@ def check_wiki_drift(
     return warnings
 
 
+def check_relative_dates(body: str) -> list[dict[str, str]]:
+    """Return relative time expressions whose meaning will drift over time."""
+    findings: list[dict[str, str]] = []
+    for line_number, line in enumerate(body.splitlines(), start=1):
+        findings.extend(
+            {"line": str(line_number), "expression": match.group(0)}
+            for match in _RELATIVE_DATE_RE.finditer(line)
+        )
+    return findings
+
+
 def run_lint_pass() -> dict[str, Any]:
     """Scan PALINODE_DIR for memory health issues.
     
@@ -375,6 +401,7 @@ def run_lint_pass() -> dict[str, Any]:
     missing_descriptions: list[str] = []
     missing_priority: list[str] = []
     wiki_drift: list[dict[str, Any]] = []
+    relative_dates: list[dict[str, Any]] = []
     source_anchor_issues: list[dict[str, Any]] = []
     claim_anchor_issues: list[dict[str, Any]] = []
     # (ADR-018): an `epistemic: open_question` that has gone unresolved for a
@@ -532,6 +559,10 @@ def run_lint_pass() -> dict[str, Any]:
             if drift_warnings:
                 wiki_drift.append({"file": path, "warnings": drift_warnings})
 
+            relative_date_matches = check_relative_dates(body)
+            if relative_date_matches:
+                relative_dates.append({"file": path, "matches": relative_date_matches})
+
         # 8. Source-citation anchors — verify each ``sources:`` anchor's
         # integrity hash and that the cited quote still appears in its source.
         # Clean no-op for files with no anchors (verify returns []). Only
@@ -632,6 +663,7 @@ def run_lint_pass() -> dict[str, Any]:
         "missing_descriptions": missing_descriptions,
         "missing_priority": missing_priority,
         "wiki_drift": wiki_drift,
+        "relative_dates": relative_dates,
         "source_anchor_issues": source_anchor_issues,
         "claim_anchor_issues": claim_anchor_issues,
         "stale_open_questions": stale_open_questions,

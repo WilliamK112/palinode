@@ -6,6 +6,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+- **Relative-date lint findings** flag the finite set of unanchored time
+  expressions that become misleading as living memories age, while exempting
+  dated `daily/` notes and reporting each expression with its source line.
+
 ### Changed
 
 ### Fixed
