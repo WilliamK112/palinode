@@ -18,6 +18,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 ### Fixed
 
 - **API parity inventory counts the deprecated `/timeline` alias once (#122).** The alias now annotates the canonical `/history` backlog entry while remaining available at runtime.
+- **Injection scanning distinguishes technical prose from executable or
+  instruction-changing content (#74).** Benign references to JavaScript,
+  script tags, system prompts, and ordinary “you are now” sentences can be
+  saved without weakening the corresponding attack checks.
 - **CLI parity inventory counts the deprecated `timeline` alias once (#120).** The alias now annotates the canonical `history` backlog entry while remaining available at runtime.
 - **Parity inventory no longer counts the deprecated `palinode_timeline` alias as a separate capability (#99).** The alias now annotates the canonical `palinode_history` backlog entry while remaining live and deprecated at runtime.
 
