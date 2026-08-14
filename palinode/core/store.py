@@ -74,6 +74,12 @@ INJECTION_PATTERNS = [
         r'(?:in\s+)?(?:developer|jailbreak|admin(?:istrator)?|god|unrestricted|unfiltered)\s+mode\b'
         r'|(?:an?\s+)?(?:dan|jailbroken|unrestricted|unfiltered|root)\b'
         r'|(?:the\s+)?system(?:\s+assistant)?\b'
+        r'|(?:going\s+to\s+)?act\s+as\s+(?:an?\s+)?'
+        r'(?:dan|jailbroken|unrestricted|unfiltered|root|developer|admin(?:istrator)?|god)\b'
+        r'|operating\s+without\s+(?:any\s+)?(?:restrictions|rules|guidelines)\b'
+        r'|free\s+of\s+(?:your|all|the)\s+(?:guidelines|rules|restrictions|instructions)\b'
+        r'|(?:an?\s+)?(?:helpful|unrestricted|unfiltered)\s+assistant\s+with\s+no\s+'
+        r'(?:rules|restrictions|guidelines)\b'
         r')'
     ),
     r'disregard\s+(your|all)\s+(previous|prior)',
