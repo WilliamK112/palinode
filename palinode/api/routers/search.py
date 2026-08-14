@@ -135,7 +135,9 @@ def _fetch_visible(
 class SearchRequest(BaseModel):
     query: str
     category: Literal[*CATEGORIES] | None = None
-    limit: int | None = config.search.default_limit
+    limit: int | None = Field(
+        default=config.search.default_limit, ge=1, le=config.search.max_limit
+    )
     threshold: float | None = config.search.api_threshold
     hybrid: bool | None = None
     date_after: str | None = None

@@ -1,15 +1,17 @@
 # Palinode Claude Code hooks
 
-Drop-in hooks that bracket a Claude Code session with Palinode: inject memory
-at session start, auto-capture at session end.
+Drop-in hooks that wire a Claude Code session to Palinode end to end: inject
+memory at session start, recall relevant memory before each prompt, auto-capture
+at session end.
 
 ## What's here
 
 | File | What it does |
 |------|--------------|
 | `palinode-session-start.sh` | SessionStart hook — injects a bounded digest of `core: true` memories into the fresh session (plus a recall reminder), and warms server-side session context via `/context/prime` |
+| `palinode-user-prompt-submit.sh` | UserPromptSubmit hook — per-turn implicit recall: checks prospective triggers (server-side cooldowns keep firings self-limiting) and runs a strict-threshold search over the prompt, injecting compact snippets before the model sees it |
 | `palinode-session-end.sh` | SessionEnd hook — captures a snapshot of the transcript to palinode-api on session exit, including `/clear`, logout, and normal exit |
-| `settings.json` | The Claude Code hook registration that points at both scripts |
+| `settings.json` | The Claude Code hook registration that points at all three scripts |
 
 ## Zero-friction install
 
@@ -29,8 +31,8 @@ If you prefer to wire it up by hand:
 
 ```bash
 mkdir -p .claude/hooks
-cp palinode-session-start.sh palinode-session-end.sh .claude/hooks/
-chmod +x .claude/hooks/palinode-session-*.sh
+cp palinode-session-start.sh palinode-user-prompt-submit.sh palinode-session-end.sh .claude/hooks/
+chmod +x .claude/hooks/palinode-*.sh
 cp settings.json .claude/settings.json   # or merge into an existing one
 ```
 
@@ -74,6 +76,30 @@ ships.
 Mark a memory as core with `palinode_save(..., core=true)` or by setting
 `core: true` in its frontmatter.
 
+## What per-turn recall injects
+
+Before each prompt (skipping trivial ones under 12 chars), the UserPromptSubmit
+hook does two things, both bounded and both optional:
+
+1. **Prospective triggers** — POSTs the prompt to `/check-triggers`. Triggers
+   you registered with `palinode_trigger` ("when I'm discussing deployment,
+   surface this runbook") fire here, and the server's per-trigger cooldown
+   means the same trigger won't re-fire every turn. Fired files are fetched
+   and injected (up to 2 files, 1200 chars each).
+2. **Strict search** — runs a hybrid search over the prompt text with a high
+   similarity floor (0.75) and injects at most 3 results as 300-char snippets.
+   Deliberately conservative: this runs on every prompt, and injected bytes
+   stay in the conversation for the rest of the session.
+
+Everything arrives as `additionalContext`, which Claude Code adds to the
+**conversation** — not the system prompt. That placement is deliberate:
+Anthropic's prompt cache is a strict prefix match, so per-turn content in the
+system prompt would invalidate the cached prefix (tools + system + history) on
+every single turn. Injected this way, the cache survives.
+
+When nothing relevant is found, the hook says nothing — silence is the common
+case and costs no tokens.
+
 ## Tuning
 
 Environment variables the hooks respect:
@@ -88,10 +114,37 @@ Environment variables the hooks respect:
 | `PALINODE_HOOK_START_TIMEOUT` | `8` | Per-request timeout (seconds) for the session-start hook. Keep tight — SessionStart blocks the session becoming interactive |
 | `PALINODE_HOOK_INJECT_MAX_FILES` | `10` | Max core memories injected at session start; `0` disables injection (prime-only mode) |
 | `PALINODE_HOOK_INJECT_MAX_CHARS` | `4000` | Total cap on injected context size |
+| `PALINODE_HOOK_RECALL_MAX_RESULTS` | `3` | Search hits injected per prompt; `0` disables the search channel |
+| `PALINODE_HOOK_RECALL_THRESHOLD` | `0.5` | Similarity floor for per-turn search — see "Tuning the recall threshold" below |
+| `PALINODE_HOOK_RECALL_TRIGGERS` | `1` | `0` disables the trigger channel |
+| `PALINODE_HOOK_RECALL_MIN_CHARS` | `12` | Prompts shorter than this skip recall entirely |
+| `PALINODE_HOOK_RECALL_MAX_CHARS` | `3000` | Total cap on per-turn injected context |
+| `PALINODE_HOOK_RECALL_TIMEOUT` | `4` | Per-request timeout (seconds) for the recall hook |
+
+## Tuning the recall threshold
+
+The threshold is a **raw cosine-similarity floor** — the same scale as the
+percentage shown on each injected hit (`- [file] (62%) …`), so what you see is
+what the knob filters on. The values below aren't guesses: they come from a
+measured calibration against real BGE-M3 embeddings (54 query/chunk pairs
+spanning natural questions, keyword queries, and exact identifiers), confirmed
+by a live sweep on a real store.
+
+| Value | What it does |
+|-------|--------------|
+| `0.4` | Recalls everything plausibly relevant (100% measured recall) — but nonsense queries also surface hits. Use when you'd rather over-recall |
+| `0.5` | **Default.** 98% measured recall, and the live-store elbow: full recall on relevant queries with zero hits for irrelevant ones |
+| `0.6` | Strict: drops ~1 in 4 genuinely relevant memories overall, ~2 in 5 for natural-language questions |
+| `0.7`+ | Near-silent: only ~28% of true matches clear 0.7. Effectively disables the channel |
+
+If recall feels noisy, try `0.55` before `0.6` — the drop-off past `0.6` is a
+cliff, not a slope. If it feels too quiet, `0.45`. Set it in your
+`~/.claude/settings.json` `env` block (or per-shell) as
+`PALINODE_HOOK_RECALL_THRESHOLD`.
 
 ## Fail-silent
 
-Both hooks are designed to never block Claude Code. If the API is down, the
-session-start hook injects nothing and the session-end capture is dropped —
-both exit 0. Check `palinode status` to verify the API is reachable — and
-re-run sessions that matter.
+All three hooks are designed to never block Claude Code. If the API is down,
+the session-start hook injects nothing, per-turn recall stays silent, and the
+session-end capture is dropped — all exit 0. Check `palinode status` to verify
+the API is reachable — and re-run sessions that matter.

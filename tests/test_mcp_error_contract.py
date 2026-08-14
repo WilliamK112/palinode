@@ -239,7 +239,9 @@ def _audit_status_for(monkeypatch, response_text: str) -> str:
     async def _fake_dispatch(name, arguments):
         return mcp._text(response_text)
 
-    def _fake_log_call(name, arguments, duration_ms, status=None, error=None):
+    def _fake_log_call(name, arguments, duration_ms, status=None, error=None, **kwargs):
+        # **kwargs absorbs result_bytes/result_blocks and anything added later —
+        # this fake exists to capture `status`, not to pin the signature.
         captured["status"] = status
 
     monkeypatch.setattr(mcp, "_dispatch_tool", _fake_dispatch)

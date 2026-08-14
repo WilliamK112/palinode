@@ -103,7 +103,7 @@ def _cli_help_strings() -> list[tuple[str, str]]:
 
 
 def test_no_issue_refs_in_cli_help() -> None:
-    """No CLI ``--help`` text may contain a private issue reference."""
+    """No CLI ``--help`` text may carry an unfollowable issue reference."""
     offenders = [
         (loc, _issue_refs(text))
         for loc, text in _cli_help_strings()
@@ -166,9 +166,9 @@ def _comment_refs_in(path: Path) -> list[tuple[int, str]]:
 
 
 def test_no_issue_refs_in_source_comments() -> None:
-    """No Python COMMENT in the shipping source may carry a private issue ref.
+    """No Python COMMENT in the shipping source may carry an unfollowable ref.
 
-    Locks in the comment-scrub baseline: `#NNN` in comments is recurring
+    Locks in the comment-scrub baseline: a bare tag in a comment is recurring
     public-sync noise, so it stays at zero. Docstrings/strings are excluded.
     """
     repo_root = Path(__file__).resolve().parent.parent
@@ -198,7 +198,7 @@ _ROOT_CONFIG_FILES = (".gitattributes", ".gitignore")
 def test_no_issue_refs_in_root_config() -> None:
     """Extend the rule to the root config files that ship.
 
-    The issue-ref scrub scoped itself to Python *comments*, so a private issue ref in a
+    The issue-ref scrub scoped itself to Python *comments*, so an unfollowable ref in a
     non-Python config file was outside every mechanical gate — content scrub
     looks for secret patterns, path scrub looks at filenames, and this test
     only parsed `.py`. A v0.9.6 sync found exactly that: `.gitattributes`
@@ -220,9 +220,9 @@ def test_no_issue_refs_in_root_config() -> None:
                 offenders.append(f"  {name}:{i}: {_issue_refs(line)}  →  {line[:80]}")
 
     assert not offenders, (
-        "Private issue refs found in shipping root config. These reach the "
-        "public payload and no mechanical gate sees them — rewrite the comment "
-        "to describe the situation instead of citing the issue:\n"
+        "Unfollowable issue refs found in shipping root config. These reach the "
+        "public payload and no mechanical gate sees them — use the full public "
+        "issue URL, or rewrite the line to describe the situation instead:\n"
         + "\n".join(offenders)
     )
 

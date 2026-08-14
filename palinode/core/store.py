@@ -48,6 +48,24 @@ _db_checked: bool = False
 # surfaces (API/MCP/CLI/plugin) inherit it (ADR-010 parity), mirroring.
 DEFAULT_RECALL_EXCLUDED_KINDS: tuple[str, ...] = ("telemetry",)
 
+#: sqlite-vec's hard ceiling on ``k`` in a KNN ``MATCH`` query. Past it the
+#: driver raises ``sqlite3.OperationalError`` ("k value in knn query too
+#: large") rather than returning fewer rows, so the ceiling has to be enforced
+#: on our side of the call.
+#:
+#: This is clamped in :func:`search` rather than validated at the API edge
+#: because the request ``limit`` is not the number that arrives here — callers
+#: stack multipliers on it. ``search_hybrid`` doubles it, ``search`` triples
+#: that, the search router multiplies by 5 again when a type/priority filter is
+#: in play, and ``_fetch_visible`` multiplies by 5 once more when visibility
+#: filtering starved the window. Worst case that is 150x, so an edge bound
+#: chosen to keep ``k`` legal would have to be ~27 — far too strict for the
+#: wide-recall passes the API exists to serve. Clamping at the boundary keeps
+#: every path legal and costs nothing: this is an over-fetched candidate set
+#: that is re-ranked and trimmed afterwards, so a smaller net changes only how
+#: many candidates were considered, never correctness.
+VEC_KNN_MAX_K = 4096
+
 
 def _excluded_by_kind(
     meta: dict[str, Any], kind_exclude_list: Sequence[str] | None
@@ -68,7 +86,21 @@ def _excluded_by_kind(
 # https://github.com/NousResearch/hermes-agent
 
 INJECTION_PATTERNS = [
-    r'ignore\s+(previous|prior|all)\s+instructions',
+    # The optional leading `all` is what catches the canonical phrasing
+    # "ignore all previous instructions". The original single qualifier slot
+    # matched "ignore previous instructions" and "ignore all instructions" but
+    # not the stacked form, which is the one that actually occurs in the wild.
+    #
+    # Deliberately only `all`, not `any`/`the`. Widening to those catches no
+    # additional attack shape worth the cost and starts blocking ordinary
+    # prose — "you can ignore any previous instructions about formatting",
+    # "ignore the previous instructions in that email thread" — which is the
+    # false-positive class the scanner was just narrowed to stop producing.
+    #
+    # This closes one phrasing, not the category: an enumerated list cannot be
+    # complete, and a rephrase still passes. That limitation is the known
+    # property of this approach, not a defect introduced here.
+    r'ignore\s+(?:all\s+)?(?:previous|prior|all)\s+instructions',
     (
         r'\byou\s+are\s+now\s+(?:'
         r'(?:in\s+)?(?:developer|jailbreak|admin(?:istrator)?|god|unrestricted|unfiltered)\s+mode\b'
@@ -837,8 +869,10 @@ def search(query_embedding: list[float], category: str | None = None,
             WHERE v.embedding MATCH ? AND k = ?
         """
         # Grab slightly more than we need so we can safely filter out exclusions
-        # without running out of return slots
-        params = [query_vec_json, top_k * 3]
+        # without running out of return slots, but never ask sqlite-vec for a
+        # `k` past its ceiling — it raises rather than returning fewer rows, and
+        # callers stack multipliers on top of this one (see VEC_KNN_MAX_K).
+        params = [query_vec_json, min(top_k * 3, VEC_KNN_MAX_K)]
         if category:
             sql += " AND c.category = ?"
             params.append(category)

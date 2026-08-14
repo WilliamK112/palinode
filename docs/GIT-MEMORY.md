@@ -57,7 +57,8 @@ If an agent mistakenly consolidates or overwrites data, you can revert the file.
 palinode rollback projects/my-app.md --commit a1b2c3d
 ```
 
-> **Note:** Rollback defaults to a dry run. To actually apply the change, you must pass `--execute`.
+> **Note:** Rollback defaults to a dry run. To actually apply the change, pass `--no-dry-run`.
+> (`--execute` is a deprecated alias for the same thing — it still works, but warns.)
 
 ### 5. Push (Admin Only)
 

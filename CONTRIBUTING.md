@@ -90,6 +90,30 @@ The ruff rule set is deliberately narrow — bug classes only (`F`, `B`, `E7`, `
 no formatting opinions. Please do not widen it in a feature PR; the reasoning for
 each excluded rule is commented in `pyproject.toml`.
 
+### Cite issues by URL, not by number
+
+One gate surprises people, so it is worth knowing before CI tells you: **an issue
+reference in code has to be a full URL, not a bare `#123`.**
+
+Palinode is developed in a private repository and synced here, so the same `#123` means
+different things in the two trackers. A bare number is unfollowable for a public reader
+and can resolve to a different issue entirely. The guard cannot tell which tracker you
+meant — including when you meant this one — so it asks everyone for the qualified form.
+
+```python
+"""Fixes #123."""                                                    # fails CI
+"""Fixes https://github.com/phasespace-labs/palinode/issues/123."""  # fine
+```
+
+Or name the thing instead — "fixes the frontmatter split" — and skip the reference
+entirely. Either passes.
+
+It applies to docstrings, comments, CLI `--help` text, MCP tool and parameter
+descriptions, CI workflow comments, and `.gitattributes`/`.gitignore`. Files under
+`docs/` are not scanned, so a changelog entry cites issues normally. The rule lives in
+`tests/test_no_issue_refs_user_surface.py`, which pins the distinction with its own
+tests.
+
 More detail, including a gotcha about editable installs inside `git worktree`
 checkouts, is in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 

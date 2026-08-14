@@ -503,6 +503,21 @@ def _timeout_message(tool: str) -> str:
 
 _FULL_CONTENT_HARD_CAP = 4000  # Politeness ceiling for full=True.
 
+#: Upper bound on ``palinode_search.limit`` as exposed to the model.
+#:
+#: These two constants are the whole story on how large one search result can
+#: get: ``_FULL_CONTENT_HARD_CAP`` bounds a single result body, and this bounds
+#: how many of them. There is deliberately no *aggregate* output cap — Palinode
+#: is a memory system, and a truncated memory is indistinguishable from a
+#: complete one at the point of use, so cutting bodies to fit a budget is the
+#: wrong shape (see ``tests/test_mcp_schema_size_budget.py``: "split the tool —
+#: do not compress prose"). Capping the count instead keeps every memory that is
+#: returned whole.
+#:
+#: MCP surface only. The REST API and CLI are separate paths and legitimately
+#: want wide recall for consolidation, dedup and wiki-maintenance passes.
+MCP_SEARCH_LIMIT_MAX = 50
+
 
 def _format_results(results: list[dict[str, Any]], full: bool = False) -> str:
     """Format search results as clean text — minimal context burn.
@@ -762,6 +777,17 @@ def _all_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": f"Max results to return (default {config.search.default_limit})",
                         "default": config.search.default_limit,
+                        # Bounds the one unbounded path on this surface.
+                        # `full=true` caps each result at _FULL_CONTENT_HARD_CAP
+                        # but has no aggregate ceiling, so limit is what decides
+                        # how large a single tool result can get — and results
+                        # persist in `messages` for the rest of the session.
+                        # Capping the *count* truncates nothing: no memory is cut
+                        # mid-body, the model just cannot ask for fifty of them.
+                        # Generous on purpose — this stops pathology, it does not
+                        # tune recall. MCP surface only; the API and CLI keep wide
+                        # recall for consolidation and wiki-maintenance sweeps.
+                        "maximum": MCP_SEARCH_LIMIT_MAX,
                     },
                     "date_after": {
                         "type": "string",
@@ -1711,10 +1737,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     # reworded or newly added message updates the audit log by construction.
     first_text = result[0].text if result else ""
     is_error = first_text.startswith(DISPATCH_ERROR_PREFIXES)
+    # Result size is the uncacheable half of a call's cost: schemas are a
+    # fixed prefix that caches, results are new bytes that persist in `messages`
+    # for the rest of the session. Measured in UTF-8 bytes, the unit that
+    # actually crosses the wire.
+    result_bytes = sum(
+        len(getattr(block, "text", "").encode("utf-8")) for block in result
+    )
     _audit.log_call(
         name, arguments, duration_ms,
         status="error" if is_error else "success",
         error=first_text if is_error else None,
+        result_bytes=result_bytes,
+        result_blocks=len(result),
     )
     return result
 

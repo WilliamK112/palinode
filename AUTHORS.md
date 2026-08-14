@@ -14,6 +14,8 @@ Contributions welcome via pull request. Names appear here once a PR is merged.
 - [Deepak Nayak](https://github.com/deepunyk)
 - [Floze](https://github.com/floze-the-genius)
 - [Sukesh Kumar](https://github.com/SkxOverKill)
+- [Columbus Labs](https://github.com/ColumbusLabs)
+- [Bo Zhang](https://github.com/Tethys0)
 
 ## Acknowledgements
 

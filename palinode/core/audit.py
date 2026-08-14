@@ -83,8 +83,22 @@ class AuditLogger:
         duration_ms: float,
         status: str,
         error: str | None = None,
+        *,
+        result_bytes: int | None = None,
+        result_blocks: int | None = None,
     ) -> None:
-        """Write a single audit entry. Never raises — errors are logged and swallowed."""
+        """Write a single audit entry. Never raises — errors are logged and swallowed.
+
+        ``result_bytes`` is the size of what the tool actually returned. It is the
+        one dimension of a call's cost that nothing else can recover: tool
+        *schemas* are a fixed prefix that prompt-caches at ~0.1x for the life of a
+        session, whereas tool *results* are new bytes on every call that land in
+        the ``messages`` array and stay resident for every subsequent turn. Logging
+        arguments without result size records which lever was pulled but not what
+        it cost.
+
+        Recorded on error paths too — a long error string is still context spend.
+        """
         if not self._enabled or self._path is None:
             return
 
@@ -95,6 +109,8 @@ class AuditLogger:
             "duration_ms": round(duration_ms, 1),
             "status": status,
             "error": error,
+            "result_bytes": result_bytes,
+            "result_blocks": result_blocks,
             "client_info": _resolve_client_info(),
         }
 

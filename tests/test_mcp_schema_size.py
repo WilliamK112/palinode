@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from palinode.mcp import CORE_TOOL_NAMES, list_tools
+from palinode.mcp import CORE_TOOL_NAMES, MCP_SEARCH_LIMIT_MAX, list_tools
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "mcp_schema_semantics.json"
@@ -38,6 +38,38 @@ async def _schema_semantics() -> dict[str, dict[str, Any]]:
         }
         for tool in sorted(tools, key=lambda item: item.name)
     }
+
+
+@pytest.mark.asyncio
+async def test_search_limit_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``palinode_search.limit`` must carry a ``maximum``.
+
+    ``full=true`` caps each result body at ``_FULL_CONTENT_HARD_CAP`` but has no
+    aggregate ceiling, so ``limit`` is what decides how large a single tool
+    result can get. Unbounded, one call can return ~200 KB — and tool results
+    are never prompt-cacheable on first appearance and stay resident in
+    ``messages`` for the rest of the session.
+
+    Capping the *count* is deliberate and is not truncation: no memory is cut
+    mid-body, so a returned memory is always whole. An aggregate output cap
+    would truncate, and a truncated memory is indistinguishable from a complete
+    one at the point of use — the failure mode
+    ``tests/test_mcp_schema_size_budget.py`` exists to prevent.
+    """
+    monkeypatch.setenv("PALINODE_MCP_SURFACE", "full")
+    tools = {tool.name: tool for tool in await list_tools()}
+    limit = tools["palinode_search"].input_schema["properties"]["limit"]
+
+    assert "maximum" in limit, (
+        "palinode_search.limit has no `maximum`. With full=true capped per "
+        "result but not in aggregate, an unbounded limit makes one call's "
+        "context cost unbounded too."
+    )
+    assert limit["maximum"] == MCP_SEARCH_LIMIT_MAX
+    assert limit["default"] <= limit["maximum"], (
+        f"default ({limit['default']}) exceeds maximum ({limit['maximum']}) — "
+        "the documented default would be rejected by the schema."
+    )
 
 
 @pytest.mark.asyncio

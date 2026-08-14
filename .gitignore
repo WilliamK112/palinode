@@ -69,6 +69,13 @@ dist/
 *.egg-info/
 plugin/node_modules/
 plugin/dist/
+plugins/*/node_modules/
+plugins/*/dist/
+
+# Impeccable (UI-review plugin) session cache — machine-local tool state with
+# absolute home-directory paths. Was accidentally tracked in the v0.9.6
+# release commit; untracked since. Never commit tool caches.
+.impeccable/
 __pycache__/
 *.pyc
 *.cover

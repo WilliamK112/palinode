@@ -7,14 +7,15 @@
 
 ## The contract
 
-Every memory operation that appears on more than one surface must use **the same canonical parameter names with the same shapes**. The four surfaces are:
+Every memory operation that appears on more than one surface must use **the same canonical parameter names with the same shapes**. The three first-party surfaces are:
 
 1. **CLI** — `palinode <command>`
 2. **MCP** — `palinode_<tool>` (Claude Code, Cursor, IDEs)
 3. **REST API** — `POST/GET /<endpoint>`
-4. **OpenClaw plugin** — `palinode_<tool>` (TypeScript)
 
-When you add a parameter, add it to all four surfaces (modulo exemptions below) and to `parity.py`. CI fails otherwise.
+When you add a parameter, add it to all three surfaces (modulo exemptions below) and to `parity.py`. CI fails otherwise.
+
+**Plugins are opt-in, not a fourth mandatory surface.** Under ADR-019 a plugin (OpenClaw today, Pi, and any future harness adapter) is a thin delivery adapter over the REST API — non-implementation of an operation is the expected case, not drift. An operation joins the plugin parity obligations only by setting `plugin_tool` in the registry; for those operations, the plugin must expose the same canonical params (enforced by `plugin/test/parity.test.ts`). New plugins add **no** registry obligations.
 
 ## Adding or changing a parameter
 
@@ -171,7 +172,7 @@ fails if a now-present parameter still carries a stale exception.
 
 ## See also
 
-- `ADR-010-cross-surface-parity-contract.md` — the decision and rationale.
+- ADR-010 (the cross-surface parity contract) — the decision and rationale.
 - `palinode/core/parity.py` — the registry (source of truth).
 - `palinode/core/defaults.py` — shared defaults.
 - `tests/test_surface_parity.py` — the forcing function.

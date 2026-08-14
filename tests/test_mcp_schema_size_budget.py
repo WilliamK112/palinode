@@ -29,6 +29,29 @@ moving a cohesive parameter cluster to its own tool fixes the class. The
 provenance cluster on ``palinode_save`` (``claims``/``sources``/``backed_by``/
 ``contradicts``) is the standing candidate: ~1.4 KB for structures a typical
 save never sends.
+
+**But a split is an ADR-010 decision, not a schema edit — budget for that.**
+Measured, the cluster is two unequal halves: ``claims`` + ``sources`` is 1,146 B
+(nested, and internally coupled — ``claims[].source_id`` refers to
+``sources[].ref``), while ``backed_by`` + ``contradicts`` is only 305 B of plain
+string arrays that sit closer to ``entities`` than to citations. Removing the
+citation half would take ``palinode_save`` from 3,498 B to 2,354 B.
+
+That was attempted and reverted. ``palinode/core/parity.py`` registers
+``sources`` and ``claims`` as canonical params of the *save* operation, so
+dropping them from this one surface fails
+``test_surface_parity.py::test_canonical_param_present[save/mcp/*]`` and
+``test_mcp_parity.py::test_save_schema_declares_claims``. Under ADR-010 a param
+lives on an operation, and an operation must exist on all four surfaces — so
+relocating one means a new CLI command, REST endpoint, MCP tool, plugin tool,
+and post-hoc attach semantics. ``known_drift`` is not the way around it: it is a
+temporary defect record that xfails until its issue closes, not a design
+exemption.
+
+The decision was to accept the headroom rather than build that: 86 B spare is
+thin, but this gate turns a breach into a red test rather than a silent
+client-side schema drop. If the next field breaches it, the choice is that
+four-surface build or an ADR-010 amendment — not a quick refactor.
 """
 from __future__ import annotations
 

@@ -1,14 +1,24 @@
 """
 Cross-surface parity registry — the canonical-names contract for ADR-010.
 
-Every memory operation that should appear on more than one surface
-(CLI, MCP, REST API, OpenClaw plugin) is enumerated here with one
-canonical name per parameter and one canonical shape (type + required
-flag).  ``tests/test_surface_parity.py`` walks this registry and asserts
-each surface conforms.
+Every memory operation that should appear on more than one FIRST-PARTY
+surface (CLI, MCP, REST API) is enumerated here with one canonical name per
+parameter and one canonical shape (type + required flag).
+``tests/test_surface_parity.py`` walks this registry and asserts each
+surface conforms.
+
+**Plugins are different (ADR-019).** A plugin is a delivery adapter over the
+REST API, not a capability surface, so the ``plugin`` surface is OPT-IN per
+operation: an operation joins the plugin's parity obligations only by
+naming a ``plugin_tool``, and non-implementation is the expected case, not
+drift. (Before ADR-019 the registry paid ``exempt_surfaces={"plugin"}`` on
+13 operations for what was simply the default reality.) ``plugin`` denotes
+the *plugin contract* — what any Palinode plugin must honor for the
+operations it does expose — not one implementation; additional plugins add
+no parity obligations.
 
 When you add a parameter to one surface, add it here first, then
-mirror to the others.  When the four surfaces drift, record the drift
+mirror to the others.  When surfaces drift, record the drift
 in ``known_drift`` with the GitHub issue number — the test xfails the
 drift entry until the issue closes.
 
@@ -17,7 +27,8 @@ exempt from parity by listing them in ``ADMIN_EXEMPT_OPERATIONS``.  The
 contract is "all memory operations are equivalent across surfaces, by
 design"; it is *not* "all operations appear everywhere".
 
-See ``ADR-010-cross-surface-parity-contract.md`` and ``docs/PARITY.md``.
+See ADR-010 (the cross-surface parity contract), ADR-019 (plugins are
+delivery adapters), and ``docs/PARITY.md``.
 """
 from __future__ import annotations
 
@@ -212,7 +223,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="list",
         mcp_tool="palinode_list",
         api_endpoint=("GET", "/list"),
-        exempt_surfaces=frozenset({"plugin"}),
     ),
     # ── read ────────────────────────────────────────────────────────────────
     Operation(
@@ -224,7 +234,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="read",
         mcp_tool="palinode_read",
         api_endpoint=("GET", "/read"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── search ──────────────────────────────────────────────────────────────
@@ -341,7 +350,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="consolidate",
         mcp_tool="palinode_consolidate",
         api_endpoint=("POST", "/consolidate"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── archive (on-demand ARCHIVE / SUPERSEDE for one named memory) ──
@@ -361,7 +369,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="archive",
         mcp_tool="palinode_archive",
         api_endpoint=("POST", "/archive"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── archive-expired (ADR-015 §2.3 TTL sweep) ──────────────────────
@@ -373,7 +380,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="archive-expired",
         mcp_tool="palinode_archive_expired",
         api_endpoint=("POST", "/archive-expired"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── trigger (create) ────────────────────────────────────────────────────
@@ -401,7 +407,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="trigger add",
         mcp_tool="palinode_trigger",
         api_endpoint=("POST", "/triggers"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── rollback ────────────────────────────────────────────────────────────
@@ -415,7 +420,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="rollback",
         mcp_tool="palinode_rollback",
         api_endpoint=("POST", "/rollback"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── context_prime (ADR-012 Layer 4) ─────────────────────────────────────
@@ -431,7 +435,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="prime",
         mcp_tool="palinode_session_init",
         api_endpoint=("POST", "/context/prime"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── blame ───────────────────────────────────────────────────────────────
@@ -448,7 +451,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="blame",
         mcp_tool="palinode_blame",
         api_endpoint=("GET", "/blame/{file_path:path}"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── trace (C1 provenance composition) ────────────────────────────────────
@@ -464,7 +466,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="trace",
         mcp_tool="palinode_trace",
         api_endpoint=("GET", "/trace/{file_path:path}"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── cluster_neighbors ─────────────────────────────────────────────
@@ -478,7 +479,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="cluster-neighbors",
         mcp_tool="palinode_cluster_neighbors",
         api_endpoint=("POST", "/cluster-neighbors"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── topic_coverage ────────────────────────────────────────────────
@@ -491,7 +491,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="topic-coverage",
         mcp_tool="palinode_topic_coverage",
         api_endpoint=("POST", "/topic-coverage"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── review ────────────────────────────────────────────────────────
@@ -506,7 +505,6 @@ REGISTRY: tuple[Operation, ...] = (
         cli_command="review",
         mcp_tool="palinode_review",
         api_endpoint=("POST", "/review"),
-        exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
     ),
     # ── depends ────────────────────────────────────────────────────────
@@ -753,9 +751,26 @@ def by_name(op_name: str) -> Operation:
 
 
 def required_surfaces(op: Operation) -> frozenset[Surface]:
-    """Return the surfaces this operation must appear on (i.e. not exempt)."""
-    all_surfaces: frozenset[Surface] = frozenset({"cli", "mcp", "api", "plugin"})
-    return all_surfaces - op.exempt_surfaces
+    """Return the surfaces this operation must appear on (i.e. not exempt).
+
+    ``plugin`` is OPT-IN, not opt-out (ADR-019): a plugin is a delivery
+    adapter over the REST API, and non-implementation of an operation is the
+    expected case, not drift. An operation joins the plugin surface's parity
+    obligations only by naming a ``plugin_tool``; nothing else about the
+    registry puts it there. Before this flip, 13 operations each paid an
+    ``exempt_surfaces={"plugin"}`` line for what was simply the default
+    reality — and every new operation silently owed the plugin an
+    implementation unless its author remembered the exemption.
+
+    The first-party surfaces (cli / mcp / api) keep opt-out semantics:
+    they ARE capability surfaces, and an operation missing from one of them
+    is exactly the drift ADR-010 exists to catch.
+    """
+    first_party: frozenset[Surface] = frozenset({"cli", "mcp", "api"})
+    surfaces = first_party - op.exempt_surfaces
+    if op.plugin_tool is not None and "plugin" not in op.exempt_surfaces:
+        surfaces |= {"plugin"}
+    return surfaces
 
 
 __all__ = [

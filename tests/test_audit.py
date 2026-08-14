@@ -256,3 +256,76 @@ class TestResolvedAuditLogPath:
             f"User-set relative audit.log_path should be preserved; "
             f"got: {cfg.audit.log_path!r}"
         )
+
+
+class TestResultBytes:
+    """``result_bytes`` — the uncacheable half of a call's cost.
+
+    Arguments were already logged, so *which* lever got pulled was recoverable.
+    What it **cost** was not: tool schemas are a fixed prefix that prompt-caches
+    at ~0.1x for the life of a session, while tool results are new bytes that
+    land in ``messages`` and are re-sent on every subsequent turn. Without this
+    field the audit log can say ``full=true`` was used but not that it returned
+    60 KB — which is the number any capping decision depends on.
+    """
+
+    def test_records_result_size_and_block_count(self, audit_logger):
+        audit_logger.log_call(
+            "palinode_search", {"query": "x"}, 1.0, "success",
+            result_bytes=4096, result_blocks=2,
+        )
+        entry = _read_entries(audit_logger)[0]
+        assert entry["result_bytes"] == 4096
+        assert entry["result_blocks"] == 2
+
+    def test_recorded_on_the_error_path_too(self, audit_logger):
+        """A long error string is still context spend."""
+        audit_logger.log_call(
+            "palinode_search", {"query": "x"}, 1.0, "error",
+            error="API unreachable: boom", result_bytes=21, result_blocks=1,
+        )
+        entry = _read_entries(audit_logger)[0]
+        assert entry["status"] == "error"
+        assert entry["result_bytes"] == 21
+
+    def test_fields_present_but_null_when_caller_omits_them(self, audit_logger):
+        """Back-compat: the keys always exist, so a reader never key-errors."""
+        audit_logger.log_call("palinode_status", {}, 1.0, "success")
+        entry = _read_entries(audit_logger)[0]
+        assert entry["result_bytes"] is None
+        assert entry["result_blocks"] is None
+
+
+class TestCallToolRecordsResultBytes:
+    """End-to-end: ``call_tool`` measures what it actually returned."""
+
+    @staticmethod
+    def _run(monkeypatch, audit_logger, text: str) -> dict:
+        import asyncio
+
+        from palinode import mcp
+
+        async def _fake_dispatch(name, arguments):
+            return mcp._text(text)
+
+        monkeypatch.setattr(mcp, "_dispatch_tool", _fake_dispatch)
+        monkeypatch.setattr(mcp, "_audit", audit_logger)
+        asyncio.run(mcp.call_tool("palinode_search", {"query": "x"}))
+        return _read_entries(audit_logger)[0]
+
+    def test_ascii_payload_size_round_trips(self, monkeypatch, audit_logger):
+        entry = self._run(monkeypatch, audit_logger, "x" * 1234)
+        assert entry["result_bytes"] == 1234
+        assert entry["result_blocks"] == 1
+        assert entry["status"] == "success"
+
+    def test_counts_utf8_bytes_not_characters(self, monkeypatch, audit_logger):
+        """Bytes are what cross the wire — 'é' is one character, two bytes."""
+        entry = self._run(monkeypatch, audit_logger, "é" * 10)
+        assert entry["result_bytes"] == 20
+
+    def test_error_response_still_measured(self, monkeypatch, audit_logger):
+        message = "API unreachable: connection refused"
+        entry = self._run(monkeypatch, audit_logger, message)
+        assert entry["status"] == "error"
+        assert entry["result_bytes"] == len(message.encode("utf-8"))

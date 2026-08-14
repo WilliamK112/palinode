@@ -209,6 +209,15 @@ class SearchConfig:
     # search rank-locked ceiling (see ranker.rank_hybrid) no longer caps
     # results below this value.
     default_limit: int = 15
+    #: Largest ``limit`` the HTTP surface will accept, so an absurd value gets a
+    #: 422 naming the bound instead of being silently clamped. It is NOT what
+    #: keeps sqlite-vec's KNN ceiling legal — ``store.VEC_KNN_MAX_K`` does that,
+    #: because the multipliers between here and the query make an edge bound the
+    #: wrong instrument (see that constant). Deliberately far wider than the MCP
+    #: surface's 50: MCP is bounded for token cost, while the API serves the
+    #: consolidation and wiki-maintenance passes that legitimately want wide
+    #: recall.
+    max_limit: int = 1000
     exclude_status: list[str] = field(default_factory=lambda: ["archived"])
     hybrid_weight: float = 0.5
     hybrid_enabled: bool = True

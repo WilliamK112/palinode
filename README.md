@@ -31,8 +31,9 @@ Built by [Paul Kyle](https://github.com/Paul-Kyle) at [phasespace-labs](https://
 | **JetBrains + Claude** | `~/.claude/skills/` | `~/.claude.json` |
 | **Antigravity IDE** | `.agent/skills/` | native 3-dot MCP menu |
 | **Codex CLI** | N/A (no skills) | `~/.codex/config.toml` |
+| **Pi** | N/A (native extension) | [plugins/pi/](plugins/pi/) — per-turn recall via lifecycle hooks |
 
-All platforms share the same MCP server — install once on your server, connect from any IDE. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) and [docs/MCP-INSTALL-RECIPES.md](docs/MCP-INSTALL-RECIPES.md) for per-client config snippets.
+All platforms share the same MCP server — install once on your server, connect from any IDE. **[docs/HARNESSES.md](docs/HARNESSES.md) is the cross-harness map**: what each harness gets (native hooks vs. plugin vs. MCP), how the tiers stack, and where to start. Per-client config snippets: [docs/MCP-SETUP.md](docs/MCP-SETUP.md) and [docs/MCP-INSTALL-RECIPES.md](docs/MCP-INSTALL-RECIPES.md).
 
 ---
 
@@ -187,7 +188,7 @@ cd your-project
 palinode init
 ```
 
-That scaffolds `.claude/CLAUDE.md` (memory instructions, appended if one exists), `.claude/settings.json` (`SessionStart` + `SessionEnd` hook registration), both hook scripts, and `.mcp.json` (points Claude Code at the `palinode` MCP server). Sessions then start smart and end captured: the `SessionStart` hook injects your `core: true` memories into every fresh session (startup and `/clear`) so standing context is there before the first prompt, and the `SessionEnd` hook auto-captures on `/clear`, logout, and exit. Re-run with `--dry-run` to preview, `--force` to overwrite, or `--no-mcp` / `--no-hook` to scope it. See [`examples/hooks/`](examples/hooks/) for tuning knobs.
+That scaffolds `.claude/CLAUDE.md` (memory instructions, appended if one exists), `.claude/settings.json` (`SessionStart` + `SessionEnd` + `UserPromptSubmit` hook registration), all three hook scripts, and `.mcp.json` (points Claude Code at the `palinode` MCP server). Sessions then start smart, recall as they go, and end captured: the `SessionStart` hook injects your `core: true` memories into every fresh session (startup and `/clear`) so standing context is there before the first prompt; the `UserPromptSubmit` hook recalls relevant memory before each prompt — prospective triggers plus a strict-threshold search, injected as compact snippets, silent when nothing matches; and the `SessionEnd` hook auto-captures on `/clear`, logout, and exit. Re-run with `--dry-run` to preview, `--force` to overwrite, or `--no-mcp` / `--no-hook` to scope it. See [`examples/hooks/`](examples/hooks/) for tuning knobs.
 
 Projects that use other harnesses get the same memory instructions automatically: when `AGENTS.md` (or a `.agent/` directory) exists, `init` appends a harness-neutral memory block to `AGENTS.md` (read by Codex, Antigravity, and other `AGENTS.md`-aware agents), and when a `.cursor/` directory exists it writes `.cursor/rules/palinode.md` for Cursor. Force or skip with `--agents`/`--no-agents` and `--cursor`/`--no-cursor` — same recall/save/session-end contract, minus the Claude-Code-only machinery (`/clear`, `/wrap`, hooks).
 

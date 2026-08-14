@@ -6,17 +6,139 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+### Security
+
+## [0.13.0] — 2026-08-14
+
+### Added
+
+- CONTRIBUTING now documents the issue-reference rule before CI enforces it: references
+  in code must use the full public issue URL rather than a bare `#123`, because Palinode
+  is developed privately and synced here, so the same number means different things in
+  the two trackers. The gate had cost two external contributors a full CI round-trip in
+  two days, neither of whom had any way to know the rule existed.
 - **Deterministic bullet-list migration** adds `palinode migrate bullets FILE`
   for flat mem0-style exports, grouping leading undated bullets and subsequent
   dated bullets into sections before reusing the existing migration writer.
 - **Relative-date lint findings** flag the finite set of unanchored time
   expressions that become misleading as living memories age, while exempting
   dated `daily/` notes and reporting each expression with its source line.
+- **MCP audit log records `result_bytes` and `result_blocks`** per tool call, so
+  the size of what a tool returned is finally measurable. Arguments were already
+  logged, making it clear *which* call was made but not what it cost — and result
+  size is the half that matters: tool schemas are a fixed prompt-cacheable prefix,
+  while tool results are new bytes that persist in the conversation and are
+  re-sent on every later turn. Recorded on error paths too, since a long error
+  string is still context spend.
+- **Cross-harness guide** — `docs/HARNESSES.md` maps every supported harness to
+  its integration tier (native hooks / native plugin / MCP), shows how the tiers
+  stack, and explains why injected memory lands in the conversation rather than
+  the system prompt (prompt-cache prefix survival). README links it from
+  Supported Platforms.
+- **Pi extension** (`plugins/pi/`) — native Palinode support for the Pi coding
+  agent: session-start priming (core-memory digest queued as a `nextTurn`
+  message, never interrupting), per-turn recall on `before_agent_start`
+  (prospective triggers + strict-threshold search, injected **as a message —
+  never a system-prompt mutation**, so the provider's prompt-cache prefix
+  survives every turn; the test suite pins that invariant), and a
+  `session_shutdown` capture floor. Same env knobs as the Claude Code hooks —
+  one set of tunables across harnesses. Thin adapter over the REST API; holds
+  no storage, ranking, or state.
+- **Per-turn implicit recall for Claude Code** — `palinode init` now installs a
+  `UserPromptSubmit` hook (`palinode-user-prompt-submit.sh`) alongside the
+  session hooks. Before each prompt it checks prospective triggers (which get
+  their delivery mechanism at last — server-side cooldowns make firings
+  self-limiting) and runs a strict-threshold search, injecting compact,
+  bounded snippets as `additionalContext`. Injection lands in the
+  conversation, not the system prompt, so the prompt-cache prefix survives
+  every turn. Fail-silent throughout: API down, `jq` missing, or a trivial
+  prompt means no output and no delay. Tunable via `PALINODE_HOOK_RECALL_*`
+  env vars; either channel can be disabled independently.
 
 ### Changed
 
+- The root-config issue-ref guard now reports an unfollowable reference and offers the
+  public-URL form, matching the other four guards in that suite. It was the last one
+  still calling every finding a "private issue" and the only one that omitted the
+  escape hatch, which read as "you leaked something" to a contributor who had correctly
+  cited a public issue.
+- **`palinode_search.limit` is now bounded** (`maximum: 50`) on the MCP surface. With
+  `full=true` capping each result body but not the aggregate, `limit` was the only thing
+  deciding how large a single tool result could be, and it was unbounded. Capping the
+  *count* rather than the total is deliberate: no memory is truncated mid-body, so
+  anything returned is whole — a truncated memory is indistinguishable from a complete
+  one at the point of use. The REST API and CLI are unchanged and keep wide recall for
+  consolidation and wiki-maintenance passes.
+
 ### Fixed
 
+- **The injection scanner missed `ignore all previous instructions`.** The
+  pattern took a single qualifier between the verb and the noun, so
+  `ignore previous instructions` and `ignore all instructions` were blocked
+  while the stacked form — the phrasing that actually occurs in the wild —
+  saved cleanly. It was only ever caught when the payload happened to trip a
+  different pattern. The qualifier slot now accepts an optional leading `all`,
+  and the committed corpus gained the stacked forms so the gap stays closed.
+  Deliberately not widened to `any`/`the`: those catch no additional attack
+  shape worth the cost and start blocking ordinary prose such as "you can
+  ignore any previous instructions about formatting", which is the
+  false-positive class the scanner was just narrowed to stop producing. This
+  closes one phrasing rather than the category — an enumerated list cannot be
+  complete, and a rephrase still passes.
+- **A large `/search` limit returned HTTP 500 instead of results.** A request
+  limit past a certain size crossed sqlite-vec's KNN ceiling of 4096 and
+  surfaced as an unhandled driver error, so `{"query": "...", "limit": 999}`
+  answered `500 Search failed`. The ceiling is now enforced where the query is
+  built, not at the API edge, because the request limit is not the number that
+  reaches sqlite-vec — `search_hybrid` doubles it, `search` triples that, the
+  router multiplies by 5 again for a type or priority filter, and the
+  visibility gate multiplies by 5 once more when filtering starved the window.
+  Worst case is 150x, so an edge bound strict enough to keep `k` legal would
+  have had to reject anything past ~27, gutting the wide-recall passes the API
+  exists to serve. Clamping at the boundary costs nothing: this is an
+  over-fetched candidate set that is re-ranked and trimmed afterwards, so a
+  smaller net changes how many candidates were considered, never correctness.
+  `limit` also gained a plain `1..1000` bound so an absurd value is a 422 that
+  names the ceiling rather than a silent clamp — deliberately far wider than
+  the MCP surface's 50, which is bounded for token cost rather than for this.
+- **The recall hooks' default threshold (0.75) made the search channel
+  near-silent — recalibrated to 0.5.** The threshold filters on raw cosine
+  similarity, and `SearchConfig`'s measured calibration (54 real BGE-M3
+  query/chunk pairs) shows true matches clear 0.5 at 98% but 0.7 at only
+  28% — so the old default suppressed nearly everything. Live-store sweep
+  confirms 0.5 is the elbow: full recall on relevant queries, zero hits on
+  nonsense ones. Applies to the Claude Code `UserPromptSubmit` hook and the
+  Pi extension alike (one knob, every harness).
+- **Injected recall hits now display `raw_score`, not the fused rank
+  score.** The rank score reads ~100% for the *top hit of any query* —
+  including irrelevant ones — while `raw_score` is the cosine the threshold
+  knob actually filters on. Showing the knob's own scale is what makes the
+  lever tunable from what you see: a hit tagged `(62%)` and a threshold of
+  `0.5` are now the same units. Docs gained a measured tuning table
+  (`examples/hooks/README.md` "Tuning the recall threshold").
+- **The UserPromptSubmit recall hook's search channel was silently dead against
+  real servers.** `/search` returns a bare JSON array, and the hook's jq used
+  `.results // .` — but indexing an array with a string is a hard jq *error*,
+  not `null`, so the expression died on every real response and the hook's
+  fail-open design converted the crash into permanent silence. The test suite
+  had stubbed an envelope shape the server never sends, so everything was
+  green. Caught during a live rollout by testing the installed hook against a
+  production API. The type check now comes first, the real bare-array shape is
+  the primary test fixture, and the envelope remains accepted for
+  forward-compat.
+- **The rollback guide no longer tells you to use a deprecated flag.** `docs/GIT-MEMORY.md`
+  instructed readers to pass `--execute` to apply a rollback, which ADR-010 demoted to a
+  deprecated alias for `--no-dry-run` — so anyone following the documentation got a
+  deprecation warning for doing exactly what they were told. `docs/PARITY.md` had listed
+  `--execute` under *forbidden aliases* the whole time, meaning the parity contract and the
+  user guide disagreed. The note now gives `--no-dry-run` and names the alias rather than
+  silently swapping it, so a reader with an existing script can tell theirs still works.
 - **API parity inventory counts the deprecated `/timeline` alias once (#122).** The alias now annotates the canonical `/history` backlog entry while remaining available at runtime.
 - **Injection scanning distinguishes technical prose from executable or
   instruction-changing content (#74).** Benign references to JavaScript,
