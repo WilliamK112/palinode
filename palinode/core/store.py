@@ -69,13 +69,43 @@ def _excluded_by_kind(
 
 INJECTION_PATTERNS = [
     r'ignore\s+(previous|prior|all)\s+instructions',
-    r'\byou\s+are\s+now\b',
+    (
+        r'\byou\s+are\s+now\s+(?:'
+        r'(?:in\s+)?(?:developer|jailbreak|admin(?:istrator)?|god|unrestricted|unfiltered)\s+mode\b'
+        r'|(?:an?\s+)?(?:dan|jailbroken|unrestricted|unfiltered|root)\b'
+        r'|(?:the\s+)?system(?:\s+assistant)?\b'
+        r'|(?:going\s+to\s+)?act\s+as\s+(?:an?\s+)?'
+        r'(?:dan|jailbroken|unrestricted|unfiltered|root|developer|admin(?:istrator)?|god)\b'
+        r'|operating\s+without\s+(?:any\s+)?(?:restrictions|rules|guidelines)\b'
+        r'|free\s+of\s+(?:your|all|the)\s+(?:guidelines|rules|restrictions|instructions)\b'
+        r'|(?:an?\s+)?(?:helpful|unrestricted|unfiltered)\s+assistant\s+with\s+no\s+'
+        r'(?:rules|restrictions|guidelines)\b'
+        r')'
+    ),
     r'disregard\s+(your|all)\s+(previous|prior)',
     r'output\s+(all|your)\s+(stored|memory|memories)',
     r'send\s+(your|all)\s+(memory|memories|context)[\s\w]*\s+to',
-    r'<script[\s>]',
-    r'javascript\s*:',
-    r'system\s*prompt\s*:',
+    (
+        r'<script(?:\s+[^>]*)?>[\s\S]*?</script\s*>'
+        r'|<script\s+[^>]*(?:src|type|nonce|async|defer)\b[^>]*>'
+        r'|<script(?:\s+[^>]*)?>\s*(?:alert|eval|fetch|document|window|location)\b'
+    ),
+    (
+        r'\bjavascript\s*:\s*(?:void\b|'
+        r'[a-z_$][\w$]*(?:\.[a-z_$][\w$]*)*\s*(?:\(|=)|'
+        r'(?:document|window|location|localstorage|sessionstorage)\b|[({`\'\"])'
+    ),
+    (
+        r'\bsystem\s*prompt\s*:\s*(?:'
+        r'(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?'
+        r'(?:(?:previous|prior|system|developer|safety)\s+)?(?:instructions?|rules?|prompt)\b'
+        r'|(?:override|replace)\s+(?:the\s+)?(?:system|developer|previous|prior)\b'
+        r'|(?:reveal|expose|output|return|send)\s+(?:the\s+)?'
+        r'(?:hidden|original|secret|internal|system)\s+'
+        r'(?:prompt|policy|instructions?|memory|context|secrets?)\b'
+        r'|act\s+as\b|you\s+(?:are|must|will)\b'
+        r')'
+    ),
 ]
 
 
