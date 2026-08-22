@@ -13,6 +13,7 @@ suite stays Ollama-free and fast.  Config is redirected via memory_dir
 from __future__ import annotations
 
 import threading
+import time
 from unittest import mock
 
 import pytest
@@ -79,9 +80,11 @@ def test_single_reindex_succeeds(client):
 
 def test_409_detail_message(client):
     """While the lock is held a second POST must get 409 with a clear message."""
-    # Mock the lock as locked so the guard fires without needing a live async lock.
-    with mock.patch.object(srv._reindex_lock, "locked", return_value=True):
+    assert srv._reindex_lock.acquire(blocking=False)
+    try:
         resp = client.post("/reindex")
+    finally:
+        srv._reindex_lock.release()
 
     assert resp.status_code == 409
     body = resp.json()
@@ -91,39 +94,106 @@ def test_409_detail_message(client):
     assert "/status" in detail
 
 
+def test_invalid_since_releases_lock(client):
+    """An early validation error must not leave future reindexes locked out."""
+    response = client.post("/reindex", params={"since": "not-a-timestamp"})
+
+    assert response.status_code == 400
+    assert srv._reindex_lock.acquire(blocking=False)
+    srv._reindex_lock.release()
+
+
 def test_concurrent_calls_one_wins_one_loses(client):
-    """Two truly concurrent calls: one 200, one 409.
+    """Two concurrent POSTs run the underlying reindex exactly once."""
+    start_requests = threading.Barrier(3)
+    work_started = threading.Event()
+    release_work = threading.Event()
+    rejected = threading.Event()
+    responses = []
+    work_calls = []
+    responses_lock = threading.Lock()
 
-    We hold the asyncio lock from a background thread so the second HTTP
-    request fires while the first is in progress.
-    """
-    lock_held = threading.Event()
-    release_lock = threading.Event()
+    def _slow_process(_self, filepath):
+        work_calls.append(filepath)
+        work_started.set()
+        assert release_work.wait(timeout=5)
 
-    def _hold_lock():
-        """Acquire the reindex lock from a new event loop, signal, then wait."""
-        import asyncio
+    def _post_reindex():
+        start_requests.wait(timeout=5)
+        response = client.post("/reindex")
+        with responses_lock:
+            responses.append(response)
+        if response.status_code == 409:
+            rejected.set()
 
-        async def _inner():
-            async with srv._reindex_lock:
-                srv._reindex_state["running"] = True
-                lock_held.set()
-                await asyncio.get_event_loop().run_in_executor(None, release_lock.wait)
-            srv._reindex_state["running"] = False
+    threads = [threading.Thread(target=_post_reindex, daemon=True) for _ in range(2)]
+    with (
+        mock.patch("glob.glob", return_value=["/tmp/reindex.md"]),
+        mock.patch(
+            "palinode.indexer.watcher.PalinodeHandler.is_valid_file",
+            return_value=True,
+        ),
+        mock.patch(
+            "palinode.indexer.watcher.PalinodeHandler._process_file",
+            new=_slow_process,
+        ),
+        mock.patch("palinode.core.store.gc_orphaned_chunks", return_value=(0, 0)),
+        mock.patch("palinode.core.store.rebuild_fts", return_value=0),
+    ):
+        for thread in threads:
+            thread.start()
+        start_requests.wait(timeout=5)
+        assert work_started.wait(timeout=5)
+        assert rejected.wait(timeout=5)
+        release_work.set()
+        for thread in threads:
+            thread.join(timeout=5)
 
-        asyncio.run(_inner())
+    assert not any(thread.is_alive() for thread in threads)
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert work_calls == ["/tmp/reindex.md"]
 
-    lock_thread = threading.Thread(target=_hold_lock, daemon=True)
-    lock_thread.start()
-    lock_held.wait(timeout=5)
 
-    try:
-        # Second POST fires while the lock is held — must be 409.
-        resp = client.post("/reindex")
-        assert resp.status_code == 409
-    finally:
-        release_lock.set()
-        lock_thread.join(timeout=5)
+def test_health_responds_while_reindex_runs(client):
+    """Blocking reindex work must not occupy the API event loop."""
+    work_started = threading.Event()
+    release_work = threading.Event()
+    reindex_responses = []
+
+    def _slow_process(_self, _filepath):
+        work_started.set()
+        assert release_work.wait(timeout=5)
+
+    def _post_reindex():
+        reindex_responses.append(client.post("/reindex"))
+
+    reindex_thread = threading.Thread(target=_post_reindex, daemon=True)
+    with (
+        mock.patch("glob.glob", return_value=["/tmp/reindex.md"]),
+        mock.patch(
+            "palinode.indexer.watcher.PalinodeHandler.is_valid_file",
+            return_value=True,
+        ),
+        mock.patch(
+            "palinode.indexer.watcher.PalinodeHandler._process_file",
+            new=_slow_process,
+        ),
+        mock.patch("palinode.core.store.gc_orphaned_chunks", return_value=(0, 0)),
+        mock.patch("palinode.core.store.rebuild_fts", return_value=0),
+        mock.patch("httpx.get"),
+    ):
+        reindex_thread.start()
+        assert work_started.wait(timeout=5)
+        started_at = time.monotonic()
+        health_response = client.get("/health")
+        elapsed = time.monotonic() - started_at
+        release_work.set()
+        reindex_thread.join(timeout=5)
+
+    assert not reindex_thread.is_alive()
+    assert health_response.status_code == 200
+    assert elapsed < 1.0
+    assert [response.status_code for response in reindex_responses] == [200]
 
 
 def test_reindex_state_resets_after_completion(client):
