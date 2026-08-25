@@ -48,6 +48,7 @@ from palinode.core.scope import (
     visible_on_chain,
 )
 from palinode.core.visibility import filter_visible, is_visible, normalize_memory_path
+from tests._store_helpers import upsert_chunks
 
 client = TestClient(app)
 
@@ -601,7 +602,7 @@ def recall_widen_db(tmp_path, monkeypatch):
         path = os.path.join(memory_dir, "insights", f"rank{rank}.md")
         with open(path, "w") as f:
             f.write(f"---\n{front}---\nbody {rank}\n")
-        store.upsert_chunks([{
+        upsert_chunks([{
             "id": f"rank{rank}",
             "file_path": path,          # absolute so live-frontmatter read works
             "section_id": None,

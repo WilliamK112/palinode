@@ -167,6 +167,7 @@ SAMPLE_ENV = {
     "MCP_PORT": "6341",
     "SYSTEMD_WANTED_BY": "default.target",
     "PALINODE_API_BIND_INTENT": "",
+    "PALINODE_API_ALLOW_UNAUTH": "",
 }
 
 
@@ -389,6 +390,29 @@ def test_install_sh_defaults_bind_intent_empty() -> None:
     )
 
 
+def test_api_template_bind_host_visible_to_app_gate() -> None:
+    """The API unit binds uvicorn to 0.0.0.0; the app's non-loopback bind gate
+    reads PALINODE_API_HOST, not uvicorn's flag, so the template must
+    set both consistently and render the ALLOW_UNAUTH opt-out as a parameter."""
+    raw = API_TEMPLATE.read_text()
+    assert "--host 0.0.0.0" in raw
+    assert 'Environment="PALINODE_API_HOST=0.0.0.0"' in raw, (
+        "API template must export PALINODE_API_HOST=0.0.0.0 so the app gate sees the bind"
+    )
+    assert 'Environment="PALINODE_API_ALLOW_UNAUTH=${PALINODE_API_ALLOW_UNAUTH}"' in raw
+    assert 'PALINODE_API_ALLOW_UNAUTH=1"' not in raw, (
+        "API template must not hardcode the unauth opt-out — it is an operator decision"
+    )
+    assert "PALINODE_API_TOKEN=" not in raw, "never bake a token into the unit template"
+
+
+def test_install_sh_defaults_allow_unauth_empty() -> None:
+    """install.sh must default PALINODE_API_ALLOW_UNAUTH to empty — token-less
+    on 0.0.0.0 is an explicit opt-in, not the installer default."""
+    raw = INSTALL_SH.read_text()
+    assert 'export PALINODE_API_ALLOW_UNAUTH="${PALINODE_API_ALLOW_UNAUTH:-}"' in raw
+
+
 @pytest.mark.skipif(
     shutil.which("envsubst") is None,
     reason="envsubst not installed — skipping substitution test",
@@ -424,3 +448,46 @@ def test_api_template_empty_bind_intent_is_not_public() -> None:
     assert 'Environment="PALINODE_API_BIND_INTENT=public"' in result_public.stdout, (
         "setting PALINODE_API_BIND_INTENT=public must render the public directive"
     )
+
+
+# ── 9. MCP HTTP unit is under the same bind gate as the API ─────────────────
+
+MCP_TEMPLATE = DEPLOY_DIR / "palinode-mcp.service.template"
+NIX_MCP_MODULE = REPO_ROOT / "nix" / "services" / "mcp-service.nix"
+
+
+def test_mcp_template_binds_explicitly_and_passes_shared_opt_out() -> None:
+    """The app default for PALINODE_MCP_HTTP_HOST is loopback; the unit is for
+    remote MCP clients, so it must set the non-loopback bind explicitly and
+    render the ONE shared opt-out (PALINODE_API_ALLOW_UNAUTH) as a parameter —
+    no MCP twin, no hardcoded opt-out, no baked token."""
+    raw = MCP_TEMPLATE.read_text()
+    assert 'Environment="PALINODE_MCP_HTTP_HOST=0.0.0.0"' in raw, (
+        "MCP template must set PALINODE_MCP_HTTP_HOST explicitly — the app now defaults to 127.0.0.1"
+    )
+    assert 'Environment="PALINODE_API_ALLOW_UNAUTH=${PALINODE_API_ALLOW_UNAUTH}"' in raw
+    assert "PALINODE_MCP_ALLOW_UNAUTH" not in raw, "one opt-out knob per deployment — no MCP twin"
+    assert 'PALINODE_API_ALLOW_UNAUTH=1"' not in raw, (
+        "MCP template must not hardcode the unauth opt-out — it is an operator decision"
+    )
+    assert "PALINODE_API_TOKEN=" not in raw, "never bake a token into the unit template"
+    # The API it proxies to stays on loopback — distinct from the MCP bind host.
+    assert 'Environment="PALINODE_API_HOST=127.0.0.1"' in raw
+
+
+def test_install_sh_note_covers_mcp_unit() -> None:
+    """The post-install NOTE about refusing to start without a token must name
+    the MCP unit too, since both units share the gate and the opt-out."""
+    raw = INSTALL_SH.read_text()
+    assert "palinode-api and palinode-mcp bind 0.0.0.0 and will REFUSE TO START" in raw
+
+
+def test_nix_mcp_module_sets_host_and_shares_allow_unauth() -> None:
+    raw = NIX_MCP_MODULE.read_text()
+    assert "PALINODE_MCP_HTTP_HOST = cfg.host;" in raw
+    assert 'default = "0.0.0.0";' in raw
+    assert "lib.optionalAttrs palinodeCfg.allowUnauth" in raw, (
+        "Nix MCP module must reuse services.palinode.allowUnauth, not add its own option"
+    )
+    assert 'PALINODE_API_ALLOW_UNAUTH = "1";' in raw
+    assert "PALINODE_MCP_ALLOW_UNAUTH" not in raw

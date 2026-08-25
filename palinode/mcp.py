@@ -28,6 +28,7 @@ Usage (Claude Code / claude_desktop_config.json):
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 from contextvars import ContextVar
 import json
@@ -44,6 +45,7 @@ from mcp.server import Server
 
 from palinode import __version__
 from palinode.core.audit import AuditLogger
+from palinode.core.auth import load_api_token
 from palinode.core.config import ToolSurface, config, validate_tool_surface
 from palinode.core.defaults import (
     SAVE_SOURCE_HEADER as _SOURCE_HEADER,
@@ -120,22 +122,27 @@ async def _on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
 
 async def _on_call_tool(ctx: Any, params: Any) -> types.CallToolResult:
     """Adapter: unpacks ``params.name``/``params.arguments`` and wraps the
-    content list.
+    content list, flagging failures with ``is_error``.
 
-    ``is_error`` is deliberately left at its default. In 1.x the decorator
-    wrapped a returned list into a result with ``is_error=False``, and this
-    dispatch reports failures as text rather than raising — so setting the flag
-    here would change client-visible behaviour during a transport migration,
-    which is the wrong place to change semantics. Error text is already
-    classified for the audit log inside ``call_tool``.
+    The dispatcher reports failures in-band — text opening with one of
+    ``DISPATCH_ERROR_PREFIXES`` — so the flag is derived from the same
+    classification the audit log already uses. Without it every failure
+    reached the host as a *successful* result, and an agent handed
+    ``"Error: 'file_path'"`` as an answer will paraphrase it as one.
+
+    History: the 2.x migration left ``is_error`` at its default on purpose —
+    the decorator it replaced had always emitted ``is_error=False``, and a
+    transport migration was the wrong place to change client-visible
+    semantics. Setting it is now a deliberate change of its own, not a
+    side-effect of one; the failure vocabulary is unchanged, so hosts and
+    tests that match the text still do.
     """
     token = _request_ctx.set(ctx)
     try:
-        return types.CallToolResult(
-            content=await call_tool(params.name, params.arguments or {})
-        )
+        content = await call_tool(params.name, params.arguments or {})
     finally:
         _request_ctx.reset(token)
+    return types.CallToolResult(content=content, is_error=_is_error_result(content))
 
 
 # Display metadata announced in the ``initialize`` response. These must stay
@@ -369,31 +376,77 @@ assert _SESSION_END_TIMEOUT == _SENTINEL or os.environ.get(
     "update mcp.py or defaults.py to stay in sync (#377)"
 )
 
-_DEFAULT_HEADERS = {_SOURCE_HEADER: "mcp"}
+def _client_headers() -> dict[str, str]:
+    """Default headers for every request to the API server.
+
+    The source header is the ADR-010 surface attribution. The bearer is added
+    whenever ``PALINODE_API_TOKEN`` / ``PALINODE_API_TOKEN_FILE`` resolves to a
+    token — the same loader ``BearerAuthMiddleware`` is configured from, so a
+    token-protected API accepts its own MCP server. The middleware has no
+    loopback exemption; before this, setting the token per the docs made every
+    stdio tool call 401.
+    """
+    headers = {_SOURCE_HEADER: "mcp"}
+    token = load_api_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+#: Test seam: an ``httpx.AsyncBaseTransport`` (e.g. ``ASGITransport``) that
+#: the shared client is built over instead of real sockets. ``None`` in
+#: production.
+_http_transport: httpx.AsyncBaseTransport | None = None
+_http_client: httpx.AsyncClient | None = None
+_http_client_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    """Return the shared ``httpx.AsyncClient``, creating it lazily.
+
+    One client per process keeps the connection to the local API alive
+    across tool calls instead of a fresh TCP handshake per call. The
+    client is bound to the event loop it was created on — httpx pools
+    connections whose streams belong to that loop — so a loop change (test
+    runners; never the stdio or HTTP entry points) transparently rebuilds it.
+    """
+    global _http_client, _http_client_loop
+    loop = asyncio.get_running_loop()
+    if _http_client is None or _http_client.is_closed or _http_client_loop is not loop:
+        _http_client = httpx.AsyncClient(
+            headers=_client_headers(), transport=_http_transport
+        )
+        _http_client_loop = loop
+    return _http_client
+
+
+async def _close_http() -> None:
+    """Close the shared client; called on transport shutdown."""
+    global _http_client, _http_client_loop
+    client, loop = _http_client, _http_client_loop
+    _http_client, _http_client_loop = None, None
+    if client is not None and not client.is_closed and loop is asyncio.get_running_loop():
+        await client.aclose()
 
 
 async def _get(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP GET to the API server."""
-    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
-        return await client.get(_api_url(path), params=params, timeout=timeout)
+    return await _http().get(_api_url(path), params=params, timeout=timeout)
 
 
 async def _post(path: str, json: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP POST to the API server."""
-    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
-        return await client.post(_api_url(path), json=json, timeout=timeout)
+    return await _http().post(_api_url(path), json=json, timeout=timeout)
 
 
 async def _post_params(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP POST with query params (no JSON body) to the API server."""
-    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
-        return await client.post(_api_url(path), params=params, timeout=timeout)
+    return await _http().post(_api_url(path), params=params, timeout=timeout)
 
 
 async def _delete(path: str, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP DELETE to the API server."""
-    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
-        return await client.delete(_api_url(path), timeout=timeout)
+    return await _http().delete(_api_url(path), timeout=timeout)
 
 
 def _text(content: str) -> list[types.TextContent]:
@@ -448,6 +501,54 @@ DISPATCH_ERROR_PREFIXES: tuple[str, ...] = (
     "Unknown action:",
     "Unknown tool",
 )
+
+
+def _is_error_result(content: list[types.TextContent]) -> bool:
+    """True when the dispatcher's response is a failure — the one classifier
+    behind both the ``is_error`` flag and the audit-log status."""
+    first_text = content[0].text if content else ""
+    return first_text.startswith(DISPATCH_ERROR_PREFIXES)
+
+
+_NUMERIC_TYPES: dict[str, type] = {"integer": int, "number": float}
+_input_schemas: dict[str, dict[str, Any]] | None = None
+
+
+def _validate_arguments(name: str, arguments: dict[str, Any]) -> str | None:
+    """Check *arguments* against the tool's own ``inputSchema`` before dispatch.
+
+    Returns a failure message, or ``None`` when the call may proceed. Two
+    checks, both generic because the schemas in ``_all_tools()`` already say
+    what each tool needs: every ``required`` argument is present, and every
+    integer/number argument that was supplied can be coerced. Before this a
+    missing ``file_path`` surfaced as ``KeyError`` → ``"Error: 'file_path'"``
+    and a bad ``limit`` as the bare ``int()`` message — both true, neither
+    naming what the caller got wrong. Handlers whose schema does not require
+    an argument but which need one anyway (``palinode_blame`` accepts a
+    ``file`` alias) keep their own check.
+    """
+    global _input_schemas
+    if _input_schemas is None:
+        _input_schemas = {tool.name: tool.input_schema for tool in _all_tools()}
+    schema = _input_schemas.get(name) or {}
+    missing = [
+        key for key in schema.get("required", ())
+        if arguments.get(key) in (None, "")
+    ]
+    if len(missing) == 1:
+        return f"Error: {missing[0]} is required"
+    if missing:
+        return f"Error: {', '.join(missing)} are required"
+    for key, prop in (schema.get("properties") or {}).items():
+        coerce = _NUMERIC_TYPES.get(prop.get("type"))
+        value = arguments.get(key)
+        if coerce is None or value is None or isinstance(value, bool):
+            continue
+        try:
+            coerce(value)
+        except (TypeError, ValueError):
+            return f"Error: argument {key!r} must be {prop['type']}, got {value!r}"
+    return None
 
 
 def _rel_path_from(payload: dict[str, Any], key: str = "file_path") -> str:
@@ -1039,7 +1140,7 @@ def _all_tools() -> list[types.Tool]:
             description=(
                 "Show the change history of a memory file. Tracks renames (--follow) "
                 "and includes diff stats per commit. Use detail='full' for the commit-level "
-                "evolution view (previously palinode_timeline)."
+                "evolution view."
             ),
             inputSchema={
                 "type": "object",
@@ -1058,7 +1159,7 @@ def _all_tools() -> list[types.Tool]:
                         "description": (
                             "'summary' (default) returns hash/date/message/stats. "
                             "'full' additionally includes the unified diff body per commit "
-                            "(commit-level evolution view, formerly palinode_timeline)."
+                            "(commit-level evolution view)."
                         ),
                         "enum": ["summary", "full"],
                         "default": "summary",
@@ -1068,32 +1169,6 @@ def _all_tools() -> list[types.Tool]:
             },
             annotations=types.ToolAnnotations(
                 title="File History",
-                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
-            ),
-        ),
-        types.Tool(
-            name="palinode_timeline",
-            description=(
-                "Deprecated: use palinode_history with detail='full' instead. "
-                "Shows commit-level evolution of a memory file including unified diffs per commit."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path relative to the memory directory (e.g. people/alice.md)",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of commits to show (default 20)",
-                        "default": 20,
-                    },
-                },
-                "required": ["file_path"],
-            },
-            annotations=types.ToolAnnotations(
-                title="File Timeline (deprecated — use palinode_history detail=full)",
                 readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
             ),
         ),
@@ -1254,10 +1329,6 @@ def _all_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Memory file path (e.g., 'projects/my-app.md')",
                     },
-                    "file": {
-                        "type": "string",
-                        "description": "Deprecated alias for `file_path`; use `file_path` instead.",
-                    },
                     "search": {
                         "type": "string",
                         "description": "Optional: filter to lines containing this text",
@@ -1267,7 +1338,7 @@ def _all_tools() -> list[types.Tool]:
                         "description": "Also resolve the file's claim-level source anchors: which source span justifies each claim, with live integrity status.",
                     },
                 },
-                # `file_path` or `file` (legacy) — validated in the dispatcher.
+                "required": ["file_path"],
             },
             annotations=types.ToolAnnotations(
                 title="Blame / Provenance",
@@ -1311,10 +1382,6 @@ def _all_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Memory file path to rollback",
                     },
-                    "file": {
-                        "type": "string",
-                        "description": "Deprecated alias for `file_path`; use `file_path` instead.",
-                    },
                     "commit": {
                         "type": "string",
                         "description": "Target commit hash (from palinode_history). Default: previous version.",
@@ -1325,7 +1392,7 @@ def _all_tools() -> list[types.Tool]:
                         "default": True,
                     },
                 },
-                # `file_path` or `file` (legacy) — validated in the dispatcher.
+                "required": ["file_path"],
             },
             annotations=types.ToolAnnotations(
                 title="Rollback File",
@@ -1736,7 +1803,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     # audit log with status="success". Reading from the one declaration means a
     # reworded or newly added message updates the audit log by construction.
     first_text = result[0].text if result else ""
-    is_error = first_text.startswith(DISPATCH_ERROR_PREFIXES)
+    is_error = _is_error_result(result)
     # Result size is the uncacheable half of a call's cost: schemas are a
     # fixed prefix that caches, results are new bytes that persist in `messages`
     # for the rest of the session. Measured in UTF-8 bytes, the unit that
@@ -1908,7 +1975,11 @@ async def _tool_save(arguments: dict[str, Any]) -> list[types.TextContent]:
     if not data.get("indexed_fts", True):
         warnings.append("FTS5 sync failed (periodic rebuild will recover)")
     if not data.get("git_committed", True):
-        warnings.append("git auto-commit failed (file on disk, not versioned)")
+        reason = data.get("git_error")
+        warnings.append(
+            "git auto-commit failed (file on disk, not versioned)"
+            + (f": {reason}" if reason else "")
+        )
     if warnings:
         return _text(f"Saved to {rel} [warnings: {'; '.join(warnings)}]")
     return _text(f"Saved to {rel}")
@@ -1952,30 +2023,6 @@ async def _tool_history(arguments: dict[str, Any]) -> list[types.TextContent]:
             line += f"\n{c['diff']}"
         lines.append(line)
     return _text("\n\n---\n\n".join(lines) if detail == "full" else "\n".join(lines))
-
-
-# ── timeline (deprecated alias for history detail=full) ───────────
-@_handles("palinode_timeline")
-async def _tool_timeline(arguments: dict[str, Any]) -> list[types.TextContent]:
-    logger.warning("palinode_timeline is deprecated — use palinode_history with detail='full'")
-    file_path = arguments["file_path"]
-    limit = int(arguments.get("limit", 20))
-    resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": "full"})
-    if resp.status_code != 200:
-        return _text(f"Error: {resp.text}")
-    data = resp.json()
-    if not data.get("history"):
-        return _text("No history found.")
-    lines = []
-    for c in data["history"]:
-        line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
-        if c.get("stats"):
-            line += f"\n  {c['stats']}"
-        if c.get("diff"):
-            line += f"\n{c['diff']}"
-        lines.append(line)
-    deprecation_note = "[DEPRECATED] palinode_timeline is deprecated — use palinode_history with detail='full' instead.\n\n"
-    return _text(deprecation_note + "\n\n---\n\n".join(lines))
 
 
 # ── entities ──────────────────────────────────────────────────────
@@ -2022,9 +2069,7 @@ async def _tool_archive_expired(arguments: dict[str, Any]) -> list[types.TextCon
 # ── archive (on-demand ARCHIVE / SUPERSEDE) ────────────────────────
 @_handles("palinode_archive")
 async def _tool_archive(arguments: dict[str, Any]) -> list[types.TextContent]:
-    file_path = arguments.get("file_path")
-    if not file_path:
-        return _text("Error: file_path is required")
+    file_path = arguments["file_path"]
     body = {"file_path": file_path}
     if arguments.get("reason"):
         body["reason"] = arguments["reason"]
@@ -2117,7 +2162,7 @@ async def _tool_session_init(arguments: dict[str, Any]) -> list[types.TextConten
 # ── blame ─────────────────────────────────────────────────────────
 @_handles("palinode_blame")
 async def _tool_blame(arguments: dict[str, Any]) -> list[types.TextContent]:
-    file_path = arguments.get("file_path") or arguments.get("file")
+    file_path = arguments.get("file_path")
     if not file_path:
         return _text("Error: file_path is required")
     params: dict[str, str] = {}
@@ -2141,9 +2186,7 @@ async def _tool_blame(arguments: dict[str, Any]) -> list[types.TextContent]:
 # ── trace ─────────────────────────────────────────────────────────
 @_handles("palinode_trace")
 async def _tool_trace(arguments: dict[str, Any]) -> list[types.TextContent]:
-    file_path = arguments.get("file_path")
-    if not file_path:
-        return _text("Error: file_path is required")
+    file_path = arguments["file_path"]
     resp = await _get(f"/trace/{file_path}")
     if resp.status_code != 200:
         return _text(f"Error: {resp.text}")
@@ -2155,7 +2198,7 @@ async def _tool_trace(arguments: dict[str, Any]) -> list[types.TextContent]:
 # ── rollback ──────────────────────────────────────────────────────
 @_handles("palinode_rollback")
 async def _tool_rollback(arguments: dict[str, Any]) -> list[types.TextContent]:
-    file_path = arguments.get("file_path") or arguments.get("file")
+    file_path = arguments.get("file_path")
     if not file_path:
         return _text("Error: file_path is required")
     params: dict[str, str] = {"file_path": file_path}
@@ -2481,6 +2524,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
         handler = _TOOL_HANDLERS.get(name)
         if handler is None:
             return _text(f"Unknown tool: {name}")
+        rejected = _validate_arguments(name, arguments)
+        if rejected is not None:
+            return _text(rejected)
         return await handler(arguments)
     except httpx.ConnectError:
         return _text(f"Error: Cannot reach Palinode API at {_api_url('')}. Is palinode-api running?")
@@ -2495,12 +2541,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
 async def async_main() -> None:
     """Async boot sequence — start MCP server over stdio."""
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        await _close_http()
 
 
 def main() -> None:
@@ -2532,8 +2581,11 @@ def _build_mcp_http_app(token: str | None):
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        async with session_manager.run():
-            yield
+        try:
+            async with session_manager.run():
+                yield
+        finally:
+            await _close_http()
 
     async def healthz(request):
         """Health check — returns 200 if the session manager is running.
@@ -2566,39 +2618,142 @@ def _build_mcp_http_app(token: str | None):
     return starlette_app
 
 
-def main_http() -> None:
+def _parse_http_args(argv: list[str] | None) -> argparse.Namespace:
+    """Parse ``palinode-mcp-http`` argv: ``--host`` / ``--port``.
+
+    A flag left unset parses as ``None`` so the caller can fall back to the
+    ``PALINODE_MCP_HTTP_HOST`` / ``_PORT`` env vars. Unknown flags and
+    positionals exit non-zero via argparse's normal error path.
+    """
+    parser = argparse.ArgumentParser(
+        prog="palinode-mcp-http",
+        description="Palinode MCP server over streamable-HTTP (serves /mcp/).",
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="bind address (overrides PALINODE_MCP_HTTP_HOST; default 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="bind port (overrides PALINODE_MCP_HTTP_PORT; default 6341)",
+    )
+    return parser.parse_args(argv)
+
+
+def main_http(argv: list[str] | None = None) -> None:
     """Entry point for Streamable HTTP transport — palinode-mcp-http.
 
     Exposes the MCP server over Streamable HTTP so remote clients (Claude Code,
     Claude Desktop, Cursor, Zed, etc.) can connect via URL without running a
     local process.
 
+    Bind resolution: ``--host`` / ``--port`` flags win over the env vars,
+    which win over the defaults. A non-loopback bind with no
+    ``PALINODE_API_TOKEN`` refuses to start unless
+    ``PALINODE_API_ALLOW_UNAUTH=1`` — the same gate, and the same single
+    opt-out knob, as the API server. The MCP HTTP transport has no token of
+    its own: ``PALINODE_API_TOKEN`` both gates ``/mcp/`` here and protects
+    the API this transport proxies to.
+
     Env vars:
-      PALINODE_MCP_HTTP_HOST  — bind address (default: 0.0.0.0)
+      PALINODE_MCP_HTTP_HOST  — bind address (default: 127.0.0.1)
       PALINODE_MCP_HTTP_PORT  — bind port (default: 6341)
       PALINODE_MCP_LOG_LEVEL  — uvicorn log level (default: info)
+      PALINODE_API_TOKEN      — bearer token; required for a non-loopback bind
+      PALINODE_API_ALLOW_UNAUTH — ``1`` lets a non-loopback bind start
+                                 token-less (network-isolated hosts only)
       PALINODE_MCP_BIND_INTENT — set to ``public`` to confirm intentional
                                  non-loopback bind; requires PALINODE_API_TOKEN.
 
-    Legacy env var aliases (still honored for existing deployments):
-      PALINODE_MCP_SSE_HOST, PALINODE_MCP_SSE_PORT
+    Deprecated env var aliases (still honored, warn at startup, removal
+    planned): PALINODE_MCP_SSE_HOST, PALINODE_MCP_SSE_PORT. When both the
+    canonical and the legacy name are set, the canonical name wins.
 
     Client config (any IDE):
       { "url": "http://your-server:6341/mcp/" }
+
+    Parameters
+    ----------
+    argv:
+        Command-line arguments without the program name. ``None`` (the
+        console-script path) reads ``sys.argv[1:]``.
     """
     import os
 
     import uvicorn
-    from palinode.core.auth import load_api_token, validate_auth_config
+    from palinode.core.auth import (
+        allow_unauth_opt_out,
+        is_loopback_host,
+        validate_auth_config,
+        validate_bind_auth,
+    )
 
-    # Resolve token and run the public-bind gate INSIDE this entry point,
-    # not at module level. palinode/mcp.py is imported for the stdio
-    # transport too — a module-level gate would fire on every
-    # ``import palinode.mcp``, killing stdio sessions when
-    # PALINODE_MCP_BIND_INTENT=public is set.
+    args = _parse_http_args(argv)
+
+    host = (
+        args.host
+        or os.environ.get("PALINODE_MCP_HTTP_HOST")
+        or os.environ.get("PALINODE_MCP_SSE_HOST")  # deprecated alias
+        or "127.0.0.1"
+    )
+    port = (
+        args.port
+        if args.port is not None
+        else int(
+            os.environ.get("PALINODE_MCP_HTTP_PORT")
+            or os.environ.get("PALINODE_MCP_SSE_PORT")  # deprecated alias
+            or "6341"
+        )
+    )
+    legacy_only = [
+        legacy
+        for canonical, legacy in (
+            ("PALINODE_MCP_HTTP_HOST", "PALINODE_MCP_SSE_HOST"),
+            ("PALINODE_MCP_HTTP_PORT", "PALINODE_MCP_SSE_PORT"),
+        )
+        if os.environ.get(legacy) and not os.environ.get(canonical)
+    ]
+    if legacy_only:
+        logger.warning(
+            "%s is deprecated and will be removed in a future release; "
+            "rename to %s.",
+            ", ".join(legacy_only),
+            ", ".join(v.replace("_SSE_", "_HTTP_") for v in legacy_only),
+        )
+    log_level = os.environ.get("PALINODE_MCP_LOG_LEVEL", "info")
+
+    # Resolve token and run the bind gates INSIDE this entry point, not at
+    # module level. palinode/mcp.py is imported for the stdio transport too
+    # — a module-level gate would fire on every ``import palinode.mcp``,
+    # killing stdio sessions when PALINODE_MCP_BIND_INTENT=public is set.
+    #
+    # Same two gates as the API server (palinode.api.server): the bind gate
+    # keys on the resolved host — non-loopback + no token refuses unless
+    # PALINODE_API_ALLOW_UNAUTH=1 (the one opt-out knob, shared with the API;
+    # no MCP twin) — and the intent gate keeps PALINODE_MCP_BIND_INTENT=public
+    # meaning "token required". The MCP HTTP transport has no token of its
+    # own: PALINODE_API_TOKEN gates /mcp/ here AND protects the API this
+    # transport proxies to, so the check is "is the API it proxies to
+    # protected".
     token = load_api_token()
     mcp_bind_intent_public = (
         os.environ.get("PALINODE_MCP_BIND_INTENT", "").lower() == "public"
+    )
+    allow_unauth = allow_unauth_opt_out()
+    validate_bind_auth(
+        host,
+        token,
+        allow_unauth=allow_unauth,
+        host_var="PALINODE_MCP_HTTP_HOST",
+        exposure="every Palinode MCP tool (save/search/read/...) unauthenticated",
+        detail=(
+            "The MCP HTTP transport has no token of its own: PALINODE_API_TOKEN "
+            "both gates /mcp/ here and protects the API it proxies to, so this "
+            "check is whether that API is protected."
+        ),
     )
     validate_auth_config(
         mcp_bind_intent_public,
@@ -2608,43 +2763,29 @@ def main_http() -> None:
 
     starlette_app = _build_mcp_http_app(token)
 
-    # B104 rationale - opt-in MCP HTTP server fallback; deployers must set
-    # PALINODE_MCP_HTTP_HOST for a restricted bind (e.g., 127.0.0.1).
-    host = (
-        os.environ.get("PALINODE_MCP_HTTP_HOST")
-        or os.environ.get("PALINODE_MCP_SSE_HOST")  # legacy alias
-        or "0.0.0.0"  # nosec B104
-    )
-    port = int(
-        os.environ.get("PALINODE_MCP_HTTP_PORT")
-        or os.environ.get("PALINODE_MCP_SSE_PORT")  # legacy alias
-        or "6341"
-    )
-    log_level = os.environ.get("PALINODE_MCP_LOG_LEVEL", "info")
-
-    # Parity with the API server's 0.0.0.0 exposure warning: the MCP
-    # HTTP transport defaults to binding 0.0.0.0, which serves the full tool
-    # surface (save/search/read/...) on every interface. The hard refusal —
-    # PALINODE_MCP_BIND_INTENT=public with no token — already fired in
-    # validate_auth_config above. The remaining silent-exposure case is the
-    # DEFAULT bind: 0.0.0.0, no token, no explicit public intent. Warn loudly
-    # so an unauthenticated network bind is never silent (unlike the API
-    # server, the MCP startup banner previously only said "Bearer auth:
-    # disabled" without naming the exposure).
-    if host == "0.0.0.0" and not mcp_bind_intent_public:  # nosec B104
+    # Startup log for a non-loopback bind, mirroring the API server. The hard
+    # refusal already fired above, so reaching here token-less means the
+    # operator opted out explicitly — warn loudly on every start regardless.
+    if not is_loopback_host(host):
         if token is None:
             logger.warning(
-                "MCP HTTP binding to 0.0.0.0 — accessible from any network. "
-                "No authentication is configured. Set "
-                "PALINODE_MCP_HTTP_HOST=127.0.0.1 for local-only access. Set "
-                "PALINODE_MCP_BIND_INTENT=public (with PALINODE_API_TOKEN) to "
-                "suppress this warning for intentional network-exposed "
-                "deployments (e.g., Tailscale)."
+                "MCP HTTP binding to %s — accessible from any network. "
+                "No authentication is configured (PALINODE_API_ALLOW_UNAUTH=1 "
+                "set). Set PALINODE_MCP_HTTP_HOST=127.0.0.1 for local-only "
+                "access, or set PALINODE_API_TOKEN to require bearer auth.",
+                host,
+            )
+        elif mcp_bind_intent_public:
+            logger.debug(
+                "MCP HTTP binding to %s — PALINODE_MCP_BIND_INTENT=public set "
+                "with PALINODE_API_TOKEN; bearer auth required.",
+                host,
             )
         else:
             logger.info(
-                "MCP HTTP binding to 0.0.0.0 with PALINODE_API_TOKEN configured "
-                "— bearer auth required."
+                "MCP HTTP binding to %s with PALINODE_API_TOKEN configured "
+                "— bearer auth required.",
+                host,
             )
 
     print(f"Palinode MCP (Streamable HTTP) listening on http://{host}:{port}/mcp/")
@@ -2657,8 +2798,20 @@ def main_http() -> None:
     uvicorn.run(starlette_app, host=host, port=port, log_level=log_level)
 
 
-# Legacy alias for existing setuptools console_scripts (palinode-mcp-sse)
-main_sse = main_http
+def main_sse(argv: list[str] | None = None) -> None:
+    """Deprecated alias for :func:`main_http` (``palinode-mcp-sse`` console script).
+
+    Kept so existing systemd/nix units keep starting; warns at startup and is
+    scheduled for removal in a future release. New deployments use
+    ``palinode-mcp-http``. ``argv`` passes through unchanged.
+    """
+    logger.warning(
+        "palinode-mcp-sse is deprecated and will be removed in a future "
+        "release; it serves streamable-HTTP, not SSE. Update your service "
+        "unit to palinode-mcp-http (systemd: edit ExecStart, then "
+        "systemctl daemon-reload)."
+    )
+    main_http(argv)
 
 
 if __name__ == "__main__":

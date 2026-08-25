@@ -1,5 +1,6 @@
 import os
 import httpx
+from palinode.core.auth import load_api_token
 from palinode.core.config import config
 from palinode.core.defaults import SAVE_SOURCE_HEADER, SESSION_END_TIMEOUT_SECONDS, _SESSION_END_TIMEOUT_SENTINEL
 from palinode.core.write_input import SAVE_PARAMS, SESSION_END_PARAMS, build_payload
@@ -31,22 +32,42 @@ RequestError = httpx.RequestError
 ReadTimeout = httpx.ReadTimeout
 
 
+def _client_headers() -> dict[str, str]:
+    """Default headers for every CLI request to the API server.
+
+    ADR-010: the source header is the surface attribution the API falls back
+    to when a body doesn't set ``source``. The bearer is added whenever
+    ``PALINODE_API_TOKEN`` / ``PALINODE_API_TOKEN_FILE`` resolves to a token —
+    the same loader the API's ``BearerAuthMiddleware`` is configured from. The
+    middleware has no loopback exemption, so without this every
+    ``palinode <cmd>`` 401'd against a token-protected API.
+    """
+    headers = {SAVE_SOURCE_HEADER: "cli"}
+    token = load_api_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 class PalinodeAPI:
-    def __init__(self, client: httpx.Client | None = None) -> None:
+    def __init__(
+        self,
+        client: httpx.Client | None = None,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self.base_url = os.environ.get(
             "PALINODE_API",
             f"http://{config.services.api.host}:{config.services.api.port}",
         )
-        # ADR-010: every request carries the surface attribution as
-        # a header.  The API uses this when the body doesn't explicitly set
-        # `source`, giving consistent provenance without each surface having
-        # to thread a source default through every call site.
-        # An explicit client may be injected (e.g., for testing with an
-        # in-process ASGI transport).
+        # A whole client may be injected, or just a transport (tests hand in a
+        # transport that dispatches to an in-process ASGI app so the default
+        # headers — source attribution, bearer — are the ones under test).
         self.client = client or httpx.Client(
             base_url=self.base_url,
             timeout=30.0,
-            headers={SAVE_SOURCE_HEADER: "cli"},
+            headers=_client_headers(),
+            transport=transport,
         )
 
     def search(
@@ -404,20 +425,6 @@ fields, the session-end hook audit push)."""
         response.raise_for_status()
         return response.json()
 
-    def migrate_openclaw(self, path: str, dry_run: bool = False):
-        response = self.client.post(
-            "/migrate/openclaw",
-            json={"path": path, "dry_run": dry_run},
-            timeout=120.0,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def migrate_mem0(self):
-        response = self.client.post("/migrate/mem0", timeout=600.0)
-        response.raise_for_status()
-        return response.json()
-
     def context_prime(self, cwd: str = None, project: str = None):
         payload: dict = {}
         if cwd:
@@ -533,12 +540,5 @@ fields, the session-end hook audit push)."""
         response = self.client.get("/depends/_unblocked", timeout=10.0)
         response.raise_for_status()
         return response.json()
-
-    def health_check(self):
-        try:
-            response = self.client.get("/health")
-            return response.status_code == 200, response.json()
-        except Exception as e:
-            return False, {"error": str(e)}
 
 api_client = PalinodeAPI()

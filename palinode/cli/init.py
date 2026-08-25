@@ -851,12 +851,12 @@ def _write_memory_block(path: Path, block: str, force: bool) -> str:
     """
     _ensure_parent(path)
     if not path.exists():
-        path.write_text(block)
+        path.write_text(block, encoding="utf-8")
         return "created"
-    existing = path.read_text()
+    existing = path.read_text(encoding="utf-8")
     if has_memory_block(existing) and not force:
         return "skipped (already has Palinode section)"
-    with path.open("a") as f:
+    with path.open("a", encoding="utf-8") as f:
         if not existing.endswith("\n"):
             f.write("\n")
         f.write("\n" + block)
@@ -889,7 +889,7 @@ def _write_hook_script(path: Path, force: bool, content: str = HOOK_SCRIPT) -> s
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists)"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     # chmod +x
     mode = path.stat().st_mode
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -899,10 +899,10 @@ def _write_hook_script(path: Path, force: bool, content: str = HOOK_SCRIPT) -> s
 def _merge_settings(path: Path, force: bool) -> str:
     _ensure_parent(path)
     if not path.exists():
-        path.write_text(json.dumps(SETTINGS_HOOK_BLOCK, indent=2) + "\n")
+        path.write_text(json.dumps(SETTINGS_HOOK_BLOCK, indent=2) + "\n", encoding="utf-8")
         return "created"
     try:
-        existing = json.loads(path.read_text())
+        existing = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         if not force:
             return "skipped (existing settings.json is not valid JSON — re-run with --force to overwrite)"
@@ -926,7 +926,7 @@ def _merge_settings(path: Path, force: bool) -> str:
         if not already:
             event_hooks.append(SETTINGS_HOOK_BLOCK["hooks"][event][0])
             merged_any = True
-    path.write_text(json.dumps(existing, indent=2) + "\n")
+    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     return "merged" if merged_any else "skipped (palinode hooks already registered)"
 
 
@@ -934,7 +934,7 @@ def _write_slash_command(path: Path, body: str, force: bool) -> str:
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists)"
-    path.write_text(body)
+    path.write_text(body, encoding="utf-8")
     return "created"
 
 
@@ -957,7 +957,7 @@ def _write_skill(skills_root: Path, name: str, body: str, force: bool) -> str:
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists)"
-    path.write_text(_skill_md(name, body))
+    path.write_text(_skill_md(name, body), encoding="utf-8")
     return "created"
 
 
@@ -976,7 +976,7 @@ def _write_session_skill(skills_root: Path, force: bool) -> str:
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists — re-run with --force to overwrite)"
-    path.write_text(PALINODE_SESSION_SKILL)
+    path.write_text(PALINODE_SESSION_SKILL, encoding="utf-8")
     return "created"
 
 
@@ -1240,7 +1240,7 @@ def _write_json_file(path: Path, data: dict, force: bool) -> str:
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists)"
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return "created"
 
 
@@ -1249,7 +1249,7 @@ def _write_text_file(path: Path, content: str, force: bool) -> str:
     _ensure_parent(path)
     if path.exists() and not force:
         return "skipped (exists)"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     return "created"
 
 
@@ -1272,7 +1272,7 @@ def _write_vault_dir(d: Path) -> str:
     d.mkdir(exist_ok=True)
     gitkeep = d / ".gitkeep"
     if not gitkeep.exists():
-        gitkeep.write_text("")
+        gitkeep.write_text("", encoding="utf-8")
         return "created"
     return "skipped"
 
@@ -1330,10 +1330,10 @@ def _obsidian_plan(target: Path, force: bool, force_obsidian: bool) -> list[Plan
 def _merge_mcp_json(path: Path, force: bool) -> str:
     _ensure_parent(path)
     if not path.exists():
-        path.write_text(json.dumps(MCP_JSON_BLOCK, indent=2) + "\n")
+        path.write_text(json.dumps(MCP_JSON_BLOCK, indent=2) + "\n", encoding="utf-8")
         return "created"
     try:
-        existing = json.loads(path.read_text())
+        existing = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         if not force:
             return "skipped (existing .mcp.json is not valid JSON — re-run with --force to overwrite)"
@@ -1342,7 +1342,7 @@ def _merge_mcp_json(path: Path, force: bool) -> str:
     if "palinode" in servers and not force:
         return "skipped (palinode MCP server already configured)"
     servers["palinode"] = MCP_JSON_BLOCK["mcpServers"]["palinode"]
-    path.write_text(json.dumps(existing, indent=2) + "\n")
+    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     return "merged"
 
 

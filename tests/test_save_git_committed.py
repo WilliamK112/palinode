@@ -1,205 +1,168 @@
-"""the git_committed response fix regression: /save must surface git_committed: false
-when git auto-commit fails.
+"""``git_committed`` must be truthful.
 
-Previously the git auto-commit block logged at error level but the response
-dict had no ``git_committed`` field — the API returned HTTP 200 with no signal
-that the save was not versioned. The MCP ``palinode_save`` already has a
-_save_warnings path wired to ``git_committed``, but it had nothing to read.
+The response-field fix added the field; the truthfulness fix found it lying. ``commit_memory_files`` ran
+``git add`` / ``git commit`` with ``check=False`` and returned True whenever
+the subprocess merely *spawned*, so a memory dir that was never ``git init``-ed
+(the dev rig) logged ``git_committed=True`` on every save while
+``fatal: not a git repository`` went to the bit bucket. The same swallow hid a
+missing commit identity (``Author identity unknown``) and an ``index.lock``
+collision.
 
-The fix:
-  1. Track ``git_committed = True`` only when the git commit subprocess
-     completes without raising (does not check subprocess exit code, only
-     that the process was spawned; a "nothing to commit" exit code is fine).
-  2. Add ``exc_info=True`` to the logger.error call so the stack trace
-     appears in log files for debugging.
-  3. Return ``git_committed`` in the /save response dict so callers can act.
-
-Tests use TestClient + monkeypatch (no real git repo required per CLAUDE.md's
-"no mocking the DB" rule — the DB is real; git is mocked via subprocess.run
-injection because a real git op in tmp_path is not test-hermetic).
+The earlier version of this file patched ``subprocess.run`` on the API server
+module — a wholesale mock that did not even reach ``git_tools._run_git``, which
+is exactly why the lie went unnoticed. Per the 2026-08 test-shape rule,
+these tests now drive the real save path (:func:`save_memory`) against real
+``tmp_path`` git repositories in three states — not a repo, a repo with no
+identity, a healthy repo — and let real git decide. Only the embedder and the
+content scanner are stubbed (network / model I/O), never subprocess or the DB.
 """
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
-from palinode.api import server as srv
-from palinode.api.server import app
+from palinode.core import git_tools, store
 from palinode.core.config import config
-
+from palinode.core.save import save_memory
 
 _FAKE_VECTOR = [0.01] * 1024
 
 
-@pytest.fixture()
-def client_git_on(tmp_path, monkeypatch):
-    """TestClient with auto_commit=True and a fake .git dir so the
-    not-a-git-repo warning in server.py startup doesn't fire.
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False,
+    )
 
-    palinode_dir is a property that returns memory_dir — we only need to
-    set memory_dir. subprocess.run is patched per-test so cwd doesn't matter.
-    """
-    db_path = tmp_path / ".palinode.db"
-    fake_git = tmp_path / ".git"
-    fake_git.mkdir()
+
+@pytest.fixture()
+def hermetic_git(monkeypatch):
+    """Strip every out-of-band source of git identity so a repo's own
+    ``user.name`` / ``user.email`` are the only ones that can resolve."""
+    for var in (
+        "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL", "EMAIL", "GIT_DIR", "GIT_WORK_TREE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+@pytest.fixture()
+def memory_dir(tmp_path: Path, monkeypatch, hermetic_git) -> Path:
+    """A memory dir wired into config with auto_commit on. Not a repo yet —
+    each test decides which of the three states it wants."""
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
-    monkeypatch.setattr(config, "db_path", str(db_path))
+    monkeypatch.setattr(config, "db_path", str(tmp_path / ".palinode.db"))
     monkeypatch.setattr(config.git, "auto_commit", True)
     monkeypatch.setattr(config.git, "auto_push", False)
-    srv._rate_counters.clear()
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
-    srv._rate_counters.clear()
+    store.init_db()
+    return tmp_path
 
 
-def _patch_scan():
-    return patch("palinode.core.store.scan_memory_content", return_value=(True, "OK"))
+def _init_repo(path: Path, identity: bool) -> None:
+    assert _git(path, "init", "-q").returncode == 0
+    # ``user.useConfigOnly`` makes git refuse its hostname-derived fallback
+    # identity, so the no-identity state reproduces the rig's
+    # ``Author identity unknown`` on every host — a real git behaviour, not a
+    # stub. The healthy repo sets it too, proving the configured identity is
+    # what the commit uses.
+    _git(path, "config", "user.useConfigOnly", "true")
+    if identity:
+        _git(path, "config", "user.name", "Palinode Tests")
+        _git(path, "config", "user.email", "tests@example.com")
 
 
-def _patch_embed_ok():
-    return patch("palinode.core.embedder.embed", return_value=_FAKE_VECTOR)
-
-
-# ---------------------------------------------------------------------------
-# Happy path: git succeeds → git_committed: true
-# ---------------------------------------------------------------------------
-
-
-class TestSaveGitCommittedHappyPath:
-
-    def test_git_committed_true_when_subprocess_succeeds(self, client_git_on):
-        """When subprocess.run does not raise, git_committed must be True."""
-        noop_result = MagicMock()
-        noop_result.returncode = 0
-        with (
-            _patch_scan(),
-            _patch_embed_ok(),
-            patch("palinode.api.server.subprocess.run", return_value=noop_result),
-        ):
-            res = client_git_on.post(
-                "/save",
-                json={
-                    "content": "Git-committed happy-path sentinel (#386).",
-                    "type": "Insight",
-                    "slug": "git-committed-happy",
-                },
-            )
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body.get("git_committed") is True, (
-            "git_committed must be True when subprocess.run succeeds (#386)"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Failure path: git raises OSError → git_committed: false + error log
-# ---------------------------------------------------------------------------
-
-
-class TestSaveGitCommittedFailurePath:
-
-    def test_git_committed_false_and_error_logged_on_os_error(
-        self, client_git_on, caplog
+def _save(slug: str, content: str = "git_committed truthfulness sentinel.") -> dict:
+    with (
+        patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")),
+        patch("palinode.core.embedder.embed", return_value=_FAKE_VECTOR),
     ):
-        """When subprocess.run raises OSError (e.g. git not found), the
-        response must carry git_committed: false and an ERROR must be logged.
-        The save itself must still succeed (HTTP 200, file on disk).
-        """
-        def _raising_run(cmd, *args, **kwargs):
-            if cmd and cmd[0] == "git":
-                raise OSError("git: command not found")
-            # Non-git subprocess calls get a no-op mock result
-            return MagicMock(returncode=0)
+        return save_memory(content=content, type="Insight", slug=slug)
 
-        with (
-            _patch_scan(),
-            _patch_embed_ok(),
-            patch("palinode.api.server.subprocess.run", side_effect=_raising_run),
-            caplog.at_level(logging.ERROR, logger="palinode.api.server"),
-        ):
-            res = client_git_on.post(
-                "/save",
-                json={
-                    "content": "Git-failure sentinel for #386 test.",
-                    "type": "Insight",
-                    "slug": "git-failure-386",
-                },
-            )
 
-        # File must be saved — git failure is non-fatal
-        assert res.status_code == 200, res.text
-        body = res.json()
+# ---------------------------------------------------------------------------
+# Not a git repo (the dev-rig case): committed=False, reason surfaced
+# ---------------------------------------------------------------------------
 
-        # Return contract
-        assert body.get("git_committed") is False, (
-            "git_committed must be False when git subprocess raises (#386)"
-        )
 
-        # Error must be logged — operator must get a signal
-        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert error_records, (
-            "An ERROR must be logged when git auto-commit raises (#386)"
-        )
-        combined = " ".join(r.getMessage() for r in error_records)
-        assert "git" in combined.lower() or "auto-commit" in combined.lower(), (
-            f"Error log must mention git or auto-commit. Got: {combined!r}"
-        )
+class TestNotARepo:
 
-    def test_git_committed_false_on_subprocess_error(self, client_git_on, caplog):
-        """When subprocess.run raises SubprocessError (timeout, CalledProcessError),
-        git_committed must still be False and the save must succeed.
-        """
-        def _subprocess_error(cmd, *args, **kwargs):
-            if cmd and cmd[0] == "git":
-                raise subprocess.SubprocessError("subprocess timed out")
-            return MagicMock(returncode=0)
+    def test_git_committed_false_with_reason(self, memory_dir, caplog):
+        with caplog.at_level(logging.ERROR):
+            result = _save("not-a-repo")
 
-        with (
-            _patch_scan(),
-            _patch_embed_ok(),
-            patch("palinode.api.server.subprocess.run", side_effect=_subprocess_error),
-            caplog.at_level(logging.ERROR, logger="palinode.api.server"),
-        ):
-            res = client_git_on.post(
-                "/save",
-                json={
-                    "content": "SubprocessError sentinel for #386 test.",
-                    "type": "Insight",
-                    "slug": "subprocess-error-386",
-                },
-            )
+        assert Path(result["file_path"]).is_file()
+        assert result["git_committed"] is False
+        assert "not a git repository" in result["git_error"]
+        errors = " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR)
+        assert "not a git repository" in errors
 
-        assert res.status_code == 200, res.text
-        assert res.json().get("git_committed") is False, (
-            "git_committed must be False when SubprocessError is raised (#386)"
-        )
+    def test_choke_point_outcome(self, memory_dir):
+        target = memory_dir / "insights"
+        target.mkdir()
+        (target / "x.md").write_text("x\n")
+        outcome = git_tools.try_commit_memory_files([str(target / "x.md")], "m")
+        assert outcome.committed is False
+        assert outcome.error and "not a git repository" in outcome.error
+        assert git_tools.commit_memory_files([str(target / "x.md")], "m") is False
 
-    def test_save_is_200_even_when_git_fails(self, client_git_on):
-        """HTTP status must be 200 regardless of git outcome — the file is
-        on disk and that is the primary contract. Git failure is advisory."""
-        with (
-            _patch_scan(),
-            _patch_embed_ok(),
-            patch(
-                "palinode.api.server.subprocess.run",
-                side_effect=OSError("no git"),
-            ),
-        ):
-            res = client_git_on.post(
-                "/save",
-                json={
-                    "content": "HTTP-200-on-git-fail sentinel.",
-                    "type": "Insight",
-                    "slug": "http-200-git-fail",
-                },
-            )
-        assert res.status_code == 200, (
-            f"Save must return 200 even when git fails. Got {res.status_code}: {res.text}"
-        )
+
+# ---------------------------------------------------------------------------
+# Repo with no identity: git commit exits 128 "Author identity unknown"
+# ---------------------------------------------------------------------------
+
+
+class TestRepoWithoutIdentity:
+
+    def test_git_committed_false_with_identity_reason(self, memory_dir):
+        _init_repo(memory_dir, identity=False)
+        result = _save("no-identity")
+
+        assert result["git_committed"] is False
+        assert "identity" in result["git_error"].lower() or "who you are" in result["git_error"].lower()
+        # The file was staged but never committed.
+        assert _git(memory_dir, "rev-parse", "--verify", "HEAD").returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Healthy repo: committed=True, no git_error, a real commit exists
+# ---------------------------------------------------------------------------
+
+
+class TestHealthyRepo:
+
+    def test_git_committed_true_and_commit_lands(self, memory_dir):
+        _init_repo(memory_dir, identity=True)
+        result = _save("healthy")
+
+        assert result["git_committed"] is True
+        assert "git_error" not in result
+        log = _git(memory_dir, "log", "--oneline", "-1").stdout
+        assert "auto-save: insights/healthy.md" in log
+        assert _git(memory_dir, "status", "--porcelain", "--", "insights/healthy.md").stdout == ""
+
+    def test_nothing_to_commit_is_still_success(self, memory_dir):
+        _init_repo(memory_dir, identity=True)
+        first = _save("idempotent")
+        assert first["git_committed"] is True
+        path = first["file_path"]
+        outcome = git_tools.try_commit_memory_files([path], "again")
+        assert outcome == git_tools.CommitOutcome(True)
+        assert _git(memory_dir, "rev-list", "--count", "HEAD").stdout.strip() == "1"
+
+    def test_index_lock_contention_is_reported(self, memory_dir):
+        _init_repo(memory_dir, identity=True)
+        (memory_dir / ".git" / "index.lock").write_text("")
+        result = _save("locked")
+
+        assert result["git_committed"] is False
+        assert "index.lock" in result["git_error"]
 
 
 # ---------------------------------------------------------------------------
@@ -207,32 +170,11 @@ class TestSaveGitCommittedFailurePath:
 # ---------------------------------------------------------------------------
 
 
-class TestSaveGitCommittedWhenAutoCommitOff:
+class TestAutoCommitOff:
 
-    def test_git_committed_false_when_auto_commit_disabled(self, tmp_path, monkeypatch):
-        """When auto_commit=False, no git subprocess is invoked and
-        git_committed must be False (no commit was made — consistent
-        with 'nothing to report').
-        """
-        db_path = tmp_path / ".palinode.db"
-        monkeypatch.setattr(config, "memory_dir", str(tmp_path))
-        monkeypatch.setattr(config, "db_path", str(db_path))
+    def test_git_committed_false_no_error(self, memory_dir, monkeypatch):
         monkeypatch.setattr(config.git, "auto_commit", False)
-        srv._rate_counters.clear()
-
-        with TestClient(app, raise_server_exceptions=True) as c:
-            with _patch_scan(), _patch_embed_ok():
-                res = c.post(
-                    "/save",
-                    json={
-                        "content": "auto_commit=False sentinel (#386).",
-                        "type": "Insight",
-                        "slug": "auto-commit-off-386",
-                    },
-                )
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body.get("git_committed") is False, (
-            "git_committed must be False when auto_commit=False — no commit was made (#386)"
-        )
-        srv._rate_counters.clear()
+        result = _save("auto-commit-off")
+        assert result["git_committed"] is False
+        assert "git_error" not in result
+        assert not (memory_dir / ".git").exists()

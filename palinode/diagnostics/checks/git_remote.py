@@ -30,6 +30,8 @@ def _run_git(args: list[str], cwd: str, timeout: int) -> subprocess.CompletedPro
         ["git", "-C", cwd, *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
 

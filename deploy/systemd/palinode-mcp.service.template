@@ -1,5 +1,5 @@
 [Unit]
-Description=Palinode MCP Server (SSE transport)
+Description=Palinode MCP Server (streamable-HTTP transport)
 Documentation=https://github.com/phasespace-labs/palinode
 After=network-online.target palinode-api.service
 Wants=network-online.target palinode-api.service
@@ -8,9 +8,25 @@ Wants=network-online.target palinode-api.service
 Type=simple
 WorkingDirectory=${PALINODE_HOME}
 Environment="PALINODE_DIR=${PALINODE_DATA_DIR}"
+# Where this transport reaches the API it proxies to (loopback, same host).
 Environment="PALINODE_API_HOST=127.0.0.1"
 Environment="PALINODE_API_PORT=${API_PORT}"
-ExecStart=${PALINODE_HOME}/venv/bin/palinode-mcp-sse --port ${MCP_PORT}
+# Bind. The MCP HTTP transport binds 0.0.0.0 so remote MCP clients can reach
+# it over Tailscale (or any other interface); the app default is 127.0.0.1.
+# Its startup gate keys on this resolved bind: a non-loopback bind with no
+# PALINODE_API_TOKEN REFUSES TO START unless PALINODE_API_ALLOW_UNAUTH=1 is
+# set explicitly. The transport has no token of its own — PALINODE_API_TOKEN
+# both gates /mcp/ here and protects the API it proxies to.
+#   - Token: add PALINODE_API_TOKEN (or PALINODE_API_TOKEN_FILE) via a drop-in
+#     (`systemctl edit palinode-mcp`) — do not bake secrets into this unit.
+#   - Token-less, network-isolated host (Tailscale-only, firewalled): render
+#     with PALINODE_API_ALLOW_UNAUTH=1 (the same knob as palinode-api); the
+#     transport starts and warns on every start.
+# See SECURITY.md.
+Environment="PALINODE_MCP_HTTP_HOST=0.0.0.0"
+Environment="PALINODE_MCP_HTTP_PORT=${MCP_PORT}"
+Environment="PALINODE_API_ALLOW_UNAUTH=${PALINODE_API_ALLOW_UNAUTH}"
+ExecStart=${PALINODE_HOME}/venv/bin/palinode-mcp-http
 Restart=always
 RestartSec=5
 

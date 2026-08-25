@@ -1,8 +1,8 @@
 """Tests for IETF KU frontmatter alignment.
 
 Covers:
-- Parser recognizes ku_version, confidence, lifecycle without breaking
-  files that lack these fields (backward compat).
+- Frontmatter with ku_version, confidence, lifecycle round-trips through the
+  parser without breaking files that lack these fields (backward compat).
 - Save path writes confidence to frontmatter when provided.
 - Search results surface confidence as a top-level key when set.
 - ku_compat=True: every save writes ku_version and lifecycle.
@@ -14,74 +14,10 @@ import hashlib
 import yaml
 import pytest
 
-from palinode.core.parser import parse_ku_fields, parse_markdown
+from palinode.core.parser import parse_markdown
 
 
-# ── Parser tests ────────────────────────────────────────────────���─────────────
-
-
-def test_parse_ku_fields_all_present():
-    metadata = {"ku_version": "1.0", "confidence": 0.8, "lifecycle": "active"}
-    result = parse_ku_fields(metadata)
-    assert result["ku_version"] == "1.0"
-    assert result["confidence"] == pytest.approx(0.8)
-    assert result["lifecycle"] == "active"
-
-
-def test_parse_ku_fields_missing_returns_defaults():
-    """Files without any KU fields parse cleanly — backward compat."""
-    result = parse_ku_fields({})
-    assert result["ku_version"] is None
-    assert result["confidence"] is None
-    assert result["lifecycle"] == "active"
-
-
-def test_parse_ku_fields_confidence_out_of_range_ignored():
-    result = parse_ku_fields({"confidence": 1.5})
-    assert result["confidence"] is None
-
-
-def test_parse_ku_fields_confidence_invalid_type_ignored():
-    result = parse_ku_fields({"confidence": "high"})
-    assert result["confidence"] is None
-
-
-def test_parse_ku_fields_confidence_zero_is_valid():
-    result = parse_ku_fields({"confidence": 0.0})
-    assert result["confidence"] == pytest.approx(0.0)
-
-
-def test_parse_ku_fields_confidence_one_is_valid():
-    result = parse_ku_fields({"confidence": 1.0})
-    assert result["confidence"] == pytest.approx(1.0)
-
-
-def test_parse_ku_fields_lifecycle_archived():
-    result = parse_ku_fields({"lifecycle": "archived"})
-    assert result["lifecycle"] == "archived"
-
-
-def test_parse_ku_fields_lifecycle_deprecated():
-    result = parse_ku_fields({"lifecycle": "deprecated"})
-    assert result["lifecycle"] == "deprecated"
-
-
-def test_parse_ku_fields_lifecycle_invalid_falls_back_to_status():
-    """Invalid lifecycle with a valid status falls back to status value."""
-    result = parse_ku_fields({"lifecycle": "deleted", "status": "archived"})
-    assert result["lifecycle"] == "archived"
-
-
-def test_parse_ku_fields_lifecycle_absent_uses_status():
-    """No lifecycle field → mirror status when it's a valid KU lifecycle value."""
-    result = parse_ku_fields({"status": "archived"})
-    assert result["lifecycle"] == "archived"
-
-
-def test_parse_ku_fields_lifecycle_status_unmapped_defaults_active():
-    """Status values not in KU lifecycle vocab don't leak into lifecycle."""
-    result = parse_ku_fields({"status": "draft"})
-    assert result["lifecycle"] == "active"
+# ── Parser tests ─────────────────────────────────────────────────────────────
 
 
 def test_parse_markdown_with_ku_fields_roundtrip():
@@ -113,11 +49,10 @@ def test_parse_markdown_without_ku_fields_unchanged():
         "Legacy content.\n"
     )
     metadata, sections = parse_markdown(content)
-    # No KU fields present — parse_ku_fields on this metadata returns safe defaults
-    ku = parse_ku_fields(metadata)
-    assert ku["ku_version"] is None
-    assert ku["confidence"] is None
-    assert ku["lifecycle"] == "active"  # mirrors status
+    assert "ku_version" not in metadata
+    assert "lifecycle" not in metadata
+    assert metadata["status"] == "active"
+    assert sections[0]["content"].strip() == "Legacy content."
 
 
 # ── Save-path tests ───────────────────���───────────────────────────────────────

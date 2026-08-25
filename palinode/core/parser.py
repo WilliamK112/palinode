@@ -3,6 +3,7 @@ Palinode Markdown Parse Utilities
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import frontmatter
@@ -11,6 +12,13 @@ from typing import Any
 
 
 logger = logging.getLogger("palinode.parser")
+
+#: Distinct frontmatter blocks whose parsed form is kept in memory. Keyed on the
+#: block text (~1 KB each), not the file, so a rewrite that changes only the
+#: body is a hit and a rewrite that touches the frontmatter is a clean miss —
+#: no mtime granularity to trust. Bounded so a very large store cannot grow it
+#: without limit; past the bound it degrades to today's parse-every-time.
+FRONTMATTER_CACHE_SIZE = 4096
 
 # ADR-009 §3.3: allowed values for the `visibility` frontmatter field.
 VALID_VISIBILITIES: tuple[str, ...] = ("inherited", "private", "restricted")
@@ -201,6 +209,77 @@ def _build_canonical_question_prefix(metadata: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+@functools.lru_cache(maxsize=FRONTMATTER_CACHE_SIZE)
+def _load_frontmatter_block(
+    handler_cls: type, block: str
+) -> dict[str, Any] | None:
+    """Parse one frontmatter block the way ``frontmatter.loads`` would.
+
+    ``None`` reproduces every way ``frontmatter.loads`` can raise on the block
+    alone — a YAML/JSON error, or metadata ``Post(**metadata)`` cannot take
+    (non-string keys, or a key colliding with its ``content`` / ``handler``
+    parameters) — so :func:`parse_frontmatter` can fall back exactly where
+    :func:`parse_markdown` does.
+    """
+    try:
+        data = handler_cls().load(block)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return {}
+    for key in data:
+        if not isinstance(key, str) or key in ("content", "handler"):
+            return None
+    return dict(data)
+
+
+def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
+    """``(metadata, body)`` for *content* without sectioning the body.
+
+    Returns exactly what :func:`parse_markdown` would return as its metadata,
+    and the same body ``frontmatter.loads(content).content`` would carry —
+    the ``({}, content)`` fallback included — but the expensive part, loading
+    the YAML, is cached by block text (see :data:`FRONTMATTER_CACHE_SIZE`).
+    Every whole-tree reader that only wants frontmatter (``/list``, the
+    session digest, the summary backfill, the cross-refs registry, the
+    visibility gate) goes through here; the indexer keeps
+    :func:`parse_markdown` because it needs the sections.
+
+    The returned metadata is the caller's to mutate: its containers are
+    copied out of the cache (:func:`_copy_metadata`).
+    """
+    # Mirror frontmatter.parse: newline-normalise, strip, detect, split.
+    stripped = content.replace("\r\n", "\n").strip()
+    handler = frontmatter.detect_format(stripped, frontmatter.handlers)
+    if handler is None:
+        return {}, stripped
+    try:
+        block, body = handler.split(stripped)
+    except ValueError:
+        return {}, stripped
+    metadata = _load_frontmatter_block(type(handler), block)
+    if metadata is None:
+        return {}, content
+    return _copy_metadata(metadata), body.strip()
+
+
+def _copy_metadata(value: Any) -> Any:
+    """Copy the mutable containers in parsed frontmatter and share the rest.
+
+    Everything a safe YAML/JSON load produces besides ``dict`` / ``list`` /
+    ``set`` is immutable (str, numbers, bool, None, datetime/date, bytes), so
+    a structural copy protects the cache as fully as ``copy.deepcopy`` at a
+    fraction of the cost — deepcopy reconstructs every datetime.
+    """
+    if isinstance(value, dict):
+        return {k: _copy_metadata(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_copy_metadata(v) for v in value]
+    if isinstance(value, set):
+        return {_copy_metadata(v) for v in value}
+    return value
+
+
 def parse_markdown(content: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Parses a complete markdown string payload containing YAML frontmatter.
 
@@ -293,11 +372,12 @@ def parse_markdown(content: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     return metadata, sections
 
 
-# ── IETF KU frontmatter parsing (issue) ─────────────────────────────────
+# ── IETF KU frontmatter vocabulary ────────────────────────────────────────
 
 # Allowed values for the KU `lifecycle` field (mirrors `status` vocabulary).
+# The write side (`save.py`, gated on `ku_compat.enabled`) emits it; nothing
+# in palinode reads it back — it exists for KU interop only.
 VALID_LIFECYCLES: tuple[str, ...] = ("active", "archived", "deprecated")
-DEFAULT_LIFECYCLE: str = "active"
 
 # ADR-015 §2.1: write-semantics axis, orthogonal to `type`.
 #   append  — current behaviour; every save is an episodic file (the default).
@@ -357,81 +437,6 @@ from palinode.core.parity import VALID_EPISTEMICS  # noqa: E402,F401
 # existed is `unmarked` and is byte-for-byte unaffected. To assert fact-hood a
 # writer sets `epistemic: fact` explicitly.
 DEFAULT_EPISTEMIC: str = "unmarked"
-
-
-def parse_ku_fields(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Extract IETF Knowledge Unit frontmatter fields from parsed metadata.
-
-    Recognizes three additive fields that align with the
-    ``draft-farley-acta-knowledge-units`` specification:
-
-    ``ku_version``
-        String; expected to be ``"1.0"`` for the current draft.  Returned
-        as-is when present; ``None`` otherwise.
-
-    ``confidence``
-        Float in 0.0–1.0.  Invalid values (outside range or wrong type) are
-        coerced to ``None`` and a warning is logged — soft-fail, consistent
-        with the rest of the parser.
-
-    ``lifecycle``
-        One of ``"active"``, ``"archived"``, ``"deprecated"``.  When absent,
-        falls back to ``status`` if that field is one of the valid values;
-        otherwise defaults to ``"active"``.  Invalid values log a warning.
-
-    All three fields are purely additive — missing fields return ``None`` /
-    the default rather than raising.  Existing files that lack these fields
-    parse without issue (backward compat).
-
-    Args:
-        metadata: Parsed frontmatter dict (as returned by ``parse_markdown``).
-
-    Returns:
-        Dict with keys ``ku_version`` (str | None), ``confidence``
-        (float | None), ``lifecycle`` (str).
-    """
-    # ku_version — accept any string
-    raw_version = metadata.get("ku_version")
-    ku_version: str | None = str(raw_version).strip() if raw_version is not None else None
-
-    # confidence — float in [0.0, 1.0]
-    raw_conf = metadata.get("confidence")
-    confidence: float | None = None
-    if raw_conf is not None:
-        try:
-            conf_val = float(raw_conf)
-            if 0.0 <= conf_val <= 1.0:
-                confidence = conf_val
-            else:
-                logger.warning(
-                    "Invalid confidence %r (must be 0.0–1.0); ignoring.", raw_conf
-                )
-        except (TypeError, ValueError):
-            logger.warning("Invalid confidence %r (not a number); ignoring.", raw_conf)
-
-    # lifecycle — with fallback to `status`
-    raw_lc = metadata.get("lifecycle")
-    if isinstance(raw_lc, str) and raw_lc in VALID_LIFECYCLES:
-        lifecycle = raw_lc
-    else:
-        if raw_lc is not None:
-            logger.warning(
-                "Invalid lifecycle %r (expected one of %s); falling back.",
-                raw_lc,
-                VALID_LIFECYCLES,
-            )
-        # Fall back to `status` field if it maps to a KU lifecycle value
-        raw_status = metadata.get("status", "active")
-        if isinstance(raw_status, str) and raw_status in VALID_LIFECYCLES:
-            lifecycle = raw_status
-        else:
-            lifecycle = DEFAULT_LIFECYCLE
-
-    return {
-        "ku_version": ku_version,
-        "confidence": confidence,
-        "lifecycle": lifecycle,
-    }
 
 
 # ── ADR-009 §3.3: scope frontmatter parsing ───────────────────────────────

@@ -39,6 +39,7 @@ from palinode.consolidation.status_doc import (
     strip_frontmatter_fact_markers,
 )
 from palinode.core.config import config
+from tests._store_helpers import upsert_entities
 
 
 @pytest.fixture(autouse=True)
@@ -525,7 +526,7 @@ def test_set_entities_for_path_replaces_rather_than_accumulates(tmp_path, monkey
     fp = str(tmp_path / "projects" / "thing.md")
 
     # Seed the index the way the old tagger left it: a polluted ref.
-    store.upsert_entities(fp, {"category": "projects",
+    upsert_entities(fp, {"category": "projects",
                                "entities": ["person/alice <!-- fact:thing-abc123 -->"]})
     db = store.get_db()
     before = [r[0] for r in db.execute(
@@ -559,7 +560,7 @@ def test_repair_execute_repoints_the_index(tmp_path, monkeypatch):
         "- person/alice <!-- fact:note-048fc0 -->\n---\n\n- A fact.\n",
         encoding="utf-8",
     )
-    store.upsert_entities(str(fp), {"category": "insights",
+    upsert_entities(str(fp), {"category": "insights",
                                     "entities": ["person/alice <!-- fact:note-048fc0 -->"]})
 
     res = CliRunner().invoke(repair_status, ["--scope", "all", "--execute"])

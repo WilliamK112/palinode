@@ -8,13 +8,13 @@
     "url": "https://github.com/phasespace-labs/palinode",
     "source": "github"
   },
-  "version": "0.13.0",
+  "version": "0.14.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "palinode",
-      "version": "0.13.0",
+      "version": "0.14.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -65,7 +65,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "palinode",
-      "version": "0.13.0",
+      "version": "0.14.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "streamable-http",
@@ -80,7 +80,7 @@
         },
         {
           "type": "positional",
-          "value": "palinode-mcp-sse",
+          "value": "palinode-mcp-http",
           "valueHint": "streamable-http entry point",
           "description": "Console script for the long-running streamable-HTTP MCP server"
         }

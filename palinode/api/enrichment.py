@@ -381,7 +381,7 @@ def _inject_summary(file_path: str, summary: str) -> None:
         file_path (str): File disk path to augment.
         summary (str): Target text to insert as `summary:`.
     """
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     # Match the closing --- of the respective layout block
@@ -418,7 +418,7 @@ def _inject_description(file_path: str, description: str) -> None:
         file_path (str): File disk path to augment.
         description (str): Target text to insert as ``description:``.
     """
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     # Match the closing --- of the frontmatter block.

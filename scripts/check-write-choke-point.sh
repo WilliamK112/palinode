@@ -58,10 +58,6 @@ OPEN_ALLOWED=(
     # bypass (_git_commit_dedup) is fixed and is NOT exempted below — only
     # the marker write is a legitimate non-memory open().
     "palinode/consolidation/write_time.py"
-    # One-time Mem0 migration scratch JSON (export/classify intermediates
-    # under memory_dir/migration/) — never recalled, never committed.
-    "palinode/migration/mem0_export.py"
-    "palinode/migration/mem0_classify.py"
     # `palinode init` scaffolds .claude/ files into the *target* repo the
     # CLI is run from, not palinode's own memory_dir.
     "palinode/cli/init.py"

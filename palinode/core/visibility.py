@@ -76,7 +76,7 @@ def _read_frontmatter(file_path: str) -> dict[str, Any]:
 
     try:
         with open(file_path, encoding="utf-8") as fh:
-            meta, _ = parser.parse_markdown(fh.read())
+            meta, _ = parser.parse_frontmatter(fh.read())
     except (OSError, ValueError, UnicodeDecodeError):
         return _UNREADABLE
     return meta if isinstance(meta, dict) else {}

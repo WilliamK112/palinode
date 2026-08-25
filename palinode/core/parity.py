@@ -121,7 +121,6 @@ ADMIN_EXEMPT_OPERATIONS: frozenset[str] = frozenset(
         # backfill is CLI-only by design — a whole-store mutation should not be
         # remotely triggerable over HTTP)
         "migrate-openclaw",
-        "migrate-mem0",
         "migrate-frontmatter",
         # Local / operational (CLI only)
         "doctor",
@@ -606,7 +605,6 @@ INVENTORY_INFRA: dict[Surface, frozenset[str]] = {
             "POST /split-layers",
             "POST /bootstrap-fact-ids",
             # One-off importers (ADMIN_EXEMPT)
-            "POST /migrate/mem0",
             "POST /migrate/openclaw",
         }
     ),
@@ -632,7 +630,6 @@ INVENTORY_INFRA: dict[Surface, frozenset[str]] = {
             "migrate bullets",
             "migrate frontmatter",
             "migrate openclaw",
-            "migrate-mem0",
             "obsidian-sync",
             # One-time local repair of rotted projects/*-status.md files: it
             # rewrites files on disk, exposes no memory-semantic operation, and
@@ -658,7 +655,7 @@ INVENTORY_BACKLOG: dict[Surface, dict[str, int | InventoryBacklogEntry]] = {
         "palinode_dedup_suggest": 170,
         "palinode_diff": 170,
         "palinode_entities": 170,
-        "palinode_history": InventoryBacklogEntry(170, aliases=("palinode_timeline",)),
+        "palinode_history": 170,
         "palinode_ingest": 170,
         "palinode_lint": 170,
         "palinode_orphan_repair": 170,
@@ -673,9 +670,7 @@ INVENTORY_BACKLOG: dict[Surface, dict[str, int | InventoryBacklogEntry]] = {
         "GET /diff": 170,
         "GET /entities": 170,
         "GET /entities/{entity_ref:path}": 170,
-        "GET /history/{file_path:path}": InventoryBacklogEntry(
-            170, aliases=("GET /timeline/{file_path:path}",)
-        ),
+        "GET /history/{file_path:path}": 170,
         "GET /prompts": 170,
         "GET /prompts/{name}": 170,
         "POST /check-triggers": 170,
@@ -693,7 +688,7 @@ INVENTORY_BACKLOG: dict[Surface, dict[str, int | InventoryBacklogEntry]] = {
         "dedup-suggest": 170,
         "diff": 170,
         "entities": 170,
-        "history": InventoryBacklogEntry(170, aliases=("timeline",)),
+        "history": 170,
         "ingest": 170,
         "lint": 170,
         "orphan-repair": 170,

@@ -12,7 +12,6 @@ Extracted from palinode/api/server.py:
   POST /migrate/openclaw
   GET /depends/_unblocked
   GET /depends/{slug:path}
-  POST /migrate/mem0
 """
 from __future__ import annotations
 
@@ -308,18 +307,3 @@ def depends_api(slug: str) -> dict:
         return traverse_depends(slug)
     except Exception as exc:
         raise _safe_500(exc, "depends traversal failed")
-
-
-@router.post("/migrate/mem0")
-def migrate_mem0_api() -> dict[str, str]:
-    """Run the Mem0 backfill pipeline.
-
-    One-time migration: exports from Qdrant, deduplicates, classifies,
-    and generates Palinode markdown files.
-    """
-    from palinode.migration.run_mem0_backfill import main as run_backfill
-    try:
-        run_backfill()
-        return {"status": "success", "message": "Mem0 backfill complete. Review files and reindex."}
-    except Exception as e:
-        raise _safe_500(e, "Backfill failed")

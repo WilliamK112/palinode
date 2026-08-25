@@ -8,12 +8,11 @@ without-sub-second-precision.
 
 the timestamp inconsistency work / the timestamp-consistency fix covered ``save_api``'s
 ``created_at`` and the watcher's ``metadata.get("created_at")`` read. The timestamp
-inconsistency follow-up work extends the cleanup to four batch surfaces that write
+inconsistency follow-up work extends the cleanup to the batch surfaces that write
 ``last_updated`` (and one ``created_at``):
 
 - ``palinode/ingest/pipeline.py`` — research-file frontmatter
 - ``palinode/consolidation/layer_split.py`` — identity / status / history files
-- ``palinode/migration/mem0_generate.py`` — mem0-imported records
 - ``palinode/migration/openclaw.py`` — openclaw-migrated records
 
 The audit invariant ``grep -rn 'strftime.*Z' palinode/`` must return zero
@@ -255,52 +254,6 @@ def test_layer_split_writes_timezone_aware_utc_timestamps(tmp_path, monkeypatch)
     fm_hist = _frontmatter(results["history"])
     _assert_utc_iso8601(
         fm_hist.get("created_at"), before, after, field="history.created_at"
-    )
-
-
-def test_mem0_generate_writes_timezone_aware_utc_timestamps(tmp_path, monkeypatch):
-    """``mem0_generate.generate_files`` writes UTC ISO-8601 to last_updated.
-
-    Also verifies ``created_at`` falls back to ``datetime.now(UTC).isoformat()``
-    when the source memory has no ``created_at``.
-    """
-    import json
-
-    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
-
-    # Minimal classified-memory fixture: one memory, no source-side
-    # ``created_at`` so the fallback branch is exercised.
-    classified = [
-        {
-            "type": "Insight",
-            "group": "regression-193",
-            "content": "mem0 generate timestamp fix",
-            "entities": [],
-            "source_agent": "test",
-        }
-    ]
-    migration_dir = tmp_path / "migration"
-    migration_dir.mkdir()
-    (migration_dir / "mem0_classified.json").write_text(json.dumps(classified))
-
-    # The function shells out to git at the end; let it fail silently
-    # (tmp_path is not a repo). The file write happens before that.
-    from palinode.migration import mem0_generate
-
-    before = datetime.now(UTC)
-    mem0_generate.generate_files()
-    after = datetime.now(UTC)
-
-    written = tmp_path / "insights" / "regression-193.md"
-    assert written.exists(), f"mem0_generate did not write expected file: {written}"
-
-    fm = _frontmatter(str(written))
-    _assert_utc_iso8601(
-        fm.get("last_updated"), before, after, field="last_updated"
-    )
-    # ``created_at`` came from the fallback (no source ``created_at`` in fixture)
-    _assert_utc_iso8601(
-        fm.get("created_at"), before, after, field="created_at (fallback)"
     )
 
 

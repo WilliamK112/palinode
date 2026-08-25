@@ -43,7 +43,6 @@ TOOL_SMOKE_ARGS: dict[str, tuple[dict, bool]] = {
     # Git-aware tools — config.git.auto_commit=False, so endpoints
     # gracefully return "No history found." / "No blame data." (not error)
     "palinode_history":           ({"file_path": "insights/smoke-target.md"}, False),
-    "palinode_timeline":          ({"file_path": "insights/smoke-target.md"}, False),
     "palinode_blame":             ({"file_path": "insights/smoke-target.md"}, False),
     "palinode_rollback":          ({"file_path": "insights/smoke-target.md"}, False),
     # trace composes over the same git surface; with no commits the saved/

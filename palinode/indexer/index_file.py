@@ -59,7 +59,7 @@ def index_file(filepath: str, *, content: str | None = None) -> dict[str, Any]:
 
     if content is None:
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             logger.warning(

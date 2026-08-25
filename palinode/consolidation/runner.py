@@ -441,6 +441,39 @@ def _call_llm_with_fallback(system_prompt: str, user_prompt: str) -> tuple[str, 
 
     raise RuntimeError(f"All {len(chain)} models failed. Last error: {last_error}")
 
+#: ``model_used`` sentinel returned by ``_consolidate_project`` when the LLM
+#: call itself raised. The runners read it to count the group as failed rather
+#: than as a quiet "nothing to do" — the two are indistinguishable by the
+#: (empty) operations list alone.
+LLM_FAILED = "failed"
+
+
+def _run_status(failed_projects: list[str]) -> str:
+    """``success`` only when no project group failed; ``partial`` otherwise."""
+    return "partial" if failed_projects else "success"
+
+
+def _partition_notes_for_archive(
+    notes: list[dict], unresolved: set[str]
+) -> tuple[list[dict], list[dict]]:
+    """Split notes into (retire, leave in place).
+
+    A note is retired only if none of the project groups it belongs to is in
+    ``unresolved`` — the failed and no-target groups. Per-note rather than
+    per-run: a note that mentions two projects, one compacted and one whose
+    LLM call failed, has not been consolidated, and archiving it would hide
+    the failed half from every future run.
+    """
+    retire: list[dict] = []
+    left: list[dict] = []
+    for note in notes:
+        projects = {
+            m.split("project/", 1)[1] for m in note["mentions"] if m.startswith("project/")
+        }
+        (left if projects & unresolved else retire).append(note)
+    return retire, left
+
+
 def _consolidate_project(
     project_id: str,
     notes: list[dict],
@@ -470,7 +503,7 @@ def _consolidate_project(
     if not os.path.exists(prompt_path):
         prompt_path = os.path.join(config.memory_dir, "specs", "prompts", "compaction.md")
         
-    with open(prompt_path) as f:
+    with open(prompt_path, encoding="utf-8") as f:
         system_prompt = f.read()
     
     # Load project file and extract facts. Callers filter no-target groups out
@@ -485,7 +518,7 @@ def _consolidate_project(
         )
         return [], "primary"
 
-    with open(target_file) as f:
+    with open(target_file, encoding="utf-8") as f:
         file_content = f.read()
 
     # Extract facts with IDs — body only. A YAML frontmatter list entry uses the
@@ -541,7 +574,7 @@ Return the operations JSON array."""
         result_text, model_used = (llm_fn or _call_llm_with_fallback)(system_prompt, user_prompt)
     except Exception as e:
         logger.error(f"Failed to call LLM for {project_id}: {e}")
-        return [], "failed"
+        return [], LLM_FAILED
     
     # Parse the operations JSON array — extraction + json_repair recovery +
     # nested-list/dict filtering all live in op_parse now.
@@ -560,7 +593,7 @@ def _check_contradictions(
     if not os.path.exists(update_prompt_path):
         return [{"operation": "ADD", "item": item} for item in new_items]
         
-    with open(update_prompt_path) as f:
+    with open(update_prompt_path, encoding="utf-8") as f:
         system_prompt = f.read()
 
     operations = []
@@ -819,9 +852,10 @@ def _run_consolidation_unlocked(
             len(skipped_no_target),
             ", ".join(skipped_no_target),
         )
-    
+
     total_stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0}
     projects_processed = 0
+    failed_projects: list[str] = []
     proposed_changes: list[dict[str, str]] = []
     mutated_files: list[str] = []
     # Pre-existing crash, found by the no-target tests: `model_used` was assigned
@@ -836,6 +870,9 @@ def _run_consolidation_unlocked(
         try:
             model_used_current = "primary"
             operations, model_used_current = _consolidate_project(project_id, pnotes, llm_fn=llm_fn)
+            if model_used_current == LLM_FAILED:
+                failed_projects.append(project_id)
+                continue
             if not operations:
                 continue
 
@@ -878,32 +915,50 @@ def _run_consolidation_unlocked(
             logger.info(f"Compacted {project_id}: {stats}")
 
         except Exception as e:
+            failed_projects.append(project_id)
             logger.error(f"Compaction failed for {project_id}: {e}")
 
     if dry_run:
         result = {
-            "status": "success",
+            "status": _run_status(failed_projects),
             "processed_notes": len(notes),
             "projects_compacted": projects_processed,
+            "projects_failed": len(failed_projects),
+            "projects_skipped": len(skipped_no_target),
             "dry_run": True,
             "proposed_changes": proposed_changes,
         }
         if yaml_skipped:
             result["yaml_parse_errors"] = yaml_skipped
+        if failed_projects:
+            result["failed_projects"] = failed_projects
         if skipped_no_target:
             # Same shape as yaml_parse_errors: a count of what silently
             # did not happen belongs in the result, not only the log.
             result["groups_skipped_no_target"] = len(skipped_no_target)
             result["skipped_no_target_projects"] = skipped_no_target
         return result
-    
-    # Archive (only if at least one project compacted successfully)
+
+    # Archive only what was actually consolidated. A note that belongs to a
+    # failed or untargetable group stays in place so the next run sees it
+    # again — moving it to archive/ would retire it unconsolidated.
+    retire, left_in_place = _partition_notes_for_archive(
+        notes, unresolved=set(failed_projects) | set(skipped_no_target)
+    )
     if projects_processed > 0:
-        _archive_daily_notes(notes)
+        _archive_daily_notes(retire)
     else:
         logger.warning("No projects compacted successfully — skipping daily note archival")
-    
-    
+        left_in_place = notes
+        retire = []
+    if left_in_place and projects_processed > 0:
+        logger.warning(
+            "palinode.consolidation: %d note(s) left in place — their project "
+            "group(s) failed or had no target: %s",
+            len(left_in_place),
+            ", ".join(os.path.basename(n["filepath"]) for n in left_in_place),
+        )
+
     _git_commit(
         f"palinode: compaction {_utc_now().strftime('%Y-%m-%d')} — "
         f"{total_stats['updated']}u {total_stats['merged']}m "
@@ -911,15 +966,21 @@ def _run_consolidation_unlocked(
         f" (model: {model_used})",
         files=mutated_files,
     )
-    
+
     result: dict[str, Any] = {
-        "status": "success",
+        "status": _run_status(failed_projects),
         "processed_notes": len(notes),
         "projects_compacted": projects_processed,
+        "projects_failed": len(failed_projects),
+        "projects_skipped": len(skipped_no_target),
+        "notes_archived": len(retire),
+        "notes_left_in_place": len(left_in_place),
         **total_stats,
     }
     if yaml_skipped:
         result["yaml_parse_errors"] = yaml_skipped
+    if failed_projects:
+        result["failed_projects"] = failed_projects
     if skipped_no_target:
         # Same shape as yaml_parse_errors: a count of what silently
         # did not happen belongs in the result, not only the log.
@@ -987,6 +1048,7 @@ def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = Fals
     
     total_stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0}
     projects_processed = 0
+    failed_projects: list[str] = []
     model_used = "primary"
     proposed_changes: list[dict[str, str]] = []
     mutated_files: list[str] = []
@@ -994,6 +1056,9 @@ def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = Fals
     for project_id, pnotes in grouped.items():
         try:
             operations, model_used_current = _consolidate_project(project_id, pnotes, is_nightly=True, llm_fn=llm_fn)
+            if model_used_current == LLM_FAILED:
+                failed_projects.append(project_id)
+                continue
             if not operations:
                 continue
 
@@ -1033,20 +1098,25 @@ def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = Fals
             logger.info(f"Nightly compacted {project_id}: {stats}")
 
         except Exception as e:
+            failed_projects.append(project_id)
             logger.error(f"Nightly compaction failed for {project_id}: {e}")
-            
+
     # Nightly does NOT archive daily notes (left for weekly)
 
     if dry_run:
         nightly_result = {
-            "status": "success",
+            "status": _run_status(failed_projects),
             "processed_notes": len(notes),
             "projects_compacted": projects_processed,
+            "projects_failed": len(failed_projects),
+            "projects_skipped": len(skipped_no_target),
             "dry_run": True,
             "proposed_changes": proposed_changes,
         }
         if yaml_skipped:
             nightly_result["yaml_parse_errors"] = yaml_skipped
+        if failed_projects:
+            nightly_result["failed_projects"] = failed_projects
         if skipped_no_target:
             # Same shape as yaml_parse_errors: a count of what silently
             # did not happen belongs in the result, not only the log.
@@ -1063,13 +1133,17 @@ def _run_nightly_unlocked(lookback_days: int | None = None, dry_run: bool = Fals
         )
     
     nightly_result: dict[str, Any] = {
-        "status": "success",
+        "status": _run_status(failed_projects),
         "processed_notes": len(notes),
         "projects_compacted": projects_processed,
+        "projects_failed": len(failed_projects),
+        "projects_skipped": len(skipped_no_target),
         **total_stats,
     }
     if yaml_skipped:
         nightly_result["yaml_parse_errors"] = yaml_skipped
+    if failed_projects:
+        nightly_result["failed_projects"] = failed_projects
     if skipped_no_target:
         # Same shape as yaml_parse_errors: a count of what silently
         # did not happen belongs in the result, not only the log.

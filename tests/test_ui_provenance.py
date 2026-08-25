@@ -197,6 +197,9 @@ def test_ui_refuses_non_loopback_bind(tmp_path, monkeypatch):
     monkeypatch.setenv("PALINODE_API_HOST", "0.0.0.0")
     for _k in ("PALINODE_API_TOKEN", "PALINODE_API_TOKEN_FILE"):
         monkeypatch.delenv(_k, raising=False)
+    # The startup bind gate would refuse 0.0.0.0 + no token outright;
+    # opt out so the app boots and the UI's own loopback guard is what fires.
+    monkeypatch.setenv("PALINODE_API_ALLOW_UNAUTH", "1")
     import palinode.api.server as srv
     srv = importlib.reload(srv)
     srv._rate_counters.clear()

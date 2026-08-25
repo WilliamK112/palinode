@@ -303,9 +303,9 @@ def collect_memory_files(
             continue
 
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-            metadata, _ = parser.parse_markdown(content)
+            metadata, _ = parser.parse_frontmatter(content)
 
             is_core = bool(metadata.get("core", False))
             if core_only and not is_core:
@@ -481,9 +481,9 @@ def generate_summaries_api() -> dict[str, Any]:
     # Use palinode_dir since that's generally where memories are kept
     for filepath in glob.glob(os.path.join(config.palinode_dir, "**/*.md"), recursive=True):
         try:
-            with open(filepath) as f:
+            with open(filepath, encoding="utf-8") as f:
                 content = f.read()
-            metadata, _ = parser.parse_markdown(content)
+            metadata, _ = parser.parse_frontmatter(content)
 
             # backfill the deferred auto-description. Not core-gated —
             # every *eligible* memory file gets a description, matching the

@@ -99,7 +99,18 @@ schedules summary and description generation."""
     def __init__(self) -> None:
         """Initialise debounce timers and per-file tracking state."""
         super().__init__()
-        self.last_processed: dict[str, float] = {}
+        # Per-path trailing-edge debounce. A file event arms (or re-arms)
+        # a timer keyed by path; the timer re-reads the file when it fires, so a
+        # burst of writes inside ``debounce_seconds`` is coalesced into one index
+        # pass over the *final* content instead of the first write winning and
+        # the rest being dropped. Entries are evicted when the timer fires, so
+        # the dict is bounded by the number of paths currently in flight.
+        self._index_timers: dict[str, threading.Timer] = {}
+        self._index_timers_lock = threading.Lock()
+        # Timers fire on their own threads; serialize the index passes so the
+        # store sees the same one-writer-at-a-time pattern the observer thread
+        # used to give it.
+        self._index_lock = threading.Lock()
         self._summary_timer: threading.Timer | None = None
         self._description_timer: threading.Timer | None = None
         # Files needing description retry, accumulated between debounce ticks.
@@ -123,7 +134,45 @@ schedules summary and description generation."""
             setattr(self, attr, None)
             timer.cancel()
             timer.join(timeout)
+        with self._index_timers_lock:
+            index_timers = list(self._index_timers.values())
+            self._index_timers.clear()
+        for timer in index_timers:
+            timer.cancel()
+            timer.join(timeout)
         self._description_pending.clear()
+
+    def _schedule_index(self, filepath: str) -> None:
+        """Arm (or re-arm) the per-path index timer for *filepath*.
+
+        Cancel-and-reschedule: a new event inside the debounce window pushes the
+        fire time out, so only the trailing edge of a write burst is indexed.
+        """
+        if self._stopped:
+            return
+        delay = config.services.watcher.debounce_seconds
+        with self._index_timers_lock:
+            previous = self._index_timers.get(filepath)
+            if previous is not None:
+                previous.cancel()
+            timer = threading.Timer(delay, self._fire_index, args=(filepath,))
+            timer.daemon = True
+            self._index_timers[filepath] = timer
+            timer.start()
+
+    def _fire_index(self, filepath: str) -> None:
+        """Timer callback: evict this path's entry, then index the file as it is *now*."""
+        with self._index_timers_lock:
+            # Only evict our own entry — a newer timer may already have replaced it.
+            if self._index_timers.get(filepath) is threading.current_thread():
+                del self._index_timers[filepath]
+        if self._stopped:
+            return
+        with self._index_lock:
+            try:
+                self._process_file(filepath)
+            except Exception as e:
+                logger.error(f"Failed to index {filepath}: {e}")
 
     def _trigger_summaries(self) -> None:
         """Hits the summary generation API to auto-fill missing summaries."""
@@ -230,21 +279,18 @@ schedules summary and description generation."""
     def _process_file(self, filepath: str) -> None:
         """Index a Markdown file, then schedule summary/description generation if needed.
 
+        Synchronous and undebounced — this is the "index it now" primitive that
+        ``/reindex`` and the debounce timers call. File events go through
+        ``_schedule_index`` instead.
+
         Args:
             filepath (str): Path of the file to index.
         """
         if not os.path.exists(filepath):
             return
-            
-        current_time = time.time()
-        debounce_window = config.services.watcher.debounce_seconds
-        
-        if filepath in self.last_processed and (current_time - self.last_processed[filepath]) < debounce_window:
-            return
-        self.last_processed[filepath] = current_time
 
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             logger.error(f"Failed to read {filepath}: {e}")
@@ -318,10 +364,7 @@ schedules summary and description generation."""
             event: Watchdog modification event.
         """
         if not event.is_directory and self.is_valid_file(event.src_path):
-            try:
-                self._process_file(event.src_path)
-            except Exception as e:
-                logger.error(f"Failed to index {event.src_path}: {e}")
+            self._schedule_index(event.src_path)
 
     def on_created(self, event: FileCreatedEvent | DirCreatedEvent) -> None:
         """Index newly created files; directories are ignored.
@@ -330,10 +373,7 @@ schedules summary and description generation."""
             event: Watchdog creation event.
         """
         if not event.is_directory and self.is_valid_file(event.src_path):
-            try:
-                self._process_file(event.src_path)
-            except Exception as e:
-                logger.error(f"Failed to index {event.src_path}: {e}")
+            self._schedule_index(event.src_path)
 
     def on_deleted(self, event: FileDeletedEvent | DirDeletedEvent) -> None:
         """Delete the file's chunks from the store when it is removed.
@@ -368,10 +408,7 @@ schedules summary and description generation."""
                     f"Failed to delete chunks for moved {event.src_path}: {e}"
                 )
         if self.is_valid_file(event.dest_path):
-            try:
-                self._process_file(event.dest_path)
-            except Exception as e:
-                logger.error(f"Failed to index moved {event.dest_path}: {e}")
+            self._schedule_index(event.dest_path)
 
 
 def main() -> None:

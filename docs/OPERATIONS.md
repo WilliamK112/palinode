@@ -258,7 +258,7 @@ The `.palinode.db` file does NOT need to be backed up — it's rebuilt from file
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PALINODE_DIR` | `~/.palinode` | Memory directory root |
-| `PALINODE_API_HOST` | `127.0.0.1` | API bind address |
+| `PALINODE_API_HOST` | `127.0.0.1` | API bind address. Non-loopback requires `PALINODE_API_TOKEN` (or `PALINODE_API_ALLOW_UNAUTH=1` to opt out) — see [SECURITY.md](../SECURITY.md#api-authentication) |
 | `PALINODE_CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Allowed CORS origins (comma-separated) |
 | `PALINODE_RATE_LIMIT_SEARCH` | `100` | Max search requests per minute per IP |
 | `PALINODE_RATE_LIMIT_WRITE` | `30` | Max write requests per minute per IP |

@@ -2,8 +2,9 @@
  * Palinode extension for the Pi coding agent — the thin binding.
  *
  * Per ADR-019, a Palinode plugin is a delivery adapter over the REST API:
- * this file wires three lifecycle events to the pure client logic in
- * `core.ts` and contains no capability of its own.
+ * this file wires three lifecycle events to the pure client logic in the
+ * shared core (`plugins/core`, compiled into this package's dist) and
+ * contains no capability of its own.
  *
  *   session_start      → warm /context/prime + queue a core-memory digest
  *                        for the next prompt (deliverAs: "nextTurn" — never
@@ -30,7 +31,7 @@ import {
   configFromEnv,
   postSessionCapture,
   type SessionEntryLike,
-} from "./core.js";
+} from "../../core/src/index.js";
 
 /** Structural types for the slice of Pi's ExtensionAPI this extension
  *  touches. Structural on purpose: no dependency on Pi's own package, so
@@ -95,7 +96,14 @@ export default function palinode(pi: PiLike): void {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     const entries = ctx.sessionManager?.getEntries?.() ?? [];
-    const payload = buildSessionCapture(entries, cfg, basename(process.cwd()));
+    const payload = buildSessionCapture(entries, cfg, {
+      project: basename(process.cwd()),
+      source: "pi-extension",
+      harness: "pi",
+      trigger: "session_shutdown",
+      sessionId: ctx.sessionManager?.getSessionId?.() || undefined,
+      cwd: process.cwd(),
+    });
     if (payload) await postSessionCapture(payload, cfg);
   });
 }

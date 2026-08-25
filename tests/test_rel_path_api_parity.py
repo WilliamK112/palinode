@@ -27,8 +27,8 @@ from fastapi.testclient import TestClient
 
 from palinode.api import server as srv
 from palinode.api.server import app
-from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 DIM = 1024
 _TOKEN_RE = re.compile(r"[A-Za-z]{3,}")
@@ -85,7 +85,7 @@ def _ingest(tmp_path_memory_dir, rel_path: str, content: str) -> None:
     with open(full, "w") as f:
         f.write(content)
     chunk_id = hashlib.sha256(full.encode()).hexdigest()[:32]
-    store.upsert_chunks(
+    upsert_chunks(
         [
             {
                 "id": chunk_id,

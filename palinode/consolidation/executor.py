@@ -146,7 +146,7 @@ def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: 
                      refused by the nightly same-day policy — a rejection
                      with a reason, not a drop.
     """
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Every fact operation below matches markdown list syntax with a whole-file
@@ -508,7 +508,7 @@ def append_to_history(file_path: str, fact_id: str, text: str) -> str:
     entry = f"- [{now}] {text} <!-- fact:{fact_id} -->\n"
 
     if os.path.exists(history_path):
-        with open(history_path) as f:
+        with open(history_path, encoding="utf-8") as f:
             history_content = f.read()
         history_content = _ensure_archived_frontmatter(history_content)
     else:

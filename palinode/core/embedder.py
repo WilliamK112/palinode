@@ -1,17 +1,12 @@
 """
-Palinode Embedder — dual backend (local BGE-M3 + Gemini cloud)
-
-Default: BGE-M3 via Ollama (local, private, for core memory)
-Ingestion: gemini-embedding-2-preview (cloud, multimodal, for research docs)
+Palinode Embedder — local BGE-M3 via Ollama.
 """
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from typing import Optional
 
-import httpx
 from palinode.core.config import config
 from palinode.core.ollama_client import (
     EmbeddingContextError,
@@ -32,7 +27,6 @@ __all__ = [
     "EmbeddingContextError",
     "EmbeddingUnavailable",
     "embed",
-    "embed_query",
     "check_model_context",
 ]
 
@@ -55,9 +49,7 @@ class EmbeddingUnavailable(RuntimeError):
     Raising here attributes the failure at the point it happened.
 
     Attributes:
-        backend: which embedding backend failed (currently always ``"local"``
-            — the Gemini backend already propagates ``httpx`` errors directly
-            and is out of scope for this contract).
+        backend: which embedding backend failed (always ``"local"``).
         model: the Ollama model name that was asked to embed.
         text_len: character length of the input that failed to embed (never
             the text itself — logs/exceptions must not carry raw content).
@@ -129,7 +121,6 @@ def _notice_keyword_only_once() -> None:
 
 
 def check_model_context(
-    url: Optional[str] = None,
     model: Optional[str] = None,
     min_ctx: int = _MIN_EXPECTED_CTX,
 ) -> None:
@@ -140,8 +131,6 @@ def check_model_context(
     regardless; this is purely diagnostic.
 
     Args:
-        url: Deprecated/ignored — the centralized client resolves the EMBED URL
-            from config (Phase 3 of the Ollama traffic-surface hardening). Kept for signature compatibility.
         model: Model name (defaults to config).
         min_ctx: Minimum acceptable num_ctx value (default 8192 for bge-m3).
     """
@@ -196,20 +185,11 @@ def check_model_context(
         )
 
 
-def get_gemini_timeout() -> httpx.Timeout:
-    """Gets the HTTPX timeout tuple for Gemini embeddings from config."""
-    return httpx.Timeout(
-        config.embeddings.research.timeout_seconds,
-        connect=10.0
-    )
-
-
-def embed(text: str, backend: str = "local") -> list[float]:
+def embed(text: str) -> list[float]:
     """Generate an embedding for the given text.
 
     Args:
         text (str): The text to embed.
-        backend (str): The embedding backend to use - 'local' (Ollama) or 'gemini'.
 
     Returns:
         list[float]: A non-empty list of floats representing the embedding
@@ -227,8 +207,6 @@ def embed(text: str, backend: str = "local") -> list[float]:
             must now catch this explicitly rather than checking for a falsy
             return.
     """
-    if backend == "gemini" and os.environ.get("GEMINI_API_KEY"):
-        return _embed_gemini(text)
     return _embed_local(text)
 
 
@@ -295,74 +273,3 @@ def _embed_local(text: str) -> list[float]:
         raise EmbeddingUnavailable(
             backend="local", model=model, text_len=len(text), cause=str(e)
         ) from e
-
-
-def _embed_gemini(text: str, dimension: int = 768, task_type: str = "RETRIEVAL_DOCUMENT") -> list[float]:
-    """Embed via Gemini API (768/1536/3072d, Matryoshka).
-
-    Args:
-        text (str): The text content to embed.
-        dimension (int): Requested dimensionality of the vector (defaults to 768).
-        task_type (str): The context hint task type.
-
-    Returns:
-        list[float]: The generated embedding vector.
-    """
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    model = config.embeddings.research.model
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent"
-
-    try:
-        response = httpx.post(
-            f"{gemini_url}?key={gemini_key}",
-            json={
-                "model": f"models/{model}",
-                "content": {"parts": [{"text": text}]},
-                "taskType": task_type,
-                "outputDimensionality": dimension,
-            },
-            timeout=get_gemini_timeout(),
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        # Gemini rejected the request (auth, quota, bad model). Previously this
-        # raised unlogged; surface a WARNING with the failing endpoint + status
-        # so an operator can tell embed degradation from a model outage.
-        # Endpoint is logged without the key query-string (no secret leak).
-        logger.warning(
-            "gemini embed failed op=embed model=%s endpoint=%s outcome=http_%d",
-            model, gemini_url, e.response.status_code,
-        )
-        raise
-    except httpx.HTTPError as e:
-        # Connect/timeout/transport error reaching Gemini.
-        logger.warning(
-            "gemini embed failed op=embed model=%s endpoint=%s outcome=unreachable error=%r",
-            model, gemini_url, str(e),
-        )
-        raise
-    data = response.json()
-    return data.get("embedding", {}).get("values", [])
-
-
-def embed_query(text: str, backend: str = "local") -> list[float]:
-    """Embed a search query.
-
-    Delegates to RETRIEVAL_QUERY task type for the Gemini backend, enabling
-    optimized short-query to long-document matching. Local backend remains standard.
-
-    Args:
-        text (str): The user search query.
-        backend (str): Either 'local' or 'gemini'.
-
-    Returns:
-        list[float]: The query embedding vector.
-
-    Raises:
-        EmbeddingContextError: see ``embed()``.
-        EmbeddingUnavailable: see ``embed()`` — the local backend contract is
-            identical (this delegates straight to ``_embed_local``).
-    """
-    if backend == "gemini" and os.environ.get("GEMINI_API_KEY"):
-        return _embed_gemini(text, task_type="RETRIEVAL_QUERY")
-    return _embed_local(text)

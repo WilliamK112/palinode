@@ -81,7 +81,7 @@ def dedup_suggest(content, file_path, min_similarity, top_k, fmt):
         sys.exit(2)
 
     if file_path:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
     try:

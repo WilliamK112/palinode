@@ -64,7 +64,7 @@ def test_handlers_are_coroutines() -> None:
 
 def test_the_registry_is_not_empty() -> None:
     """Guard the guard: an empty registry would satisfy both set comparisons."""
-    assert len(_TOOL_HANDLERS) >= 30, (
+    assert len(_TOOL_HANDLERS) >= 29, (
         f"only {len(_TOOL_HANDLERS)} handlers registered — registration is not "
         "running, and the two set comparisons above are passing vacuously."
     )

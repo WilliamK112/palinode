@@ -8,7 +8,7 @@ Ollama host's instantaneous responsiveness. This client replaces that with one s
 * **Per-role routing** (``OllamaRole``) — ``embed`` resolves to the configured
   embedding host, while ``chat`` resolves to the configured chat/generate host. Typed
   methods (:meth:`OllamaClient.embed`, :meth:`OllamaClient.generate`,
-  :meth:`OllamaClient.chat`) bind to a role, so an embed call cannot be sent to
+  :meth:`OllamaClient.chat_completions`) bind to a role, so an embed call cannot be sent to
   the chat host by construction. URLs are resolved *per call* from the live
   config singleton, so env/config changes and test monkeypatching are honoured.
 * **Retry with jittered backoff** on transient failures (read timeout, connect
@@ -694,19 +694,6 @@ class OllamaClient:
         return self._request_json(
             role, "/api/generate", payload,
             timeout=tmo, retries=retries, model=mdl, op="generate",
-        )
-
-    def chat(
-        self, messages: list[dict[str, str]], *, model: str | None = None,
-        timeout: float | httpx.Timeout | None = None, retries: int | None = None,
-        role: OllamaRole = OllamaRole.CHAT,
-    ) -> dict[str, Any]:
-        """POST to the chat host's ``/api/chat`` (non-streaming)."""
-        mdl = model or config.auto_summary.model
-        tmo = timeout if timeout is not None else 90.0
-        return self._request_json(
-            role, "/api/chat", {"model": mdl, "messages": messages, "stream": False},
-            timeout=tmo, retries=retries, model=mdl, op="chat",
         )
 
     def show(

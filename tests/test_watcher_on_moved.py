@@ -26,6 +26,7 @@ def tmp_store(tmp_path, monkeypatch):
     monkeypatch.setattr(config.git, "auto_commit", False)
     monkeypatch.setattr(config.capture.cross_refs, "enabled", False)
     monkeypatch.setattr(config.auto_summary, "enabled", False)
+    monkeypatch.setattr(config.services.watcher, "debounce_seconds", 0.05)
     store.init_db()
     return tmp_path
 
@@ -65,9 +66,12 @@ def test_rename_moves_chunks_and_entities_to_the_new_path(tmp_store):
             assert _chunks_for(str(src)) >= 1
             assert _entities_for(str(src)) == {"person/alice"}
 
-            # The rename on disk, then the event watchdog would deliver.
+            # The rename on disk, then the event watchdog would deliver. The
+            # destination is indexed on the trailing edge of the debounce
+            # window, so wait for that timer before asserting.
             src.rename(dest)
             handler.on_moved(FileMovedEvent(str(src), str(dest)))
+            handler._index_timers[str(dest)].join(5)
 
         # Old path fully retired, new path fully indexed.
         assert _chunks_for(str(src)) == 0, "old path chunks must not survive a rename"

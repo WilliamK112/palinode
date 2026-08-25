@@ -239,7 +239,7 @@ If you already use Obsidian's "Daily notes" core plugin pointed somewhere else, 
 
 ### A custom Obsidian plugin is editing files while the watcher is running
 
-The watcher debounces but isn't bulletproof against high-frequency writes. If you have an Auto Save plugin or similar configured to flush on every keystroke, set its delay to >1s — that gives the watcher room to finish indexing one save before the next arrives. In practice this is rarely an issue with hand-typing; it shows up mostly with code-driven plugins.
+The watcher debounces per file on the trailing edge: a burst of writes inside `services.watcher.debounce_seconds` (default 1 s) is coalesced into one index pass over the file's final content, so an Auto Save plugin flushing on every keystroke costs one embed per pause rather than one per keystroke — and the last write is the one that gets indexed. If a plugin writes continuously without ever pausing for the debounce window, the file simply isn't indexed until it does.
 
 ### Frontmatter looks scary the first time
 

@@ -139,6 +139,13 @@ def test_one_bad_file_does_not_abort_the_sweep(tmp_path, monkeypatch):
         assert os.path.exists(projects / f"{name}-status.md"), f"{name} was not split"
 
 
+def _layer_split_records(caplog) -> list[logging.LogRecord]:
+    """Only this module's logger — the tmp_path here is not a git repo, so the
+    git_tools choke point now logs its own ERROR for the split's
+    auto-commit, which is not the warning under test."""
+    return [r for r in caplog.records if r.name == "palinode.consolidation.layer_split"]
+
+
 # --------------------------------------------------------------------------
 # Audibility: degrading must not be silent
 # --------------------------------------------------------------------------
@@ -150,8 +157,9 @@ def test_unrecognized_hint_warns_with_file_and_accepted_set(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="palinode.consolidation.layer_split"):
         layer_split.split_file(src)
 
-    assert len(caplog.records) == 1, "expected exactly one warning"
-    message = caplog.records[0].getMessage()
+    records = _layer_split_records(caplog)
+    assert len(records) == 1, "expected exactly one warning"
+    message = records[0].getMessage()
     assert "sched.md" in message, "warning must name the file"
     assert "histroy" in message, "warning must quote the offending value"
     for accepted in layer_split.LAYER_HINTS:
@@ -211,7 +219,7 @@ def test_valid_hint_still_routes_and_reports_nothing(tmp_path, hint, caplog):
         results = layer_split.split_file(src)
 
     assert "layer_hint_ignored" not in results
-    assert caplog.records == []
+    assert _layer_split_records(caplog) == []
     # The whole body went to the named layer rather than being split across two.
     target = results[hint]
     assert IDENTITY_MARKER in _body_of(target)
@@ -237,4 +245,4 @@ def test_absent_hint_is_not_reported_as_ignored(tmp_path, caplog):
         results = layer_split.split_file(src)
 
     assert "layer_hint_ignored" not in results
-    assert caplog.records == []
+    assert _layer_split_records(caplog) == []

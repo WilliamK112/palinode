@@ -137,6 +137,49 @@ def test_check_triggers_preserves_typed_embedding_503(client):
     assert "palinode doctor" in res.json()["detail"]
 
 
+@pytest.fixture()
+def unguarded_route():
+    """A route with no try/except at all, mounted on the real app.
+
+    Proves the app-level ``EmbeddingUnavailable`` handler is the mechanism —
+    the per-route ``except EmbeddingUnavailable: raise`` clauses only exist
+    to escape each route's broad ``except Exception -> _safe_500``.
+    """
+    path = "/_test/unguarded-embed"
+
+    def _embed_without_guard() -> dict[str, int]:
+        return {"dims": len(embedder_mod.embed("unguarded route body"))}
+
+    app.add_api_route(path, _embed_without_guard, methods=["POST"])
+    try:
+        yield path
+    finally:
+        app.router.routes[:] = [
+            r for r in app.router.routes if getattr(r, "path", None) != path
+        ]
+
+
+def test_unguarded_route_dead_embedder_returns_typed_503(
+    client, dead_embedder, unguarded_route, caplog
+):
+    with caplog.at_level(logging.WARNING):
+        res = client.post(unguarded_route)
+
+    assert res.status_code == 503
+    detail = res.json()["detail"]
+    assert "Embedding backend unavailable" in detail
+    assert "palinode doctor" in detail
+    handler_warnings = [
+        record
+        for record in caplog.records
+        if record.name == "palinode.api"
+        and "outcome=embedding_unavailable" in record.getMessage()
+    ]
+    assert len(handler_warnings) == 1
+    assert unguarded_route in handler_warnings[0].getMessage()
+    assert "Traceback" not in caplog.text
+
+
 def test_save_keeps_200_and_index_error_with_same_dead_embedder(client, dead_embedder):
     res = client.post(
         "/save",

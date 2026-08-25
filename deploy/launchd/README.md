@@ -46,10 +46,12 @@ tail -f ~/Library/Logs/palinode-api.log ~/Library/Logs/palinode-watcher.log
 
 ## Notes
 
-- The API binds `127.0.0.1` in the template — loopback only. Edit the plist's
-  `--host` argument if you genuinely want it on the network, and read the bind
-  intent / token contract in `deploy/systemd/palinode-api.service.template`
-  before you do.
+- The API binds `127.0.0.1` in the template — loopback only. If you genuinely
+  want it on the network, edit the plist's `--host` argument **and** add a
+  matching `PALINODE_API_HOST` to `EnvironmentVariables` (the app's startup gate
+  reads the env var, not uvicorn's flag), then read the bind / token contract in
+  `SECURITY.md#api-authentication`: a non-loopback bind refuses to start without
+  `PALINODE_API_TOKEN` unless `PALINODE_API_ALLOW_UNAUTH=1` is set.
 - After editing a plist, `bootout` then `bootstrap` again — launchd does not
   re-read plists in place.
 - Ollama has its own service story on macOS (the Ollama.app menu bar item, or

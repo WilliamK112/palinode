@@ -1,5 +1,6 @@
 """Tests for session-end dual-write: daily append + individual file (M0)."""
 import os
+import subprocess
 from unittest import mock
 
 import pytest
@@ -208,18 +209,22 @@ def test_session_end_auto_derives_project_from_cwd(tmp_path, monkeypatch):
 
 def _run_session_end_with_push(tmp_path, monkeypatch, *, push, auto_push,
                                push_result="Pushed to origin/main successfully."):
-    """Drive session_end_api with git mocked out, returning (result, push_mock).
+    """Drive session_end_api against a real git repo, returning (result, push_mock).
 
-    subprocess.run is mocked so the commit step no-ops on a non-repo tmp dir;
-    git_tools.push is mocked so we assert the push DECISION and response wiring
-    without needing a real remote.
+    tmp_path is ``git init``-ed with a local identity so the commit step really
+    commits (``committed`` is only truthful now — the old ``subprocess.run``
+    mock never reached ``git_tools._run_git`` and the flag was True on a
+    non-repo). git_tools.push is mocked so we assert the push DECISION and
+    response wiring without needing a real remote.
     """
+    for args in (("init", "-q"), ("config", "user.name", "Palinode Tests"),
+                 ("config", "user.email", "tests@example.com")):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
     monkeypatch.setattr(config, "memory_dir", str(tmp_path))
     monkeypatch.setattr(config.git, "auto_commit", True)
     monkeypatch.setattr(config.git, "auto_push", auto_push)
 
     with mock.patch("palinode.api.server._generate_description", return_value="x"), \
-         mock.patch("palinode.api.server.subprocess.run"), \
          mock.patch("palinode.api.server.git_tools.push", return_value=push_result) as mpush:
         from palinode.api.server import session_end_api, SessionEndRequest
 

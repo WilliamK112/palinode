@@ -187,7 +187,7 @@ def save(
     decisions and blockers, use `palinode session-end` instead.
     """
     if file_path:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
     if not content:

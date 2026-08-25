@@ -37,7 +37,7 @@ def add_fact_ids_to_file(file_path: str) -> int:
 
     Returns the number of IDs added.
     """
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     frontmatter_block, body = parser.split_frontmatter(content)

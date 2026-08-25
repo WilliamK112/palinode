@@ -17,7 +17,7 @@ loop runs automatically:
 | Tier | What runs without you asking | Where |
 |------|------------------------------|-------|
 | **Native hooks** | Session starts primed with core memories, relevant memory recalled before each prompt, session captured on exit | Claude Code |
-| **Native plugin** | The same full loop, wired into the harness's own extension API | Pi, OpenClaw |
+| **Native plugin** | The same full loop, wired into the harness's own extension API | Pi, Cline, OpenClaw |
 | **MCP** | Explicit tools — the agent searches and saves when it decides to | Everything that speaks MCP |
 
 The tiers stack. Claude Code users typically run hooks **and** MCP: hooks make
@@ -30,11 +30,12 @@ memory ambient, MCP tools let the agent dig deeper on demand.
 | **Claude Code (CLI)** | Hooks + MCP | `palinode init` in your project — scaffolds everything below |
 | **Claude Desktop** | MCP | `palinode mcp-config --stdio` → paste into its config |
 | **Pi** | Native extension | [plugins/pi/README.md](../plugins/pi/README.md) — per-turn recall, priming, capture |
+| **Cline (CLI / SDK)** | Native plugin | [plugins/cline/README.md](../plugins/cline/README.md) — per-turn recall, priming, capture; `cline plugin install` |
 | **OpenClaw** | Native plugin + MCP | see the plugin's install guide ([plugin/INSTALL.md](../plugin/INSTALL.md)) |
 | **Cursor** | MCP + rules file | `palinode mcp-config --stdio`; `palinode init` also writes `.cursor/rules/palinode.md` |
 | **Windsurf** | MCP | `palinode mcp-config --stdio` (or `--http` for a remote server) |
 | **Zed** | MCP | `palinode mcp-config --http` |
-| **VS Code (Cline / Continue)** | MCP | [MCP-INSTALL-RECIPES.md](MCP-INSTALL-RECIPES.md) |
+| **VS Code (Cline / Continue)** | MCP | [MCP-INSTALL-RECIPES.md](MCP-INSTALL-RECIPES.md) — the Cline VS Code extension does not load `AgentPlugin`s yet |
 | **Codex CLI** | MCP + AGENTS.md | `~/.codex/config.toml`; `palinode init` appends a memory block to `AGENTS.md` |
 | **Antigravity** | MCP + AGENTS.md | native MCP menu; same `AGENTS.md` block |
 | **JetBrains (AI Assistant)** | MCP | [MCP-INSTALL-RECIPES.md](MCP-INSTALL-RECIPES.md) |
@@ -73,8 +74,10 @@ injected into the *system prompt* would do exactly that, every turn.
 
 Palinode's hooks inject into the **conversation** instead, after the cached
 prefix. The recall arrives fresh each turn; the expensive stable prefix stays
-cached. Any future Palinode integration for another harness follows the same
-rule.
+cached. Every native plugin follows the same rule — the Pi and Cline plugins
+share one core (`plugins/core`) whose only injection output is a message
+body, and each plugin's test suite pins that it never lands in the system
+prompt.
 
 ## Same contract everywhere
 

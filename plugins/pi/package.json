@@ -3,19 +3,20 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Palinode persistent memory for the Pi coding agent — per-turn recall, session priming, and capture, as a thin adapter over the Palinode REST API",
-  "main": "./dist/index.js",
+  "main": "./dist/pi/src/index.js",
   "files": [
     "dist",
     "README.md"
   ],
   "pi": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/pi/src/index.js"
     ]
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {

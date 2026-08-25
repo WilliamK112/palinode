@@ -63,10 +63,11 @@ in
       type = lib.types.str;
       default = "127.0.0.1";
       description = ''
-        Host address for the palinode API server.
-        Set to "0.0.0.0" for network-accessible deployments (e.g. Tailscale).
-        When set to anything other than "127.0.0.1", a startup warning is emitted
-        unless bindIntent is set to "public".
+        Host address for the palinode API server (uvicorn --host and
+        PALINODE_API_HOST). Set to "0.0.0.0" for network-accessible
+        deployments (e.g. Tailscale). A non-loopback host REFUSES TO START
+        without PALINODE_API_TOKEN in the service environment unless
+        allowUnauth is true.
       '';
     };
 
@@ -88,13 +89,24 @@ in
       description = "Ollama model name used for embedding generation.";
     };
 
+    allowUnauth = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let the API start token-less on a non-loopback apiHost
+        (PALINODE_API_ALLOW_UNAUTH=1). Only for deliberately token-less,
+        network-isolated hosts (Tailscale-only, firewalled); the API warns on
+        every start.
+      '';
+    };
+
     bindIntent = lib.mkOption {
       type = lib.types.nullOr (lib.types.enum [ "public" ]);
       default = null;
       description = ''
-        Set to "public" to suppress the 0.0.0.0-binding startup warning for
-        intentional network-exposed deployments (e.g. behind Tailscale).
-        Leave null to keep the warning when apiHost is "0.0.0.0".
+        Set to "public" to declare intentional public exposure and suppress
+        the non-loopback bind warning. The API still requires
+        PALINODE_API_TOKEN when this is set.
       '';
     };
 
@@ -131,8 +143,11 @@ in
 
       environment = {
         PALINODE_DIR = cfg.dataDir;
+        PALINODE_API_HOST = cfg.apiHost;
         OLLAMA_URL = cfg.ollamaUrl;
         EMBEDDING_MODEL = cfg.embeddingModel;
+      } // lib.optionalAttrs cfg.allowUnauth {
+        PALINODE_API_ALLOW_UNAUTH = "1";
       } // lib.optionalAttrs (cfg.bindIntent != null) {
         PALINODE_API_BIND_INTENT = cfg.bindIntent;
       };

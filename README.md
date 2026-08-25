@@ -32,6 +32,7 @@ Built by [Paul Kyle](https://github.com/Paul-Kyle) at [phasespace-labs](https://
 | **Antigravity IDE** | `.agent/skills/` | native 3-dot MCP menu |
 | **Codex CLI** | N/A (no skills) | `~/.codex/config.toml` |
 | **Pi** | N/A (native extension) | [plugins/pi/](plugins/pi/) — per-turn recall via lifecycle hooks |
+| **Cline CLI / SDK** | N/A (native plugin) | [plugins/cline/](plugins/cline/) — per-turn recall via `AgentPlugin` hooks |
 
 All platforms share the same MCP server — install once on your server, connect from any IDE. **[docs/HARNESSES.md](docs/HARNESSES.md) is the cross-harness map**: what each harness gets (native hooks vs. plugin vs. MCP), how the tiers stack, and where to start. Per-client config snippets: [docs/MCP-SETUP.md](docs/MCP-SETUP.md) and [docs/MCP-INSTALL-RECIPES.md](docs/MCP-INSTALL-RECIPES.md).
 
@@ -76,7 +77,7 @@ Set up once on a server. Connect from any machine, any IDE, any agent framework.
 }
 ```
 
-That's the entire client config. Works with Claude Code, Claude Desktop, Cursor, Windsurf, Zed, and VS Code (Continue/Cline). `palinode-mcp-sse` serves **streamable-HTTP** at `/mcp/` — the binary name is historical; use `"type": "http"`, not `"type": "sse"`. Always include the trailing slash in the URL. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) for editor-specific install recipes.
+That's the entire client config. Works with Claude Code, Claude Desktop, Cursor, Windsurf, Zed, and VS Code (Continue/Cline). `palinode-mcp-http` serves **streamable-HTTP** at `/mcp/` — use `"type": "http"`, not `"type": "sse"`. Always include the trailing slash in the URL. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) for editor-specific install recipes.
 
 ---
 
@@ -240,7 +241,7 @@ palinode archive insights/stale-finding.md --reason "superseded by the re-run" \
 
 ## Tools
 
-30 tools available through every interface:
+29 tools available through every interface:
 
 | Tool | What It Does |
 |------|-------------|
@@ -273,7 +274,6 @@ palinode archive insights/stale-finding.md --reason "superseded by the re-run" \
 | `cluster_neighbors` | Find top-K semantically related files NOT already wiki-linked — surface implicit relationships for cross-link proposals |
 | `topic_coverage` | Given a short topic phrase, return whether any existing wiki page already covers it (binary `covered` / `best_match` / `similarity`) |
 | `depends` | Dependency tree (or unblocked-items list) from `depends_on` / `blocks` / `parallel_with` frontmatter on ProjectSnapshots |
-| `timeline` | _Deprecated — use `history` with `detail='full'`._ Commit-level evolution of a file with per-commit diffs |
 
 Every tool is accessible as `palinode_<name>` via MCP, `palinode <name>` via CLI, or `POST/GET /<name>` via the REST API.
 
@@ -373,7 +373,7 @@ consolidation:
 
 All models are swappable. Any Ollama embedding model, any OpenAI-compatible chat endpoint. See [palinode.config.yaml.example](palinode.config.yaml.example) for the full reference.
 
-When exposing the API beyond loopback, set `PALINODE_API_TOKEN` — see [SECURITY.md](SECURITY.md#api-authentication) for the bearer-token auth model and the public-bind startup gate.
+When exposing the API beyond loopback (`PALINODE_API_HOST` other than `127.0.0.1`), set `PALINODE_API_TOKEN` — the server refuses to start unauthenticated on a non-loopback bind unless you opt out explicitly with `PALINODE_API_ALLOW_UNAUTH=1`. See [SECURITY.md](SECURITY.md#api-authentication) for the bearer-token auth model and the bind gate.
 
 ---
 

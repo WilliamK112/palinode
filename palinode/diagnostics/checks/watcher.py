@@ -53,6 +53,8 @@ def _find_watcher_pid() -> int | None:
             ["ps", "-ef"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -77,6 +79,8 @@ def _systemctl_is_active(service: str) -> bool:
             ["systemctl", "--user", "is-active", service],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         return result.returncode == 0 and result.stdout.strip() == "active"

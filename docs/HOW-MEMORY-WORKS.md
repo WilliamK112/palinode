@@ -377,9 +377,9 @@ Palinode memory files optionally carry three fields from the [IETF Knowledge Uni
 | `ku_version` | string (`"1.0"`) | Marks the file as KU-aligned at this draft revision. |
 | `confidence` | float (0.0–1.0) | Author's or system's confidence in the memory content. Surfaced as a top-level key in search results. |
 | `priority` | integer (1–5) | Human-assigned recall priority. Missing means normal (`3`). It adds only a small bounded ranking nudge and is separate from the system-assigned ADR-007 `importance` decay float. |
-| `lifecycle` | `"active"` \| `"archived"` \| `"deprecated"` | Mirrors Palinode's existing `status` field in KU vocabulary. If `lifecycle` is absent, the parser falls back to `status` when the value maps; otherwise defaults to `"active"`. |
+| `lifecycle` | `"active"` \| `"archived"` \| `"deprecated"` | Mirrors Palinode's existing `status` field in KU vocabulary. When auto-populated it copies `status` if that maps; otherwise `"active"`. |
 
-**Auto-population:** Set `ku_compat: enabled: true` in `palinode.config.yaml` to automatically write `ku_version` and `lifecycle` on every save.
+**Auto-population:** Set `ku_compat: enabled: true` in `palinode.config.yaml` to automatically write `ku_version` and `lifecycle` on every save. These fields are written for interoperability only — Palinode itself never reads them back.
 
 ## 7d. Source Citation Anchors (`quote_hash`)
 
@@ -502,7 +502,7 @@ Palinode has already absorbed memories from two external systems:
 | **Mem0** (Qdrant) | 4,637 → 3,645 (after dedup + skip) | Qwen 72B | ✅ Done |
 | **QC MCP** (PostgreSQL) | 14,000+ contexts | TBD | Planned |
 
-Backfilled memories enter your Palinode memory repository with `source: "mem0-backfill"` in their frontmatter. As consolidation updates them, each change gets its own commit and an audit trail builds over time.
+Backfilled memories enter your Palinode memory repository with `source: "mem0-backfill"` in their frontmatter. As consolidation updates them, each change gets its own commit and an audit trail builds over time. (The one-off Mem0 importer itself — `palinode migrate-mem0` / `POST /migrate/mem0` — was removed in v0.14.0; the provenance convention stays.)
 
 ### Why This Matters
 

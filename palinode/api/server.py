@@ -18,17 +18,22 @@ from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from palinode.core import store, git_tools  # noqa: F401 — git_tools re-export: tests patch `server.git_tools.*`
 from palinode.core.auth import (
     API_EXEMPT_PATHS as _API_EXEMPT_PATHS,
     BearerAuthMiddleware as _BearerAuthMiddleware,
+    allow_unauth_opt_out as _allow_unauth_opt_out,
+    is_loopback_host as _is_loopback_host,
     load_api_token as _load_api_token,
     validate_auth_config as _core_validate_auth_config,
+    validate_bind_auth as _core_validate_bind_auth,
 )
 from palinode.core.config import config
+from palinode.core.embedder import EmbeddingUnavailable
 
 # Re-exported so the health/status routers can reach the client factory via
 # `palinode.api.server.get_ollama_client` (late `_srv.get_ollama_client()`
@@ -67,6 +72,7 @@ from palinode.api.rate_limit import (  # noqa: F401
 )
 from palinode.api.memory_write import (  # noqa: F401
     _CATEGORY_TO_ENTITY_PREFIX,
+    _MEMORY_CATEGORY_DIRS,
     _SAFE_SLUG_RE,
     _TYPE_TO_CATEGORY,
     _WIKI_FOOTER_MARKER,
@@ -80,7 +86,6 @@ from palinode.api.search_helpers import (  # noqa: F401
     _check_session_end_dedup,
     _compute_effective_date_after,
     _cosine,
-    _cosine_similarity,
     _embedding_candidates,
     _enrich_with_snippets,
     _filter_min_priority,
@@ -292,6 +297,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Palinode API", lifespan=lifespan)
 
+
+@app.exception_handler(EmbeddingUnavailable)
+async def _embedding_unavailable_handler(
+    request: Request, exc: EmbeddingUnavailable
+) -> JSONResponse:
+    """Map an embedder outage to a typed 503 — the single mechanism for it.
+
+    The exception message already carries backend, model, text length, cause
+    and the ``palinode doctor`` recovery hint, and never raw content, so it is
+    safe to hand to the client verbatim. One WARNING line, no traceback: the
+    embedder logged the underlying cause at the boundary. Routes that wrap
+    their body in ``except Exception -> _safe_500`` re-raise this class first
+    so it reaches here instead of collapsing into a generic 500.
+    """
+    logger.warning(
+        "embedding unavailable op=%s outcome=embedding_unavailable",
+        request.url.path,
+    )
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 # Reindex concurrency guard and auto_summary observability state
 # live in palinode/api/_util.py so the handlers that read them — now in
 # routers/maintenance.py and routers/health.py — share one source of truth.
@@ -354,12 +379,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Bind-intent flag: must be resolved before _validate_auth_config below
-# can reference it. The matching unsafe-bind warning still lives further
-# down the file; this assignment is the single source of truth and the
-# warning block reuses the value.
+# Bind host and intent flags: resolved before _validate_auth_config below
+# can reference them. The matching unsafe-bind warning still lives further
+# down the file; these assignments are the single source of truth and the
+# warning block reuses the values.
 _api_host = os.environ.get("PALINODE_API_HOST", config.services.api.host)
 _bind_intent_public = os.environ.get("PALINODE_API_BIND_INTENT", "").lower() == "public"
+_allow_unauth = _allow_unauth_opt_out()
 
 # ── Bearer token auth (Tier A finding — closes the last "high" from the
 # marketplace security scan). Default-off to preserve zero-friction local
@@ -367,8 +393,10 @@ _bind_intent_public = os.environ.get("PALINODE_API_BIND_INTENT", "").lower() == 
 # When a token IS configured (PALINODE_API_TOKEN or PALINODE_API_TOKEN_FILE),
 # every request except the health endpoints must carry a matching
 # `Authorization: Bearer <token>` header. The startup gate further refuses
-# to launch when PALINODE_API_BIND_INTENT=public is set without a token, so
-# operators can't accidentally expose an unauthenticated API to the network.
+# to launch when the resolved bind host is non-loopback and no token is set
+# — unless PALINODE_API_ALLOW_UNAUTH=1 opts out explicitly — and
+# when PALINODE_API_BIND_INTENT=public is set without a token, so operators
+# can't accidentally expose an unauthenticated API to the network.
 #
 # _BearerAuthMiddleware, _load_api_token, and the core gate logic live in
 # palinode.core.auth and are imported above; the MCP HTTP server reuses them.
@@ -377,7 +405,7 @@ _api_token: str | None = _load_api_token()
 
 
 def _validate_auth_config(token: str | None) -> None:
-    """Refuse to start when binding public without a token.
+    """Refuse to start when binding beyond loopback without a token.
 
     Fires at MODULE IMPORT (see call site below the function), so the
     SystemExit propagates out of any startup path — including ``uvicorn``
@@ -385,10 +413,12 @@ def _validate_auth_config(token: str | None) -> None:
     systemd ExecStart pattern), which never calls ``main()``. A second
     call in ``main()`` is kept for defence in depth.
 
-    Thin wrapper around ``palinode.core.auth.validate_auth_config``; kept
-    here so the module-level gate call and the existing test suite continue
-    to work unchanged.
+    Two gates from ``palinode.core.auth``: the bind gate keys on the
+    resolved ``PALINODE_API_HOST`` (non-loopback + no token → refuse unless
+    ``PALINODE_API_ALLOW_UNAUTH=1``), and the intent gate keeps
+    ``PALINODE_API_BIND_INTENT=public`` meaning "token required".
     """
+    _core_validate_bind_auth(_api_host, token, allow_unauth=_allow_unauth)
     _core_validate_auth_config(_bind_intent_public, token)
 
 
@@ -519,31 +549,32 @@ class _BodyTooLargeError(Exception):
 
 app.add_middleware(_BodySizeLimitMiddleware, max_bytes=_MAX_REQUEST_BYTES)
 
-# Startup warning for unsafe binding.
-# Set PALINODE_API_BIND_INTENT=public to suppress the warning for intentional
-# network-exposed deployments (e.g., Tailscale). Without the env var, the
-# warning fires on every 0.0.0.0 start.
-# (_api_host and _bind_intent_public are resolved earlier so the bearer-auth
-# startup gate can reference them; this block reuses the same values.)
-# B104 rationale - "0.0.0.0" here is a literal compared to the resolved host;
-# the actual bind decision is gated on PALINODE_API_BIND_INTENT=public
-if _api_host == "0.0.0.0" and not _bind_intent_public:  # nosec B104
+# Startup log for a non-loopback bind. The hard refusal (non-loopback + no
+# token, no PALINODE_API_ALLOW_UNAUTH=1) already fired in
+# _validate_auth_config above, so reaching here token-less means the
+# operator opted out explicitly — warn loudly on every start regardless.
+# (_api_host, _bind_intent_public and _api_token are resolved earlier so
+# the startup gate can reference them; this block reuses the same values.)
+if not _is_loopback_host(_api_host):
     if _api_token is None:
         logger.warning(
-            "API binding to 0.0.0.0 — accessible from any network. "
-            "No authentication is configured. Set PALINODE_API_HOST=127.0.0.1 for local-only access. "
-            "Set PALINODE_API_BIND_INTENT=public to suppress this warning for intentional "
-            "network-exposed deployments (e.g., Tailscale)."
+            "API binding to %s — accessible from any network. "
+            "No authentication is configured (PALINODE_API_ALLOW_UNAUTH=1 set). "
+            "Set PALINODE_API_HOST=127.0.0.1 for local-only access, or set "
+            "PALINODE_API_TOKEN to require bearer auth.",
+            _api_host,
+        )
+    elif _bind_intent_public:
+        logger.debug(
+            "API binding to %s — PALINODE_API_BIND_INTENT=public set with "
+            "PALINODE_API_TOKEN; bearer auth required.",
+            _api_host,
         )
     else:
         logger.info(
-            "API binding to 0.0.0.0 with PALINODE_API_TOKEN configured — bearer auth required."
+            "API binding to %s with PALINODE_API_TOKEN configured — bearer auth required.",
+            _api_host,
         )
-elif _api_host == "0.0.0.0" and _bind_intent_public:  # nosec B104
-    logger.debug(
-        "API binding to 0.0.0.0 — PALINODE_API_BIND_INTENT=public set; "
-        "binding warning suppressed."
-    )
 
 # ── Enrichment re-exports ─────────────────────────────────────────────
 # Auto-summary/description logic lives in palinode/api/enrichment.py. Re-exported
@@ -564,17 +595,6 @@ from palinode.api.enrichment import (  # noqa: E402,F401
     _inject_summary,
     _wrap_user_content_for_llm,
 )
-
-#: The memory-category directories `save_api` writes to. A file outside these
-#: (a `daily/` journal, `archive/`, `specs/` incl. `specs/prompts/`, or a
-#: top-level doc like README.md / PROGRAM.md) is structural / non-memory: the
-#: description backfill regenerates a description for it every run but
-#: `_inject_description` never persists one (no memory frontmatter to land it
-#: in), so counting it as "pending" loops the backfill forever.
-_MEMORY_CATEGORY_DIRS: frozenset[str] = frozenset(_TYPE_TO_CATEGORY.values())
-
-
-
 
 # ── Register sub-routers (routes moved from this module) ─────────────────────
 from palinode.api.routers.consolidation import router as _consolidation_router  # noqa: E402
@@ -627,7 +647,7 @@ from palinode.api.routers.consolidation import (  # noqa: E402,F401
     archive_expired_api, archive_api, split_layers_api, bootstrap_fact_ids_api,
 )
 from palinode.api.routers.git_history import (  # noqa: E402,F401
-    history_api, timeline_api, diff_api, blame_api, rollback_api,
+    history_api, diff_api, blame_api, rollback_api,
     push_api, git_stats_api,
 )
 from palinode.api.routers.health import (  # noqa: E402,F401
@@ -638,7 +658,7 @@ from palinode.api.routers.maintenance import (  # noqa: E402,F401
     MigrateOpenClawRequest, ingest_api, ingest_url_api,
     rebuild_fts_api, reindex_api, entity_api, entities_list_api,
     lint_api, migrate_openclaw_api, depends_unblocked_api,
-    depends_api, migrate_mem0_api,
+    depends_api,
 )
 from palinode.api.routers.session import (  # noqa: E402,F401
     SessionEndRequest, session_end_api, list_prompts_api,
@@ -648,9 +668,9 @@ from palinode.api.routers.session import (  # noqa: E402,F401
 
 def main() -> None:
     """Invokes Uvicorn CLI runner."""
-    # Refuse to start if PALINODE_API_BIND_INTENT=public is set but no
-    # bearer token is configured. This is the loud-fail counterpart to the
-    # bearer-auth middleware's silent-no-op behaviour for local dev.
+    # Refuse to start on a non-loopback bind (or PALINODE_API_BIND_INTENT=
+    # public) without a bearer token. This is the loud-fail counterpart to
+    # the bearer-auth middleware's silent-no-op behaviour for local dev.
     _validate_auth_config(_api_token)
     import uvicorn
     uvicorn.run("palinode.api.server:app", host=config.services.api.host, port=config.services.api.port)

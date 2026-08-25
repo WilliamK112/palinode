@@ -8,13 +8,18 @@ Public names
 ------------
 load_api_token()        — read PALINODE_API_TOKEN / PALINODE_API_TOKEN_FILE
 BearerAuthMiddleware    — ASGI middleware; no-op when token is None
-validate_auth_config()  — SystemExit gate for public-bind + no-token
+validate_auth_config()  — SystemExit gate for BIND_INTENT=public + no-token
+validate_bind_auth()    — SystemExit gate for non-loopback bind + no-token
+is_loopback_host()      — classify a bind host as loopback or not
+allow_unauth_opt_out()  — read the PALINODE_API_ALLOW_UNAUTH opt-out (one knob
+                          per deployment; the MCP HTTP transport shares it)
 API_EXEMPT_PATHS        — paths always allowed on the API server
 MCP_EXEMPT_PATHS        — paths always allowed on the MCP HTTP server
 """
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
 import os
 from pathlib import Path
@@ -165,3 +170,85 @@ def validate_auth_config(
             "Then set:\n"
             "  export PALINODE_API_TOKEN=<value>\n"
         )
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return ``True`` when ``host`` can only be reached from this machine.
+
+    ``localhost`` and any address in ``127.0.0.0/8`` / ``::1`` are loopback.
+    Everything else — ``0.0.0.0``, ``::``, a LAN or Tailscale address, a
+    hostname — is treated as network-reachable. Unparseable input is
+    non-loopback: the gate fails closed.
+    """
+    host = host.strip().strip("[]")
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def allow_unauth_opt_out() -> bool:
+    """Return ``True`` when ``PALINODE_API_ALLOW_UNAUTH`` is set truthy.
+
+    The one explicit opt-out for serving token-less on a non-loopback bind.
+    Both the API server and the MCP HTTP transport read this same variable —
+    one knob per deployment, no per-surface twin.
+    """
+    return os.environ.get("PALINODE_API_ALLOW_UNAUTH", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+
+
+def validate_bind_auth(
+    host: str,
+    token: str | None,
+    *,
+    allow_unauth: bool,
+    host_var: str = "PALINODE_API_HOST",
+    allow_unauth_var: str = "PALINODE_API_ALLOW_UNAUTH",
+    exposure: str = "an unauthenticated API",
+    detail: str = "",
+) -> None:
+    """Refuse to serve unauthenticated on a non-loopback bind.
+
+    Keys on the *resolved bind host*, not on any stated intent: a server
+    that would listen on a network-reachable address without a bearer
+    token exits with ``SystemExit`` unless the operator has explicitly
+    opted out via ``allow_unauth`` (``PALINODE_API_ALLOW_UNAUTH=1``).
+
+    Parameters
+    ----------
+    host:
+        The address the server will bind.
+    token:
+        The resolved bearer token, or ``None`` if unconfigured.
+    allow_unauth:
+        ``True`` when the operator set the explicit opt-out env var.
+    host_var, allow_unauth_var:
+        Names of the env vars named in the error message.
+    exposure:
+        What the refusal would otherwise have served, for the message —
+        the MCP HTTP transport names its tool surface here.
+    detail:
+        Optional sentence appended to the first paragraph of the message
+        (the MCP HTTP transport says here that it has no token of its own).
+    """
+    if token is not None or allow_unauth or is_loopback_host(host):
+        return
+    raise SystemExit(
+        f"REFUSING TO START: {host_var}={host} is not a loopback address and no "
+        "PALINODE_API_TOKEN (or PALINODE_API_TOKEN_FILE) is set — this would "
+        f"serve {exposure} to the network."
+        + (f" {detail}" if detail else "")
+        + "\n\n"
+        "Either bind loopback-only:\n"
+        f"  export {host_var}=127.0.0.1\n\n"
+        "or generate a token:\n"
+        "  python -c 'import secrets; print(secrets.token_urlsafe(32))'\n"
+        "  export PALINODE_API_TOKEN=<value>\n\n"
+        "or, for a deliberately token-less network-isolated host (e.g. "
+        "Tailscale-only), opt out explicitly:\n"
+        f"  export {allow_unauth_var}=1\n"
+    )

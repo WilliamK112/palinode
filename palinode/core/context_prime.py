@@ -91,7 +91,7 @@ def _scan_memories(base_dir: str) -> list[dict[str, Any]]:
             continue
         try:
             with open(filepath, encoding="utf-8") as f:
-                meta, _ = parser.parse_markdown(f.read())
+                meta, _ = parser.parse_frontmatter(f.read())
         except (OSError, ValueError):
             continue
         if not isinstance(meta, dict):

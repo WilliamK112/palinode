@@ -27,9 +27,6 @@ from typing import Any
 
 logger = logging.getLogger("palinode.core.typed_links")
 
-#: Frontmatter keys that hold a list of typed memory refs.
-TYPED_LINK_FIELDS: tuple[str, ...] = ("contradicts", "backed_by")
-
 # A ref is the path-relative identity of a memory: ``category/slug`` (optionally
 # with nested subdirs or a trailing ``.md``). Reject traversal, absolute paths,
 # and whitespace/control characters so a malformed ref can never escape the

@@ -1,0 +1,17 @@
+{
+  "name": "palinode-plugin-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared TypeScript core for Palinode's harness plugins — fail-open REST client, recall→injection formatting, config, capture-floor payload. Compiled into each plugin; not published.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
+  }
+}

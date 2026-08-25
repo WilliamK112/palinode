@@ -24,18 +24,23 @@
 #   OLLAMA_URL          — Ollama API base URL          (default: http://localhost:11434)
 #   EMBEDDING_MODEL     — model name for embeddings   (default: bge-m3)
 #   API_PORT            — port for palinode-api        (default: 6340)
-#   MCP_PORT            — port for palinode-mcp-sse    (default: 6341)
+#   MCP_PORT            — port for palinode-mcp-http   (default: 6341)
 #   WATCHER_UNIT_NAME   — installed name of the watcher/indexer unit
 #                         (default: palinode-watcher). Set this when an existing
 #                         deployment named the watcher unit differently (e.g.
 #                         palinode-indexer) so re-running stays idempotent against
 #                         the live unit instead of creating a duplicate.
-#   PALINODE_API_BIND_INTENT — bind-intent for the API's 0.0.0.0 bind (default: empty).
-#                         Leave empty for a token-less, network-isolated host: the
-#                         API starts and only logs the 0.0.0.0 warning. Set to
-#                         "public" to suppress the warning — but then the app
-#                         REQUIRES PALINODE_API_TOKEN and refuses to start without
-#                         one, so only set it alongside a token (#252).
+#   PALINODE_API_ALLOW_UNAUTH — opt-out for the non-loopback bind gate shared by
+#                         the API and the MCP HTTP transport (default: empty).
+#                         Both units bind 0.0.0.0 and REFUSE TO START without
+#                         PALINODE_API_TOKEN (add it via a drop-in: `systemctl
+#                         edit palinode-api` / `... palinode-mcp`). Set to "1"
+#                         for a token-less, network-isolated host (Tailscale-only,
+#                         firewalled): both start and warn on every start.
+#   PALINODE_API_BIND_INTENT — set to "public" to declare intentional public
+#                         exposure and suppress the bind warning; the app then
+#                         REQUIRES PALINODE_API_TOKEN even with ALLOW_UNAUTH=1, so
+#                         only set it alongside a token (#252). Default: empty.
 #
 # Flags:
 #   --system    Install system-scope units in /etc/systemd/system (requires root).
@@ -95,9 +100,12 @@ export OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 export EMBEDDING_MODEL="${EMBEDDING_MODEL:-bge-m3}"
 export API_PORT="${API_PORT:-6340}"
 export MCP_PORT="${MCP_PORT:-6341}"
-# Empty by default: a value-based check in the app treats "" as "not public", so
-# the API binds 0.0.0.0 and starts WITHOUT requiring a token (only logs a warning).
-# Set to "public" (with a token) to suppress the warning. Exported for envsubst.
+# Both empty by default and exported for envsubst. The API and MCP HTTP units
+# bind 0.0.0.0, and the bind gate refuses to start token-less on a non-loopback
+# bind unless PALINODE_API_ALLOW_UNAUTH=1 (one knob, both units).
+# PALINODE_API_BIND_INTENT="" is treated as "not public"; "public" suppresses
+# the bind warning but requires a token.
+export PALINODE_API_ALLOW_UNAUTH="${PALINODE_API_ALLOW_UNAUTH:-}"
 export PALINODE_API_BIND_INTENT="${PALINODE_API_BIND_INTENT:-}"
 WATCHER_UNIT_NAME="${WATCHER_UNIT_NAME:-palinode-watcher}"
 
@@ -137,7 +145,8 @@ info "  OLLAMA_URL        = $OLLAMA_URL"
 info "  EMBEDDING_MODEL   = $EMBEDDING_MODEL"
 info "  API_PORT          = $API_PORT"
 info "  MCP_PORT          = $MCP_PORT"
-info "  API_BIND_INTENT   = ${PALINODE_API_BIND_INTENT:-(empty — token-less, warning only)}"
+info "  API_ALLOW_UNAUTH  = ${PALINODE_API_ALLOW_UNAUTH:-(empty — token required to start)}"
+info "  API_BIND_INTENT   = ${PALINODE_API_BIND_INTENT:-(empty — not public)}"
 info "  WATCHER_UNIT_NAME = $WATCHER_UNIT_NAME"
 info "  scope             = $SCOPE (WantedBy=$SYSTEMD_WANTED_BY)"
 info "  target unit dir   = $UNIT_DIR"
@@ -168,6 +177,12 @@ done
 
 "${SYSTEMCTL[@]}" daemon-reload
 info "daemon-reload complete"
+
+if [[ -z "$PALINODE_API_ALLOW_UNAUTH" ]]; then
+    info "NOTE: palinode-api and palinode-mcp bind 0.0.0.0 and will REFUSE TO START without a token."
+    info "      Add PALINODE_API_TOKEN via a drop-in (${SYSTEMCTL[*]} edit palinode-api, and palinode-mcp),"
+    info "      or re-run with PALINODE_API_ALLOW_UNAUTH=1 for a token-less, network-isolated host."
+fi
 
 # ── optional enable + start ───────────────────────────────────────────────────
 

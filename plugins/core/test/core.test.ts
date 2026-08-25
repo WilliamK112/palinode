@@ -5,12 +5,15 @@ import {
   buildSessionCapture,
   configFromEnv,
   postSessionCapture,
+  PROFILES,
+  userEntries,
   type FetchFn,
   type PalinodeConfig,
-} from "../src/core.js";
+} from "../src/index.js";
 
 const CFG: PalinodeConfig = {
   apiUrl: "http://test:6340",
+  recallProfile: "coding",
   maxResults: 3,
   threshold: 0.5,
   triggersOn: true,
@@ -21,6 +24,8 @@ const CFG: PalinodeConfig = {
   coreMaxChars: 4000,
   minMessages: 3,
 };
+
+const ORIGIN = { project: "myproj", source: "pi-extension", harness: "pi", trigger: "session_shutdown" };
 
 const PROMPT = "how did we decide to handle the deploy rollback for the api?";
 
@@ -38,6 +43,25 @@ function stubFetch(routes: Record<string, unknown>, calls: Array<{ url: string; 
 const failingFetch: FetchFn = (async () => {
   throw new Error("connection refused");
 }) as FetchFn;
+
+describe("the invariant the core owns", () => {
+  it("exports nothing that produces a system prompt — only message bodies and payloads", async () => {
+    const mod = await import("../src/index.js");
+    for (const [name, value] of Object.entries(mod)) {
+      if (typeof value === "function") {
+        expect(name.toLowerCase(), `export ${name}`).not.toContain("system");
+      }
+    }
+    const ctx = await buildRecallContext(
+      PROMPT,
+      CFG,
+      stubFetch({ "/check-triggers": [], "/search": { results: [{ rel_path: "a.md", snippet: "x" }] } }),
+    );
+    // A string, not a request-shaped object: the binding decides which
+    // message slot it lands in, and the bindings' suites pin "message".
+    expect(typeof ctx).toBe("string");
+  });
+});
 
 describe("buildRecallContext", () => {
   it("renders search hits as bounded snippet lines", async () => {
@@ -148,6 +172,19 @@ describe("auth", () => {
     await buildRecallContext(PROMPT, { ...CFG, maxResults: 0 }, fetchFn);
     expect(seenAuth).toBeUndefined();
   });
+
+  it("carries the bearer on every endpoint, including the capture POST", async () => {
+    const auths: string[] = [];
+    const fetchFn = (async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+      auths.push(init?.headers?.["Authorization"] ?? "");
+      return new Response("{}", { status: 200 });
+    }) as FetchFn;
+    const cfg = { ...CFG, token: "t0k" };
+    await buildCoreDigest(cfg, fetchFn, "/tmp/p", "s");
+    await postSessionCapture({ summary: "s", project: "p", source: "x", harness: "h", trigger: "t", decisions: [], blockers: [] }, cfg, fetchFn);
+    expect(auths.length).toBeGreaterThan(0);
+    expect(auths.every((a) => a === "Bearer t0k")).toBe(true);
+  });
 });
 
 describe("buildCoreDigest", () => {
@@ -183,27 +220,64 @@ describe("buildCoreDigest", () => {
 });
 
 describe("session capture", () => {
-  const entries = (n: number) =>
+  const piEntries = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
       type: "message",
       message: { role: "user", content: `prompt ${i}: fix the rollback path` },
     }));
 
-  it("derives the floor payload from entries", () => {
-    const payload = buildSessionCapture(entries(4), CFG, "myproj");
+  const clineEntries = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `m${i}`,
+      role: "user",
+      content: [{ type: "text", text: `prompt ${i}: fix the rollback path` }],
+    }));
+
+  it("derives the floor payload from Pi-shaped entries", () => {
+    const payload = buildSessionCapture(piEntries(4), CFG, ORIGIN);
     expect(payload).not.toBeNull();
     expect(payload!.summary).toContain("4 messages");
-    expect(payload!.summary).toContain("prompt 0: fix the rollback path");
+    expect(payload!.summary).toContain("Topic: prompt 0: fix the rollback path");
+    expect(payload!.summary).toContain("Latest: prompt 3: fix the rollback path");
     expect(payload!.source).toBe("pi-extension");
+    expect(payload!.harness).toBe("pi");
+    expect(payload!.trigger).toBe("session_shutdown");
     expect(payload!.project).toBe("myproj");
+    expect(payload!).not.toHaveProperty("session_id");
+  });
+
+  it("reads Cline-shaped entries (top-level role, content parts) the same way", () => {
+    const payload = buildSessionCapture(clineEntries(3), CFG, {
+      ...ORIGIN,
+      source: "cline-plugin",
+      harness: "cline",
+      trigger: "run_end",
+      sessionId: "sess-1",
+      cwd: "/tmp/proj",
+    });
+    expect(payload).not.toBeNull();
+    expect(payload!.summary).toContain("cline run_end, 3 messages");
+    expect(payload!.session_id).toBe("sess-1");
+    expect(payload!.cwd).toBe("/tmp/proj");
+  });
+
+  it("counts only user entries that carry text", () => {
+    const mixed = [
+      ...clineEntries(2),
+      { id: "a", role: "assistant", content: [{ type: "text", text: "sure" }] },
+      { id: "t", role: "tool", content: [{ type: "tool-result", toolName: "x", output: "y" }] },
+      { id: "img", role: "user", content: [{ type: "image", image: "..." }] },
+    ];
+    expect(userEntries(mixed)).toHaveLength(2);
+    expect(buildSessionCapture(mixed, CFG, ORIGIN)).toBeNull();
   });
 
   it("skips trivial sessions below the message floor", () => {
-    expect(buildSessionCapture(entries(2), CFG, "p")).toBeNull();
+    expect(buildSessionCapture(piEntries(2), CFG, ORIGIN)).toBeNull();
   });
 
   it("posts fail-open", async () => {
-    const payload = buildSessionCapture(entries(3), CFG, "p")!;
+    const payload = buildSessionCapture(piEntries(3), CFG, ORIGIN)!;
     expect(await postSessionCapture(payload, CFG, failingFetch)).toBe(false);
     const okFetch = stubFetch({ "/session-end": { status: "ok" } });
     expect(await postSessionCapture(payload, CFG, okFetch)).toBe(true);
@@ -228,6 +302,7 @@ describe("configFromEnv", () => {
     expect(cfg).toEqual({
       apiUrl: "http://remote:6340",
       token: "t",
+      recallProfile: "coding",
       maxResults: 5,
       threshold: 0.8,
       triggersOn: false,
@@ -243,6 +318,7 @@ describe("configFromEnv", () => {
   it("defaults match the Claude Code hook defaults", () => {
     const cfg = configFromEnv({});
     expect(cfg.apiUrl).toBe("http://localhost:6340");
+    expect(cfg.recallProfile).toBe("coding");
     expect(cfg.maxResults).toBe(3);
     // Calibrated default: 0.5 = 98% measured recall; 0.7+ was near-dead.
     expect(cfg.threshold).toBe(0.5);
@@ -250,6 +326,44 @@ describe("configFromEnv", () => {
     expect(cfg.minChars).toBe(12);
     expect(cfg.maxChars).toBe(3000);
     expect(cfg.timeoutMs).toBe(4000);
+    expect(cfg.coreMaxFiles).toBe(10);
     expect(cfg.minMessages).toBe(3);
+  });
+
+  it("applies a recall profile's channel knobs, with explicit env winning over the profile", () => {
+    const mon = configFromEnv({ PALINODE_HOOK_RECALL_PROFILE: "monitoring" });
+    expect(mon.recallProfile).toBe("monitoring");
+    expect(mon).toMatchObject(PROFILES.monitoring);
+
+    const tuned = configFromEnv({
+      PALINODE_HOOK_RECALL_PROFILE: "monitoring",
+      PALINODE_HOOK_RECALL_MAX_RESULTS: "2",
+    });
+    expect(tuned.maxResults).toBe(2);
+    expect(tuned.triggersOn).toBe(true);
+    expect(tuned.coreMaxFiles).toBe(0);
+
+    expect(configFromEnv({ PALINODE_HOOK_RECALL_PROFILE: "off" })).toMatchObject({
+      maxResults: 0,
+      triggersOn: false,
+      coreMaxFiles: 0,
+    });
+  });
+
+  it("falls back to coding on an unknown profile name", () => {
+    expect(configFromEnv({ PALINODE_HOOK_RECALL_PROFILE: "bogus" }).recallProfile).toBe("coding");
+  });
+
+  it("lets a harness's own config override the env, and undefined overrides are ignored", () => {
+    const cfg = configFromEnv(
+      { PALINODE_API_URL: "http://env:6340", PALINODE_HOOK_RECALL_THRESHOLD: "0.6" },
+      { apiUrl: "http://override:6340", token: "abc", threshold: undefined, recallProfile: "writing" },
+    );
+    expect(cfg.apiUrl).toBe("http://override:6340");
+    expect(cfg.token).toBe("abc");
+    expect(cfg.threshold).toBe(0.6);
+    expect(cfg.recallProfile).toBe("writing");
+    expect(cfg.maxResults).toBe(0);
+    expect(cfg.coreMaxFiles).toBe(10);
   });
 });

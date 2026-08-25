@@ -26,6 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 EMBED_DIM = 1024
 
@@ -66,7 +67,7 @@ def api_tc(isolated_env):
 
 
 @pytest.fixture()
-def dispatch(api_tc):
+def dispatch(api_tc, monkeypatch):
     """Invoke ``_dispatch_tool`` in-process, routed through the TestClient."""
 
     def _mock_transport_handler(request: httpx.Request) -> httpx.Response:
@@ -87,19 +88,15 @@ def dispatch(api_tc):
             content=tc_resp.content,
         )
 
+    # The dispatcher's shared ``httpx.AsyncClient`` is built over
+    # ``mcp._http_transport`` when set — the seam that replaces the old
+    # wholesale ``httpx.AsyncClient`` class patch.
+    from palinode import mcp
+
+    monkeypatch.setattr(mcp, "_http_transport", httpx.MockTransport(_mock_transport_handler))
+
     async def _call(name: str, arguments: dict) -> list:
-        from palinode.mcp import _dispatch_tool
-
-        class _InProcessAsyncClient(httpx.AsyncClient):
-            def __init__(self, **kwargs):
-                kwargs.pop("transport", None)
-                super().__init__(
-                    transport=httpx.MockTransport(_mock_transport_handler),
-                    **kwargs,
-                )
-
-        with mock.patch("palinode.mcp.httpx.AsyncClient", _InProcessAsyncClient):
-            return await _dispatch_tool(name, arguments)
+        return await mcp._dispatch_tool(name, arguments)
 
     return _call
 
@@ -109,7 +106,6 @@ def _run(coro):
 
 
 def _index_file(fp: str, content: str, category: str) -> None:
-    from palinode.core import store
     chunks = [{
         "id": f"mcp-e2e-relpath-{os.path.basename(fp)}",
         "file_path": fp,
@@ -121,7 +117,7 @@ def _index_file(fp: str, content: str, category: str) -> None:
         "last_updated": "2026-04-26T00:00:00Z",
         "embedding": _fake_embed("x"),
     }]
-    store.upsert_chunks(chunks)
+    upsert_chunks(chunks)
 
 
 def test_save_confirmation_is_relative_not_absolute(dispatch, isolated_env):

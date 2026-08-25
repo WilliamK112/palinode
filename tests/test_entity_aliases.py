@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from palinode.core import aliases
+from tests._store_helpers import upsert_entities
 
 
 @pytest.fixture(autouse=True)
@@ -193,9 +194,9 @@ def test_a_split_subject_answers_as_one_after_mapping(store_db, tmp_path: Path) 
     them returns a plausible, non-empty, INCOMPLETE answer — which is exactly why
     the problem never announces itself.
     """
-    store_db.upsert_entities("a.md", {"entities": ["person/alpha"], "category": "people"})
-    store_db.upsert_entities("b.md", {"entities": ["person/alpha-bravo"], "category": "people"})
-    store_db.upsert_entities("c.md", {"entities": ["person/alphabravo"], "category": "people"})
+    upsert_entities("a.md", {"entities": ["person/alpha"], "category": "people"})
+    upsert_entities("b.md", {"entities": ["person/alpha-bravo"], "category": "people"})
+    upsert_entities("c.md", {"entities": ["person/alphabravo"], "category": "people"})
 
     # Before: each spelling answers for itself only.
     assert len(store_db.get_entity_files("person/alpha")) == 1
@@ -216,7 +217,7 @@ def test_a_split_subject_answers_as_one_after_mapping(store_db, tmp_path: Path) 
 
 def test_a_file_carrying_two_spellings_is_returned_once(store_db, tmp_path: Path) -> None:
     """Unioning the group must not double-count a file that uses both."""
-    store_db.upsert_entities(
+    upsert_entities(
         "both.md", {"entities": ["person/alpha", "person/alpha-bravo"], "category": "people"}
     )
     _write(tmp_path, """
@@ -235,7 +236,7 @@ def test_the_files_on_disk_are_never_rewritten(store_db, tmp_path: Path) -> None
     If this ever fails, the reversibility argument for query-time resolution is
     gone and a bad mapping becomes unrecoverable.
     """
-    store_db.upsert_entities("a.md", {"entities": ["person/alpha"], "category": "people"})
+    upsert_entities("a.md", {"entities": ["person/alpha"], "category": "people"})
     _write(tmp_path, """
         aliases:
           person/alpha-bravo:
@@ -256,7 +257,7 @@ def test_the_files_on_disk_are_never_rewritten(store_db, tmp_path: Path) -> None
 
 def test_other_spellings_are_not_reported_as_neighbours(store_db, tmp_path: Path) -> None:
     """Once aliased they are the same node, not co-occurring entities."""
-    store_db.upsert_entities(
+    upsert_entities(
         "a.md",
         {"entities": ["person/alpha", "person/alpha-bravo", "project/delta"],
          "category": "people"},

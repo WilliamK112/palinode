@@ -172,7 +172,7 @@ def _holds_this_content(path: str, incoming_hash: str) -> bool:
     from palinode.core import parser as _parser
 
     try:
-        with open(path, "r") as existing:
+        with open(path, "r", encoding="utf-8") as existing:
             existing_meta, _ = _parser.parse_markdown(existing.read())
     except (OSError, ValueError, yaml.YAMLError):
         return False
@@ -295,8 +295,10 @@ def save_memory(
     Returns:
         A dict carrying ``file_path``, ``rel_path``, ``id``, the index health
         flags (``indexed``/``embedded``/``indexed_vec``/``indexed_fts``), and
-        ``git_committed`` — plus ``index_error``, ``description_pending``,
-        ``summary_pending``, ``write_time_check`` and ``forget`` when they apply.
+        ``git_committed`` — plus ``git_error`` (why the auto-commit did not
+        land: not a repo, missing identity, lock held), ``index_error``,
+        ``description_pending``, ``summary_pending``, ``write_time_check``
+        and ``forget`` when they apply.
 
     Raises:
         SaveValidationError: any input rejection — malformed envelope, unknown
@@ -503,7 +505,7 @@ def save_memory(
     if os.path.exists(file_path):
         try:
             from palinode.core import parser as _parser
-            with open(file_path, "r") as _existing:
+            with open(file_path, "r", encoding="utf-8") as _existing:
                 _existing_meta, _ = _parser.parse_markdown(_existing.read())
             _prior_created = _existing_meta.get("created_at")
             if _prior_created:
@@ -701,14 +703,20 @@ def save_memory(
     # via the git_tools mutation choke point (the single staging+commit primitive
     # all memory mutations route through).
     git_committed: bool = False
+    git_error: str | None = None
     if config.git.auto_commit:
         commit_msg = f"{config.git.commit_prefix} auto-save: {category}/{slug}.md"
-        git_committed = git_tools.commit_memory_file(file_path, commit_msg)
+        outcome = git_tools.try_commit_memory_files([file_path], commit_msg)
+        git_committed = outcome.committed
+        git_error = outcome.error
         if not git_committed:
-            # exc_info-free: the choke point already logged the I/O failure with
-            # a stack trace. Surface a save-path signal so the git_committed
-            # contract has an operator-visible breadcrumb on this logger too.
-            logger.error("Git auto-commit did not complete for %r", file_path)
+            # exc_info-free: the choke point already logged the failure. Surface
+            # a save-path signal so the git_committed contract has an
+            # operator-visible breadcrumb on this logger too.
+            logger.error(
+                "Git auto-commit did not complete for %r: %s",
+                file_path, git_error or "unknown",
+            )
         elif push if push is not None else config.git.auto_push:
             try:
                 # Through git_tools.push() — the same choke-point primitive
@@ -744,8 +752,9 @@ def save_memory(
             logger.warning("reciprocal contradicts back-link skipped: %s", exc)
 
     logger.info(
-        "Saved memory op=save file_path=%s id=%s category=%s git_committed=%s",
+        "Saved memory op=save file_path=%s id=%s category=%s git_committed=%s%s",
         file_path, frontmatter_dict["id"], category, git_committed,
+        f" git_error={git_error!r}" if git_error else "",
     )
 
     # embed inline so that POST /save only returns once vector + FTS
@@ -799,6 +808,8 @@ def save_memory(
         # subprocess succeeded. False when disabled or when git errors.
         "git_committed": git_committed,
     }
+    if git_error:
+        result["git_error"] = git_error
     if index_error and not indexed:
         result["index_error"] = index_error
     # surface deferred description so callers know the description is not

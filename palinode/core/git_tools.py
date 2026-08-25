@@ -13,6 +13,7 @@ import re
 import subprocess
 import tempfile
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -78,6 +79,8 @@ def _run_git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
         ["git", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=config.memory_dir,
         check=check,
     )
@@ -240,7 +243,31 @@ def move_memory_file(src_path: str, dst_path: str) -> None:
     _fsync_directory(directory)
 
 
-def commit_memory_files(file_paths: list[str], message: str) -> bool:
+@dataclass(frozen=True)
+class CommitOutcome:
+    """Result of :func:`try_commit_memory_files`.
+
+    ``committed`` is True only when git actually accepted the commit (or had
+    nothing new to commit for the given paths — the caller asked to commit
+    and there was nothing new, which is not an error). ``error`` carries the
+    reason when ``committed`` is False and a commit was attempted: git's
+    stderr (trimmed) for a non-zero exit — ``fatal: not a git repository``,
+    ``Author identity unknown``, an ``index.lock`` collision — or the
+    exception text when the subprocess could not be spawned. ``None`` when
+    committed, or when no commit was attempted (auto_commit off, no paths).
+    """
+
+    committed: bool
+    error: str | None = None
+
+
+def _git_failure_reason(result: subprocess.CompletedProcess) -> str:
+    text = (result.stderr or "").strip() or (result.stdout or "").strip()
+    first_line = text.splitlines()[0] if text else ""
+    return f"exit {result.returncode}: {first_line or '(no output)'}"
+
+
+def try_commit_memory_files(file_paths: list[str], message: str) -> CommitOutcome:
     """Stage an explicit list of files and commit them in one commit.
 
     The single commit primitive. ``file_paths`` may be absolute or relative to
@@ -248,30 +275,54 @@ def commit_memory_files(file_paths: list[str], message: str) -> bool:
     so the commit captures exactly the files this mutation touched and nothing
     else dirty in the working tree.
 
-    No-op (returns False) when ``config.git.auto_commit`` is disabled or no
-    paths are given. Returns True when the commit subprocess was spawned
-    without raising (a "nothing to commit" exit is treated as success — the
-    caller asked to commit and there was nothing new, which is not an error).
+    No-op (``committed=False, error=None``) when ``config.git.auto_commit`` is
+    disabled or no paths are given. Otherwise the outcome is truthful: a
+    non-zero ``git add`` exit (not a repo, bad path) or a ``git commit`` exit
+    that is not the benign "nothing to commit" case (missing identity, an
+    ``index.lock`` held by another writer, a hook rejection) yields
+    ``committed=False`` with the reason in ``error`` and an ERROR log line.
+    Before this the helper returned True whenever the subprocess merely
+    *spawned*, so a memory dir that was never ``git init``-ed reported
+    ``git_committed=True`` on every save (the git_committed truthfulness fix).
+
+    "Nothing to commit" is detected locale-independently: a ``git commit``
+    exit of 1 followed by ``git diff --cached --quiet`` succeeding on the
+    same paths means the index holds no change for them.
     """
     if not config.git.auto_commit or not file_paths:
-        return False
+        return CommitOutcome(False)
 
     rels = []
     for p in file_paths:
         rels.append(os.path.relpath(p, config.memory_dir) if os.path.isabs(p) else p)
 
     try:
-        _run_git("add", "--", *rels)
-        _run_git("commit", "-m", message)
-        # Mirror the contract: "committed" means the commit subprocess was
-        # spawned without raising. A non-zero exit (e.g. "nothing to commit")
-        # is not an error — the caller asked to commit and there was nothing
-        # new, which is benign. Genuine I/O failures (git missing, timeout)
-        # raise and are caught below.
-        return True
+        add = _run_git("add", "--", *rels)
+        if add.returncode != 0:
+            reason = _git_failure_reason(add)
+            logger.error("Git add failed for %r: %s", rels, reason)
+            return CommitOutcome(False, reason)
+        commit = _run_git("commit", "-m", message)
+        if commit.returncode == 0:
+            return CommitOutcome(True)
+        if commit.returncode == 1:
+            staged = _run_git("diff", "--cached", "--quiet", "--", *rels)
+            if staged.returncode == 0:
+                return CommitOutcome(True)
+        reason = _git_failure_reason(commit)
+        logger.error("Git commit failed for %r: %s", rels, reason)
+        return CommitOutcome(False, reason)
     except (subprocess.SubprocessError, OSError) as e:
         logger.error("Git commit failed for %r: %s", rels, e, exc_info=True)
-        return False
+        return CommitOutcome(False, str(e))
+
+
+def commit_memory_files(file_paths: list[str], message: str) -> bool:
+    """Boolean form of :func:`try_commit_memory_files` for callers that only
+    need to know whether the commit landed. Same staging/return contract;
+    the failure reason is logged there and available via the outcome form.
+    """
+    return try_commit_memory_files(file_paths, message).committed
 
 
 def commit_memory_file(file_path: str, message: str) -> bool:
@@ -471,7 +522,7 @@ def blame(file_path: str, search: str | None = None) -> str:
     origin_date = ""
     source = ""
     try:
-        with open(full_path) as f:
+        with open(full_path, encoding="utf-8") as f:
             content = f.read()
         if content.startswith("---"):
             parts = content.split("---", 2)
@@ -548,7 +599,7 @@ def history(
         detail: ``"summary"`` (default) returns hash/date/message/stats;
             ``"full"`` additionally includes the full unified diff for each
             commit so the caller can see exactly what changed (commit-level
-            evolution view, formerly ``palinode_timeline``).
+            evolution view).
 
     Returns:
         List of dicts with keys: hash, date, message, stats.

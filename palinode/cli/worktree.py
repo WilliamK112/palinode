@@ -34,7 +34,12 @@ _PID_RE = re.compile(r"\b(\d{2,7})\b")
 
 def _git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(  # nosec B603,B607 - argv form, no shell
-        ["git", *args], cwd=cwd, capture_output=True, text=True
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

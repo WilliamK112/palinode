@@ -57,7 +57,7 @@ def fake_embed(monkeypatch):
 
     dims = int(config.embeddings.primary.dimensions)
 
-    def _fake(text: str, backend: str = "local") -> list[float]:
+    def _fake(text: str) -> list[float]:
         seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
         rng = random.Random(seed)
         return [rng.uniform(-1.0, 1.0) for _ in range(dims)]
@@ -183,17 +183,11 @@ def test_recall_keyword_and_grep(bench_dir, fake_embed):
 
 
 def test_hybrid_counts_query_embeddings(bench_dir, monkeypatch, fake_embed):
-    """Query-time embeds must be counted, not silently reported as zero.
-
-    ``embed_query`` delegates to the private local-embed helper rather than to
-    ``embed``, so an instrument that wraps only ``embed`` under-counts every
-    hybrid query as 0 model calls — a false zero on a cost axis.
-    """
+    """Query-time embeds must be counted, not silently reported as zero."""
     corpus.generate(bench_dir, seed=11, size=5)
     harness.init_store()
     harness.index_all(bench_dir)
 
-    monkeypatch.setattr("palinode.core.embedder.embed_query", fake_embed)
     monkeypatch.setattr(harness, "embedder_available", lambda: True)
 
     iters = 3
@@ -225,11 +219,10 @@ def test_embedder_disabled_restores_entry_points(fake_embed):
     """The disable context manager must fully restore the embed entry points."""
     from palinode.core import embedder
 
-    before = (embedder.embed, embedder.embed_query)
+    before = embedder.embed
     with harness.embedder_disabled():
         assert embedder.embed("x") == []
-        assert embedder.embed_query("x") == []
-    assert (embedder.embed, embedder.embed_query) == before
+    assert embedder.embed is before
 
 
 # --- report generation ----------------------------------------------------

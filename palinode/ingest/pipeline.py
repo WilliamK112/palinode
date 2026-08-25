@@ -127,7 +127,8 @@ def ingest_pdf(filepath: str, name: str) -> str | None:
         except ImportError:
             result = subprocess.run(
                 ["pdftotext", filepath, "-"],
-                capture_output=True, text=True, timeout=60
+                capture_output=True, text=True, timeout=60,
+                encoding="utf-8", errors="replace",
             )
             text = result.stdout
 
@@ -198,7 +199,7 @@ def ingest_text(filepath: str, name: str) -> str | None:
     Returns:
         str | None: Path to the saved research file, or None.
     """
-    with open(filepath, "r") as f:
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     stripped = content.strip()
@@ -223,7 +224,7 @@ def ingest_url_file(filepath: str, name: str) -> str | None:
     Returns:
         str | None: Path to the saved research file, or None.
     """
-    with open(filepath, "r") as f:
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     # .url format

@@ -21,11 +21,12 @@
     "description": "Trace a fact back to when it was first recorded. Shows which session or commit created each line in a memory file.",
     "params": {
       "claims": {},
-      "file": {},
       "file_path": {},
       "search": {}
     },
-    "required": []
+    "required": [
+      "file_path"
+    ]
   },
   "palinode_cluster_neighbors": {
     "description": "Given a memory file path, find the top-K semantically related files that are NOT currently linked to or from it (no existing [[wikilink]] in either direction). Use during wiki-maintenance passes to surface implicit relationships that no wikilink yet captures \u2014 the LLM can then propose new cross-links. Preprocessing strips wikilink syntax and the auto-generated `## See also` footer so notes linking the same entities don't false-positive as related.",
@@ -92,7 +93,7 @@
     "required": []
   },
   "palinode_history": {
-    "description": "Show the change history of a memory file. Tracks renames (--follow) and includes diff stats per commit. Use detail='full' for the commit-level evolution view (previously palinode_timeline).",
+    "description": "Show the change history of a memory file. Tracks renames (--follow) and includes diff stats per commit. Use detail='full' for the commit-level evolution view.",
     "params": {
       "detail": {
         "enum": [
@@ -201,10 +202,11 @@
     "params": {
       "commit": {},
       "dry_run": {},
-      "file": {},
       "file_path": {}
     },
-    "required": []
+    "required": [
+      "file_path"
+    ]
   },
   "palinode_save": {
     "description": "Save a memory (fact, decision, insight, project update) worth keeping across sessions. Requires exactly one of `type` or `ps=true`. On timeout the save may still have committed \u2014 palinode_search a distinctive phrase before retrying, or you'll duplicate it.",
@@ -318,16 +320,6 @@
     "description": "Check Palinode health: API reachability, index stats, last watcher run.",
     "params": {},
     "required": []
-  },
-  "palinode_timeline": {
-    "description": "Deprecated: use palinode_history with detail='full' instead. Shows commit-level evolution of a memory file including unified diffs per commit.",
-    "params": {
-      "file_path": {},
-      "limit": {}
-    },
-    "required": [
-      "file_path"
-    ]
   },
   "palinode_topic_coverage": {
     "description": "Given a topic phrase (not a file), check whether any wiki page already covers it. Returns {covered: bool, best_match: str | null, similarity: float}. Use BEFORE ingesting new content to ask 'is this already covered?'. Different framing from palinode_dedup_suggest: takes a short topic phrase rather than full draft content, and answers the binary 'already covered?' question.",

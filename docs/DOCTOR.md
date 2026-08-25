@@ -40,7 +40,7 @@ palinode doctor --fix --dry-run  # 3. preview safe fixes if any apply
 
 ## The check catalog
 
-There are 18 checks across six categories. Severity is one of `info`, `warn`, `error`, `critical`; `passed=True` means the check did not detect a problem (a passed `info` check still appears in the report so the operator can see the resolved state).
+There are 22 checks across six categories. Severity is one of `info`, `warn`, `error`, `critical`; `passed=True` means the check did not detect a problem (a passed `info` check still appears in the report so the operator can see the resolved state).
 
 ### Path integrity
 
@@ -203,8 +203,17 @@ This check is also load-bearing as context for `chunks_match_md_count`: a low ch
 
 | Check | Severity | Catches |
 |---|---|---|
+| `git_commit_ready` | warn | `git.auto_commit` is on but `memory_dir` is not a git repo, or no commit identity resolves there — every save reports `git_committed: false` |
 | `git_remote_health` | warn | Memory store has no offsite backup, or unpushed drift > 50 commits |
 | `audit_log_writable` | warn | `audit.log_path` is relative (logs scatter across cwds) or unwritable |
+
+#### `git_commit_ready`
+
+Read-only probe of the auto-commit precondition: `git -C ${memory_dir} rev-parse --is-inside-work-tree` plus `git var GIT_COMMITTER_IDENT` (the same identity predicate `git commit` applies, so it honours `user.useConfigOnly` and the hostname-derived fallback). Tagged `fast`.
+
+- Pass: `memory_dir` is a git repository and a committer identity resolves.
+- Warn: `git.auto_commit` is enabled but `memory_dir` was never `git init`-ed, or no identity resolves (git would fail with `Author identity unknown`). In both cases the file lands on disk but the git-persistence guarantee is silently not in force — the save response carries `git_committed: false` with the reason in `git_error` (#1025).
+- Info: `git.auto_commit` is disabled — nothing to check.
 
 #### `git_remote_health`
 

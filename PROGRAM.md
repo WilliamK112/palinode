@@ -295,6 +295,8 @@ What follows from the tiering, and can be relied on:
 - **Recall still reaches daily notes**, ranked below memories (`search.daily_penalty`); `include_daily` opts back in at full rank. Structural does not mean invisible.
 - **To make something in a daily note durable, write it as a memory.** Do not add frontmatter to the log.
 
+**IETF KU fields are write-only interop.** With `ku_compat.enabled`, every save also emits `ku_version` and `lifecycle` (mirroring `status`) so the files align with `draft-farley-acta-knowledge-units`; nothing in Palinode reads them back — do not build behaviour on them.
+
 ---
 
 ## Wiki Maintenance

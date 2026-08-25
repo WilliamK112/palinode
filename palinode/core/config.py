@@ -83,7 +83,6 @@ class IngestionConfig:
 @dataclass
 class PrimaryEmbeddingConfig:
     """Configuration for local embedding endpoints."""
-    provider: str = "ollama"
     model: str = "bge-m3"
     url: str = "http://localhost:11434"
     dimensions: int = 1024
@@ -91,19 +90,9 @@ class PrimaryEmbeddingConfig:
     connect_timeout_seconds: int = 10
 
 @dataclass
-class ResearchEmbeddingConfig:
-    """Configuration for secondary embedding engine processing constraints."""
-    enabled: bool = False
-    provider: str = "gemini"
-    model: str = "gemini-embedding-2-preview"
-    dimensions: int = 768
-    timeout_seconds: int = 30
-
-@dataclass
 class EmbeddingsConfig:
-    """Mapping schema bridging multiple embedding targets."""
+    """Embedding backend configuration."""
     primary: PrimaryEmbeddingConfig = field(default_factory=PrimaryEmbeddingConfig)
-    research: ResearchEmbeddingConfig = field(default_factory=ResearchEmbeddingConfig)
 
 @dataclass
 class AutoSummaryConfig:
@@ -296,7 +285,6 @@ class ConsolidationConfig:
     enabled: bool = True
     schedule: str = "0 3 * * 0"  # Sunday 3am UTC
     lookback_days: int = 7
-    max_files: int = 30
     # LLM for consolidation tasks (OpenAI-compatible API)
     llm_url: str = "http://localhost:8000"
     llm_model: str = "/model"
@@ -335,11 +323,6 @@ class DecayConfig:
     was itself deleted as dead code first.
     """
     enabled: bool = False
-    # DEPRECATED (ADR-007 §3.3): the old additive `+0.01` nudge — too small and
-    # the wrong shape for the Zipfian demand distribution (26 demands → only
-    # 0.76). Superseded by the exponential-approach reinforcement below
-    # (`importance_alpha`). Kept only for backward-compatible config loading.
-    importance_nudge: float = 0.01
     # Recall-feedback loop (ADR-006/007) — demand-decay importance (ADR-007).
     # Access metadata (recall_count / last_recalled) is always written on
     # retrieval, independent of the decay ranker `enabled` flag (which gates the
@@ -418,7 +401,6 @@ instrumentation).
 @dataclass
 class LoggingConfig:
     """Log formatting and target directories constraints formats."""
-    level: str = "INFO"
     operations_log: str = "logs/operations.jsonl"
     console: bool = True
 
@@ -667,7 +649,7 @@ def load_config() -> Config:
     for cpath in config_paths:
         if os.path.exists(cpath):
             try:
-                with open(cpath, 'r') as f:
+                with open(cpath, 'r', encoding="utf-8") as f:
                     file_conf = yaml.safe_load(f) or {}
                     _deep_merge(raw_config, file_conf)
                 loaded_path = cpath
@@ -720,8 +702,6 @@ def load_config() -> Config:
         cfg.embeddings.primary.url = os.environ["OLLAMA_URL"]
     if "EMBEDDING_MODEL" in os.environ:
         cfg.embeddings.primary.model = os.environ["EMBEDDING_MODEL"]
-    if "GEMINI_API_KEY" in os.environ:
-        cfg.embeddings.research.enabled = True
     if "PALINODE_API_HOST" in os.environ:
         cfg.services.api.host = os.environ["PALINODE_API_HOST"]
     if "PALINODE_API_PORT" in os.environ:

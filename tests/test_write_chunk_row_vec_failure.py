@@ -1,5 +1,5 @@
-"""the chunks_vec silent-drop fix regression: upsert_chunks must log and surface vec0
-write failures.
+"""the chunks_vec silent-drop fix regression: write_chunk_row must log and surface vec0
+write failures (exercised here through the tests/_store_helpers.upsert_chunks seam).
 
 Previously, both the pre-INSERT DELETE and the INSERT-after-DELETE pair on
 chunks_vec were wrapped in bare `except Exception: pass`. A vec0 structural
@@ -24,6 +24,7 @@ import pytest
 
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 
 _FAKE_EMBEDDING = [0.01] * 1024
@@ -63,7 +64,7 @@ class TestUpsertChunksReturnContract:
     def test_successful_upsert_returns_dict_with_true_flags(self, db_path):
         """Happy path: both flags True, written count matches input."""
         chunk = _make_chunk("test-ok-1", str(db_path.parent / "insights/test.md"))
-        result = store.upsert_chunks([chunk], skip_unchanged=False)
+        result = upsert_chunks([chunk], skip_unchanged=False)
 
         assert isinstance(result, dict), "upsert_chunks must return a dict (#385)"
         assert result["written"] == 1
@@ -71,7 +72,7 @@ class TestUpsertChunksReturnContract:
         assert result["fts_ok"] is True
 
     def test_empty_input_returns_zero_written(self, db_path):
-        result = store.upsert_chunks([], skip_unchanged=False)
+        result = upsert_chunks([], skip_unchanged=False)
         assert result["written"] == 0
         assert result["vec_ok"] is True
         assert result["fts_ok"] is True
@@ -103,7 +104,7 @@ class TestUpsertChunksVecFailure:
         chunk = _make_chunk("test-vec-fail-1", file_path)
 
         with caplog.at_level(logging.ERROR, logger="palinode.store"):
-            result = store.upsert_chunks([chunk], skip_unchanged=False)
+            result = upsert_chunks([chunk], skip_unchanged=False)
 
         # Return contract
         assert result["vec_ok"] is False, (
@@ -113,7 +114,7 @@ class TestUpsertChunksVecFailure:
         # Error must be logged — operator needs a signal
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert error_records, (
-            "upsert_chunks must log at ERROR when chunks_vec write fails (#385)"
+            "write_chunk_row must log at ERROR when chunks_vec write fails (#385)"
         )
         combined = " ".join(r.getMessage() for r in error_records)
         assert "chunks_vec" in combined or "vector index" in combined, (
@@ -153,7 +154,7 @@ class TestUpsertChunksFTSFailure:
         chunk = _make_chunk("test-fts-fail-1", file_path)
 
         with caplog.at_level(logging.WARNING, logger="palinode.store"):
-            result = store.upsert_chunks([chunk], skip_unchanged=False)
+            result = upsert_chunks([chunk], skip_unchanged=False)
 
         assert result["fts_ok"] is False, (
             "fts_ok must be False when FTS5 sync fails (#385)"
@@ -166,7 +167,7 @@ class TestUpsertChunksFTSFailure:
             r for r in caplog.records if r.levelno >= logging.WARNING
         ]
         assert warning_records, (
-            "upsert_chunks must log at WARNING when FTS5 sync fails (#385)"
+            "write_chunk_row must log at WARNING when FTS5 sync fails (#385)"
         )
         combined = " ".join(r.getMessage() for r in warning_records)
         assert "fts" in combined.lower() or "fts5" in combined.lower(), (

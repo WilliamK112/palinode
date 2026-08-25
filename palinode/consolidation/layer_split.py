@@ -47,7 +47,7 @@ def split_file(file_path: str) -> dict:
     Returns:
         Dict with paths to the three new files.
     """
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
     
     # Parse frontmatter
@@ -212,7 +212,7 @@ def split_file(file_path: str) -> dict:
         # avoid. Existing frontmatter is left untouched: it may carry a
         # `status: archived` flag written by the consolidation executor.
         if history_body:
-            with open(history_path) as f:
+            with open(history_path, encoding="utf-8") as f:
                 existing = f.read()
             git_tools.write_memory_file(
                 history_path, existing.rstrip("\n") + "\n\n" + history_body + "\n"
@@ -279,7 +279,7 @@ def split_all_core_files() -> dict:
             if f.endswith("-status.md") or f.endswith("-history.md"):
                 continue
             
-            with open(f) as fh:
+            with open(f, encoding="utf-8") as fh:
                 content = fh.read()
             
             # Only split core files

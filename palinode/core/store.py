@@ -39,6 +39,14 @@ _store_logger = __import__('logging').getLogger("palinode.store")
 # the check on subsequent calls (it's expensive — recursive glob of memory_dir).
 _db_checked: bool = False
 
+#: How long a connection waits on a locked database before raising
+#: ``OperationalError: database is locked``. Under WAL (set persistently in
+#: :func:`init_db`) readers never block writers, but writers still serialise —
+#: watcher, API inline index, consolidation and the recall-stat write on every
+#: search all contend for the one write lock. Passed as ``timeout=`` to
+#: ``sqlite3.connect``, which is SQLite's ``busy_timeout``.
+DB_BUSY_TIMEOUT_SECONDS: float = 10.0
+
 # ADR-015 §2.3: machine/monitor writes carry ``metadata.kind: telemetry``
 # in their frontmatter (which flattens to a top-level ``kind`` field — see
 # save_api, where ``req.metadata`` is merged into the top level). Such memories
@@ -158,8 +166,8 @@ def meta_hash(metadata: dict[str, Any]) -> str:
     Gates the metadata-refresh the body ``content_hash`` cannot see: a
     frontmatter-only edit moves this and leaves the body hash unchanged.
     ``sort_keys`` makes it order-independent; ``default=str`` tolerates dates.
-    The one definition both the reconcile path and ``upsert_chunks`` hash with,
-    so the two can never disagree about whether metadata changed.
+    The one definition every writer hashes with, so no two paths can disagree
+    about whether metadata changed.
     """
     return hashlib.sha256(
         json.dumps(metadata or {}, sort_keys=True, default=str).encode()
@@ -286,11 +294,27 @@ def get_db() -> sqlite3.Connection:
             files, indicating a likely misconfiguration rather than first run.
     """
     _ensure_db()
-    db = sqlite3.connect(config.db_path)
-    db.enable_load_extension(True)
+    db = sqlite3.connect(config.db_path, timeout=DB_BUSY_TIMEOUT_SECONDS)
+    try:
+        db.enable_load_extension(True)
+    except AttributeError as exc:
+        db.close()
+        raise RuntimeError(
+            "This Python's sqlite3 module was built without extension loading "
+            "(enable_load_extension is missing), so the sqlite-vec vector "
+            "extension cannot be loaded. Use a Python whose sqlite3 supports "
+            "loadable extensions — e.g. python.org / Homebrew / uv-managed "
+            "builds, or pyenv with "
+            "PYTHON_CONFIGURE_OPTS='--enable-loadable-sqlite-extensions'."
+        ) from exc
     sqlite_vec.load(db)
     db.enable_load_extension(False)
     db.row_factory = sqlite3.Row
+    # WAL is persistent (set once in init_db); synchronous is per-connection.
+    # NORMAL under WAL is durable across process crashes, loses at most the
+    # last transactions on power loss — every row here is re-derivable from
+    # the markdown source of truth.
+    db.execute("PRAGMA synchronous=NORMAL")
     return db
 
 
@@ -321,6 +345,13 @@ def init_db() -> None:
     os.makedirs(os.path.dirname(config.db_path), exist_ok=True)
     db = get_db()
     dimensions = _validated_embedding_dimensions()
+    # Persistent: recorded in the file header, so every later connection —
+    # including the read-only ``file:...?mode=ro`` ones doctor opens — sees
+    # WAL. Readers no longer block on a writer's transaction (and vice versa),
+    # which is what a long vec KNN read racing the watcher used to do under
+    # the default DELETE journal. Leaves ``.db-wal`` / ``.db-shm`` sidecars
+    # next to the DB while any connection is open; both are gitignored.
+    db.execute("PRAGMA journal_mode=WAL")
     db.execute("""
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
@@ -430,6 +461,17 @@ def init_db() -> None:
     """)
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_entities_ref ON entities(entity_ref)
+    """)
+
+    # ``WHERE file_path = ?`` is the reconcile / delete / recall-stat path
+    # (per file, per event); ``ORDER BY created_at DESC LIMIT`` is
+    # ``list_recent`` behind every empty-query search. Idempotent, so this
+    # doubles as the migration for pre-existing databases.
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON chunks(file_path)
+    """)
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chunks_created_at ON chunks(created_at)
     """)
 
     db.commit()
@@ -650,9 +692,9 @@ def replace_entities(
 ) -> None:
     """Replace a file's entity rows — DELETE then INSERT, not accumulate.
 
-    ``upsert_entities`` only ever inserted, so a changed ref added a row and
-    orphaned the old one, and removing every ref deleted nothing. The
-    leading DELETE is what makes a correction a correction.
+    The old insert-only ``upsert_entities`` left a changed ref's stale row
+    behind and deleted nothing when every ref was removed. The leading DELETE
+    is what makes a correction a correction.
     """
     cur.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
     for entity_ref in entities:
@@ -664,70 +706,6 @@ def replace_entities(
             (entity_ref, file_path, category, now),
         )
 
-
-def upsert_chunks(
-    chunks_data: list[dict[str, Any]], skip_unchanged: bool = True
-) -> dict[str, Any]:
-    """Update or insert new chunks into the document and vector indices.
-
-    Args:
-        chunks_data (list[dict[str, Any]]): A list including dictionaries of id, 
-            file_path, content, section_id, embedding, and optional keys category, metadata, 
-            created_at, last_updated.
-        skip_unchanged (bool): If True, skip re-embedding chunks whose content hash matches.
-
-    Returns:
-        dict with keys:
-            ``written`` (int): chunks actually upserted (excluding unchanged).
-            ``vec_ok`` (bool): True iff every chunks_vec write succeeded.
-            ``fts_ok`` (bool): True iff every FTS5 sync write succeeded.
-
-        Callers that need per-index health (e.g. ``index_file``) read
-        ``vec_ok`` / ``fts_ok`` to surface failures in the API response.
-
-    Thin wrapper over :func:`write_chunk_row` under one :func:`transaction`, so
-    the vec0/FTS5 write dance lives in exactly one place (the reconcile path
-    calls ``write_chunk_row`` directly). ``meta_hash`` is derived from each
-    chunk's ``metadata`` for back-compat with callers that don't supply it.
-    """
-    written = 0
-    vec_ok = True
-    fts_ok = True
-
-    with transaction() as db:
-        cursor = db.cursor()
-        for chunk in chunks_data:
-            content_hash = hashlib.sha256(chunk["content"].encode()).hexdigest()
-
-            if skip_unchanged:
-                existing = cursor.execute(
-                    "SELECT content_hash FROM chunks WHERE id = ?",
-                    (chunk["id"],),
-                ).fetchone()
-                if existing and existing["content_hash"] == content_hash:
-                    # Content unchanged — skip expensive embedding + write.
-                    continue
-
-            metadata = chunk.get("metadata", {})
-            row_vec_ok, row_fts_ok = write_chunk_row(
-                cursor,
-                chunk_id=chunk["id"],
-                file_path=chunk["file_path"],
-                section_id=chunk["section_id"],
-                category=chunk.get("category", ""),
-                content=chunk["content"],
-                metadata_json=json.dumps(metadata, default=str),
-                content_hash=content_hash,
-                meta_hash=meta_hash(metadata),
-                created_at=chunk.get("created_at"),
-                last_updated=chunk.get("last_updated"),
-                embedding=chunk["embedding"],
-            )
-            vec_ok = vec_ok and row_vec_ok
-            fts_ok = fts_ok and row_fts_ok
-            written += 1
-
-    return {"written": written, "vec_ok": vec_ok, "fts_ok": fts_ok}
 
 def delete_file_chunks(file_path: str) -> None:
     """Deletes all chunks associated with a specific file path.
@@ -1134,7 +1112,7 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         try:
             if full_path not in _sections_cache:
-                with open(full_path, "r") as f:
+                with open(full_path, "r", encoding="utf-8") as f:
                     raw = f.read()
                 _, sections = _parser.parse_markdown(raw)
                 _sections_cache[full_path] = sections
@@ -1568,10 +1546,9 @@ repair path).
     Two things go stale, and both are handled here:
 
     * ``chunks.metadata['entities']`` — the cached copy of the frontmatter.
-    * the ``entities`` table — which ``upsert_entities`` only ever inserts
-      into, so a *changed* ref writes a new row and orphans the old one.
-      Deleting this file's rows first is what makes a correction a correction
-      rather than an addition.
+    * the ``entities`` table — an insert-only writer would leave a *changed*
+      ref's old row behind. Deleting this file's rows first is what makes a
+      correction a correction rather than an addition.
 
     Both run in one transaction, so a crash cannot leave a file with its old
     refs deleted and no new ones written.
@@ -1776,7 +1753,7 @@ def get_entity_files(entity_ref: str) -> list[dict[str, Any]]:
     db.close()
     return results
 
-def get_entity_graph(entity_ref: str, depth: int = 1) -> dict[str, list[str]]:
+def get_entity_graph(entity_ref: str) -> dict[str, list[str]]:
     """Get the entity graph — which entities appear together."""
     db = get_db()
     cursor = db.cursor()
@@ -1799,30 +1776,6 @@ def get_entity_graph(entity_ref: str, depth: int = 1) -> dict[str, list[str]]:
     co_occurring = [row[0] for row in cursor.fetchall()]
     db.close()
     return {entity_ref: co_occurring}
-
-
-def upsert_entities(file_path: str, metadata: dict[str, Any]) -> None:
-    """Extract and index entities from file metadata."""
-    entities = metadata.get("entities", [])
-    db = get_db()
-    try:
-        cursor = db.cursor()
-        category = metadata.get("category", "")
-        now = _utc_now().isoformat().replace("+00:00", "Z")
-
-        cursor.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
-        for entity_ref in entities:
-            cursor.execute("""
-                INSERT OR REPLACE INTO entities (entity_ref, file_path, category, last_seen)
-                VALUES (?, ?, ?, ?)
-            """, (entity_ref, file_path, category, now))
-
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
 
 
 def detect_entities_in_text(text: str) -> list[str]:
@@ -1944,7 +1897,7 @@ def search_associative(
         
         # Get the most relevant chunk from this file
         try:
-            with open(fp) as f:
+            with open(fp, encoding="utf-8") as f:
                 content = f.read()[:1500]
         except Exception:
             continue

@@ -5,8 +5,8 @@ Detects drift between the ``chunks`` source table and the ``chunks_fts``
 external-content FTS5 virtual table.
 
 ``chunks_fts`` is an *external content* table — SQLite does not
-automatically keep it in sync with ``chunks``.  Every write path in
-``store.upsert_chunks`` manually updates both tables, but a mid-write
+automatically keep it in sync with ``chunks``.  ``store.write_chunk_row``
+manually updates both tables, but a mid-write
 exception, a schema migration, or a crashed bulk-index run can leave FTS5
 with fewer rows than ``chunks``, causing keyword search to silently miss
 content that exists in the vector index.

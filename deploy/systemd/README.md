@@ -11,7 +11,7 @@ Version-controlled, templated systemd unit files for the three palinode producti
 | Unit | Entry point | Default port |
 |------|-------------|-------------|
 | `palinode-api` | `uvicorn palinode.api.server:app` | 6340 |
-| `palinode-mcp` | `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/` — name is historical)* | 6341 |
+| `palinode-mcp` | `palinode-mcp-http` *(streamable-HTTP at `/mcp/`)* | 6341 |
 | `palinode-watcher` | `python -m palinode.indexer.watcher` | — |
 
 `palinode-mcp` and `palinode-watcher` declare `Wants=palinode-api.service` so systemd starts them in the right order.
@@ -76,9 +76,10 @@ Expected response from `/health`:
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL for embeddings |
 | `EMBEDDING_MODEL` | `bge-m3` | Model name passed to Ollama |
 | `API_PORT` | `6340` | Port for `palinode-api` (uvicorn) |
-| `MCP_PORT` | `6341` | Port for `palinode-mcp-sse` (streamable-HTTP transport, configure clients with `"type": "http"` and `"url": "http://host:6341/mcp/"`) |
+| `MCP_PORT` | `6341` | Port for `palinode-mcp-http` (streamable-HTTP transport, configure clients with `"type": "http"` and `"url": "http://host:6341/mcp/"`). The unit binds `PALINODE_MCP_HTTP_HOST=0.0.0.0` (the app default is `127.0.0.1`), so it is under the same bind gate as the API — see `PALINODE_API_ALLOW_UNAUTH`. |
 | `WATCHER_UNIT_NAME` | `palinode-watcher` | Installed name of the watcher/indexer unit. Override when an existing deployment named the watcher unit differently (e.g. `palinode-indexer`) so re-running the installer is idempotent against the live unit instead of writing a second, duplicate unit. The watcher's `ExecStart` (`python -m palinode.indexer.watcher`) is unchanged — only the installed `.service` filename. |
-| `PALINODE_API_BIND_INTENT` | *(empty)* | Bind-intent for the API's `0.0.0.0` bind. **Empty (default)** → the API starts and only logs the 0.0.0.0 warning; **no token is required** — the right choice for a token-less, network-isolated host (e.g. Tailscale-only). Set to `public` to suppress the warning, **but** the app then *requires* `PALINODE_API_TOKEN` and refuses to start without one, so only set `public` alongside a token. The check is value-based, so empty is treated as "not public". |
+| `PALINODE_API_ALLOW_UNAUTH` | *(empty)* | Opt-out for the non-loopback bind gate shared by the API and the MCP HTTP transport (one knob, both units). The API unit binds `0.0.0.0` (and sets `PALINODE_API_HOST=0.0.0.0` so the app sees it) and the MCP unit binds `PALINODE_MCP_HTTP_HOST=0.0.0.0`, so **by default both refuse to start without `PALINODE_API_TOKEN`** — add the token via a drop-in (`systemctl edit palinode-api` and `systemctl edit palinode-mcp` → `[Service]` / `Environment="PALINODE_API_TOKEN=…"` or `PALINODE_API_TOKEN_FILE=…`), not in the rendered units. The MCP transport has no token of its own: `PALINODE_API_TOKEN` both gates `/mcp/` and protects the API it proxies to. Set to `1` for a deliberately token-less, network-isolated host (Tailscale-only, firewalled): both start and warn on every start. |
+| `PALINODE_API_BIND_INTENT` | *(empty)* | Set to `public` to declare intentional public exposure and suppress the bind warning. The app then *requires* `PALINODE_API_TOKEN` (even with `PALINODE_API_ALLOW_UNAUTH=1`), so only set `public` alongside a token. The check is value-based, so empty is treated as "not public". |
 
 All variables must be set or exported before running `install.sh`; the script exports defaults for any that are unset.
 
@@ -242,11 +243,12 @@ outputs = { nixpkgs, palinode, ... }: {
 | `user` | `"palinode"` | System user |
 | `group` | `"palinode"` | System group |
 | `dataDir` | `"/var/lib/palinode"` | Memory directory (`PALINODE_DIR`) |
-| `apiHost` | `"127.0.0.1"` | Bind address for the API server |
+| `apiHost` | `"127.0.0.1"` | Bind address for the API server. Non-loopback requires `PALINODE_API_TOKEN` in the unit environment (or `allowUnauth = true`) |
 | `apiPort` | `6340` | API server port |
 | `ollamaUrl` | `"http://localhost:11434"` | Ollama base URL |
 | `embeddingModel` | `"bge-m3"` | Ollama embedding model name |
-| `bindIntent` | `null` | Set to `"public"` to suppress 0.0.0.0 binding warning |
+| `allowUnauth` | `false` | Let the API start token-less on a non-loopback `apiHost` (network-isolated hosts only); it warns on every start |
+| `bindIntent` | `null` | Set to `"public"` to declare intentional public exposure and suppress the bind warning (token still required) |
 | `openFirewall` | `false` | Open `apiPort` in the NixOS firewall |
 
 ### Module options — `services.palinode-mcp`
@@ -254,10 +256,11 @@ outputs = { nixpkgs, palinode, ... }: {
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enable` | `false` | Enable the MCP HTTP server |
+| `host` | `"0.0.0.0"` | Bind address (`PALINODE_MCP_HTTP_HOST`). Non-loopback requires `PALINODE_API_TOKEN` in the unit environment, or `services.palinode.allowUnauth = true` (the one opt-out, shared with the API) |
 | `port` | `6341` | MCP server port (streamable-HTTP at `/mcp/`) |
 | `openFirewall` | `false` | Open `port` in the NixOS firewall |
 
-The MCP module shares `user`, `group`, `dataDir`, and `apiPort` from `services.palinode`.
+The MCP module shares `user`, `group`, `dataDir`, `apiPort`, and `allowUnauth` from `services.palinode`.
 Enabling `services.palinode-mcp` automatically enables `services.palinode`.
 
 ### Dev shell

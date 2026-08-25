@@ -1,0 +1,43 @@
+{
+  "name": "cline-palinode",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Palinode persistent memory for Cline — session priming, per-turn recall injected into the message array, and a capture floor, as a thin AgentPlugin over the Palinode REST API",
+  "main": "./dist/cline/src/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "cline": {
+    "plugins": [
+      {
+        "paths": [
+          "./dist/cline/src/index.js"
+        ],
+        "capabilities": [
+          "hooks"
+        ]
+      }
+    ]
+  },
+  "peerDependencies": {
+    "@cline/sdk": "*"
+  },
+  "peerDependenciesMeta": {
+    "@cline/sdk": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:sdk": "npm install --no-save --no-audit --no-fund @cline/sdk && tsc -p conformance/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
+  }
+}

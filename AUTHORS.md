@@ -16,6 +16,11 @@ Contributions welcome via pull request. Names appear here once a PR is merged.
 - [Sukesh Kumar](https://github.com/SkxOverKill)
 - [Columbus Labs](https://github.com/ColumbusLabs)
 - [Bo Zhang](https://github.com/Tethys0)
+- [mercael](https://github.com/mercael91)
+- [JulianZ](https://github.com/JulianZJN)
+- [Hermes_011](https://github.com/JodVarun)
+- [Abhinav](https://github.com/kratos0718)
+- [Siddharth](https://github.com/sidsri14)
 
 ## Acknowledgements
 

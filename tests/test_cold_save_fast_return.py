@@ -26,6 +26,7 @@ from palinode.core.ollama_client import OllamaClient, RetryPolicy
 from palinode.indexer import reconcile as reconcile_mod
 from palinode.indexer.index_file import index_file
 from palinode.indexer.reconcile import _embeds_deferred
+from tests._store_helpers import upsert_chunks
 
 _FAKE_VECTOR = [0.01] * 1024
 
@@ -191,7 +192,7 @@ def test_upsert_chunks_empty_embedding_writes_fts_only_without_error(tmp_store, 
         "embedding": [],
     }
     with caplog.at_level("ERROR", logger="palinode.store"):
-        result = store.upsert_chunks([chunk], skip_unchanged=False)
+        result = upsert_chunks([chunk], skip_unchanged=False)
 
     assert result["written"] == 1
     assert result["vec_ok"] is True, "deliberate vec skip is not a write failure"

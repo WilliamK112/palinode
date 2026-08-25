@@ -18,6 +18,7 @@ import pytest
 
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 
 EMBED_DIM = 1024
@@ -69,7 +70,7 @@ def _index_prior_save(
         os.utime(file_path, (ts, ts))
 
     now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    store.upsert_chunks([{
+    upsert_chunks([{
         "id": slug_id,
         "file_path": file_path,
         "section_id": None,

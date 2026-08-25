@@ -115,6 +115,8 @@ def claude_desktop_running() -> bool | None:
                 ["pgrep", "-f", pattern],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             # pgrep: 0 = match, 1 = no match, >1 = error.
@@ -128,6 +130,8 @@ def claude_desktop_running() -> bool | None:
                 ["tasklist", "/FI", "IMAGENAME eq Claude.exe", "/NH"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             if proc.returncode != 0:
@@ -309,7 +313,7 @@ def mcp_smoke(
 
         log_path = _smoke_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a") as f:
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
         if _is_tty():

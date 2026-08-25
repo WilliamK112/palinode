@@ -15,8 +15,8 @@ from palinode.cli.archive import archive
 from palinode.cli.archive_expired import archive_expired
 from palinode.cli.trigger import trigger
 from palinode.cli.doctor import doctor
-from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids, migrate_mem0
-from palinode.cli.git import blame, history, rollback, push, timeline
+from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids
+from palinode.cli.git import blame, history, rollback, push
 from palinode.cli.trace import trace
 from palinode.cli.query import entities
 from palinode.cli.session_end import session_end
@@ -88,12 +88,10 @@ main.add_command(reindex)
 main.add_command(rebuild_fts)
 main.add_command(split_layers)
 main.add_command(bootstrap_ids)
-main.add_command(migrate_mem0)
 
 # Git
 main.add_command(blame)
 main.add_command(history)
-main.add_command(timeline)
 main.add_command(trace)
 main.add_command(rollback)
 main.add_command(push)

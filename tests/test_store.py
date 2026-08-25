@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 import sqlite3
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_entities
 
 
 @pytest.fixture
@@ -30,10 +31,10 @@ def _entity_refs_for_path(file_path: str) -> list[str]:
 def test_upsert_entities_replaces_rows_for_same_file(tmp_store_db):
     file_path = "people/alice.md"
 
-    store.upsert_entities(
+    upsert_entities(
         file_path, {"category": "people", "entities": ["person/a"]}
     )
-    store.upsert_entities(
+    upsert_entities(
         file_path, {"category": "people", "entities": ["person/b"]}
     )
 
@@ -42,7 +43,7 @@ def test_upsert_entities_replaces_rows_for_same_file(tmp_store_db):
 
 def test_upsert_entities_delete_and_insert_are_atomic(tmp_store_db):
     file_path = "people/alice.md"
-    store.upsert_entities(
+    upsert_entities(
         file_path, {"category": "people", "entities": ["person/a"]}
     )
 
@@ -61,7 +62,7 @@ def test_upsert_entities_delete_and_insert_are_atomic(tmp_store_db):
         db.close()
 
     with pytest.raises(sqlite3.IntegrityError):
-        store.upsert_entities(
+        upsert_entities(
             file_path, {"category": "people", "entities": ["person/b"]}
         )
 

@@ -418,7 +418,7 @@ def run_lint_pass() -> dict[str, Any]:
             continue
             
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
             metadata, _ = parser.parse_markdown(content)
 

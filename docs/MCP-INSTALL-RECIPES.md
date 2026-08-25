@@ -31,9 +31,11 @@ reports which ones contain a `palinode` entry. See
 - Multiple IDEs or team members should share the same memory store.
 - You want to switch IDEs without re-configuring the server.
 
-For HTTP setups, start `palinode-mcp-sse` on the server first (despite the
-name, it serves Streamable HTTP at `/mcp/`). Always include the trailing slash
-in the URL. Confirm the server is reachable before editing the IDE config:
+For HTTP setups, start `palinode-mcp-http` on the server first (it serves
+Streamable HTTP at `/mcp/`; it binds `127.0.0.1` by default, so pass
+`--host 0.0.0.0` or set `PALINODE_MCP_HTTP_HOST` for remote clients — and set
+`PALINODE_API_TOKEN`, which a non-loopback bind requires). Always include the
+trailing slash in the URL. Confirm the server is reachable before editing the IDE config:
 
 ```bash
 curl http://your-server:6341/mcp/
@@ -87,7 +89,7 @@ Create the file if it does not exist. If it already exists, merge the
 
 Replace `your-server` with your server's hostname or IP (for example
 `localhost:6341` for a local HTTP server or a stable hostname for remote).
-`palinode-mcp-sse` serves **streamable-HTTP** at `/mcp/` (name is historical).
+`palinode-mcp-http` serves **streamable-HTTP** at `/mcp/`.
 Always include the trailing slash in the URL.
 
 ### Restart sequence
@@ -120,7 +122,7 @@ Use palinode_status to check memory health
 | Tools do not appear in agent tool list | Settings → MCP — check for an error badge. Usually a PATH problem: run `which palinode-mcp` in a terminal to confirm it is on PATH, then set the full path in `"command"` |
 | `palinode mcp-config --diagnose` shows no entry for Cursor | You edited the wrong scope file. Check both `~/.cursor/mcp.json` and `.cursor/mcp.json` |
 | Entry shows green in Settings but tools return errors | Palinode API is not running. Run `curl http://127.0.0.1:6340/status` |
-| Transport mismatch / server not found | HTTP setups: verify `palinode-mcp-sse` is running on the server (`curl http://your-server:6341/mcp/`) |
+| Transport mismatch / server not found | HTTP setups: verify `palinode-mcp-http` is running on the server (`curl http://your-server:6341/mcp/`) |
 
 ---
 
@@ -342,8 +344,8 @@ Use this when Palinode is installed on the same machine as VS Code.
 ### HTTP (remote server)
 
 Use this when Palinode runs on a separate machine. Both forks use `"url"` for
-the HTTP endpoint. `palinode-mcp-sse` serves streamable-HTTP at `/mcp/` (the
-binary name is historical). Always include the trailing slash:
+the HTTP endpoint. `palinode-mcp-http` serves streamable-HTTP at `/mcp/`.
+Always include the trailing slash:
 
 ```json
 {
@@ -425,7 +427,7 @@ See [MCP-SETUP.md](MCP-SETUP.md) for the full tool list.
 | Settings file not found | Open the MCP settings panel from the extension UI (step 4 above) to let the extension create it, then edit |
 | Tools appear but all fail | Palinode API not running. `curl http://127.0.0.1:6340/status` should return JSON |
 | HTTP: `url` field ignored | Confirm the key is lowercase `"url"` — neither fork accepts `serverUrl` |
-| HTTP: cannot connect to remote | Confirm `palinode-mcp-sse` is running on the server: `curl http://your-server:6341/mcp/` |
+| HTTP: cannot connect to remote | Confirm `palinode-mcp-http` is running on the server: `curl http://your-server:6341/mcp/` |
 | Wrong file edited — change had no effect | Run `palinode mcp-config --diagnose` to see which file your installed extension reads |
 
 ---
@@ -597,7 +599,7 @@ the connection status instead.
 | Server shows a red error indicator | Likely a PATH problem. In stdio mode, set `"command"` to the absolute path: open a terminal inside the IDE, activate your venv, run `which palinode-mcp` |
 | Tools appear in settings but not in chat | Ensure you are using **Agent** mode in AI Assistant, not the plain Chat mode |
 | Apply does nothing / server never connects | Confirm `palinode-api` is running: `curl http://127.0.0.1:6340/status` |
-| HTTP: cannot connect | Confirm `palinode-mcp-sse` is running on the server: `curl http://your-server:6341/mcp/` |
+| HTTP: cannot connect | Confirm `palinode-mcp-http` is running on the server: `curl http://your-server:6341/mcp/` |
 
 ---
 

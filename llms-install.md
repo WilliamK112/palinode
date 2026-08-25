@@ -112,7 +112,7 @@ editor launches the right interpreter (the same wrong-Python trap as Step 0):
 Use the value of `$VENV/bin/palinode-mcp` from Step 0 (run `echo "$VENV/bin/palinode-mcp"`).
 (For a shared/remote server instead of a local one, use
 `palinode mcp-config --http` — but that binds a network port; see
-[SECURITY.md](SECURITY.md) for the bearer-token + bind-intent gate before
+[SECURITY.md](SECURITY.md) for the bearer-token + non-loopback bind gate before
 exposing it beyond loopback.)
 
 Common config homes per editor are listed by `palinode mcp-config` (no flags),

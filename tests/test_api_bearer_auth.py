@@ -6,10 +6,11 @@ without configuration. When ``PALINODE_API_TOKEN`` (or
 ``Authorization: Bearer <token>`` header — except the ``/health`` and
 ``/health/watcher`` probes, which stay open for uptime checks.
 
-The startup gate is the loud-fail counterpart: with
-``PALINODE_API_BIND_INTENT=public`` set and no token configured, the API
-must refuse to start so an operator cannot accidentally expose an
-unauthenticated service.
+The startup gate is the loud-fail counterpart: with a non-loopback
+``PALINODE_API_HOST`` (or ``PALINODE_API_BIND_INTENT=public``) and no token
+configured, the API must refuse to start so an operator cannot accidentally
+expose an unauthenticated service. ``PALINODE_API_ALLOW_UNAUTH=1`` is the
+explicit opt-out for deliberately token-less, network-isolated hosts.
 """
 from __future__ import annotations
 
@@ -25,21 +26,53 @@ from fastapi.testclient import TestClient
 # Helpers
 # ---------------------------------------------------------------------------
 
+_GATE_ENV_VARS = (
+    "PALINODE_API_TOKEN",
+    "PALINODE_API_TOKEN_FILE",
+    "PALINODE_API_HOST",
+    "PALINODE_API_BIND_INTENT",
+    "PALINODE_API_ALLOW_UNAUTH",
+)
+
+
+def _import_app_in_subprocess(env_overrides: dict[str, str]):
+    """Mirror ``uvicorn palinode.api.server:app`` in a fresh interpreter.
+
+    uvicorn imports the module to read the ``app`` attribute and never calls
+    ``main()``, so the import itself is the real startup path under systemd.
+    Returns the completed process; callers assert on returncode + output.
+    """
+    import subprocess
+    import sys
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+        **env_overrides,
+    }
+    for k in _GATE_ENV_VARS:
+        if k not in env_overrides:
+            env.pop(k, None)
+    return subprocess.run(
+        [sys.executable, "-c", "from palinode.api.server import app  # noqa: F401"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
 
 def _reload_server(monkeypatch: pytest.MonkeyPatch, **env: str | None):
     """Re-import ``palinode.api.server`` with patched env vars.
 
     The module reads ``PALINODE_API_TOKEN`` / ``PALINODE_API_TOKEN_FILE`` /
-    ``PALINODE_API_BIND_INTENT`` once at import time, so each test that
+    ``PALINODE_API_HOST`` / ``PALINODE_API_BIND_INTENT`` /
+    ``PALINODE_API_ALLOW_UNAUTH`` once at import time, so each test that
     cares about a different configuration needs a fresh module. Returns
     the freshly loaded module.
     """
     # Clear any previous run's values so monkeypatch can supply fresh ones.
-    for key in (
-        "PALINODE_API_TOKEN",
-        "PALINODE_API_TOKEN_FILE",
-        "PALINODE_API_BIND_INTENT",
-    ):
+    for key in _GATE_ENV_VARS:
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         if value is None:
@@ -167,28 +200,8 @@ def test_validate_auth_config_fires_under_uvicorn_direct_import():
     config in env. The import must raise SystemExit during the import
     itself.
     """
-    import subprocess
-    import sys
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
-        "PALINODE_API_BIND_INTENT": "public",
-        # No token; no token-file.
-    }
-    # Strip any inherited token vars
-    for k in ("PALINODE_API_TOKEN", "PALINODE_API_TOKEN_FILE"):
-        env.pop(k, None)
-
-    # Mirror what `uvicorn palinode.api.server:app` does internally:
-    # it imports the module to read the `app` attribute.
-    code = "from palinode.api.server import app  # noqa: F401"
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    # No token; no token-file.
+    result = _import_app_in_subprocess({"PALINODE_API_BIND_INTENT": "public"})
     assert result.returncode != 0, (
         f"Import should fail under public-bind+no-token, but exit was 0.\n"
         f"stderr: {result.stderr}"
@@ -198,6 +211,144 @@ def test_validate_auth_config_fires_under_uvicorn_direct_import():
         f"Expected SystemExit message in output:\n{combined}"
     )
     assert "PALINODE_API_TOKEN" in combined
+
+
+# ---------------------------------------------------------------------------
+# Bind gate — keys on the resolved bind host, not on stated intent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2", "localhost", "::1", "[::1]"])
+def test_is_loopback_host_accepts_loopback(host: str):
+    from palinode.core.auth import is_loopback_host
+
+    assert is_loopback_host(host) is True
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "100.64.0.9", "palinode-host", ""])
+def test_is_loopback_host_rejects_network(host: str):
+    from palinode.core.auth import is_loopback_host
+
+    assert is_loopback_host(host) is False
+
+
+def test_validate_bind_auth_refuses_non_loopback_no_token():
+    from palinode.core.auth import validate_bind_auth
+
+    with pytest.raises(SystemExit) as excinfo:
+        validate_bind_auth("0.0.0.0", None, allow_unauth=False)
+    msg = str(excinfo.value)
+    assert "REFUSING TO START" in msg
+    assert "PALINODE_API_HOST=0.0.0.0" in msg
+    assert "PALINODE_API_TOKEN" in msg
+    assert "PALINODE_API_ALLOW_UNAUTH=1" in msg
+
+
+@pytest.mark.parametrize(
+    ("host", "token", "allow_unauth"),
+    [
+        ("127.0.0.1", None, False),
+        ("localhost", None, False),
+        ("0.0.0.0", "tok", False),
+        ("0.0.0.0", None, True),
+        ("192.168.1.5", "tok", False),
+    ],
+)
+def test_validate_bind_auth_passes(host: str, token: str | None, allow_unauth: bool):
+    from palinode.core.auth import validate_bind_auth
+
+    validate_bind_auth(host, token, allow_unauth=allow_unauth)
+
+
+def test_bind_gate_refuses_import_when_host_non_loopback_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """PALINODE_API_HOST=0.0.0.0 alone — no token, no intent var — must
+    refuse at import. This is the path the gate previously missed."""
+    for key in _GATE_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("PALINODE_API_HOST", "0.0.0.0")
+    import palinode.api.server  # noqa: F401  (preload baseline)
+
+    with pytest.raises(SystemExit) as excinfo:
+        importlib.reload(palinode.api.server)
+    msg = str(excinfo.value)
+    assert "REFUSING TO START" in msg
+    assert "PALINODE_API_ALLOW_UNAUTH=1" in msg
+
+
+def test_bind_gate_opt_out_starts_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """PALINODE_API_ALLOW_UNAUTH=1 lets a token-less non-loopback bind start,
+    and the app still warns on every start."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="palinode.api"):
+        server = _reload_server(
+            monkeypatch, PALINODE_API_HOST="0.0.0.0", PALINODE_API_ALLOW_UNAUTH="1"
+        )
+    assert server._api_token is None
+    assert server._allow_unauth is True
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "0.0.0.0" in m and "No authentication is configured" in m for m in warnings
+    ), warnings
+    client = TestClient(server.app)
+    assert client.get("/health").status_code == 200
+
+
+def test_bind_gate_non_loopback_with_token_starts_silently(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="palinode.api"):
+        server = _reload_server(
+            monkeypatch, PALINODE_API_HOST="0.0.0.0", PALINODE_API_TOKEN="t-secret"
+        )
+    assert server._api_token == "t-secret"
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_bind_gate_public_intent_still_requires_token_despite_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """BIND_INTENT=public keeps its meaning — "token required" — and is not
+    overridden by ALLOW_UNAUTH; the two vars pull opposite ways, so refuse."""
+    for key in _GATE_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("PALINODE_API_HOST", "0.0.0.0")
+    monkeypatch.setenv("PALINODE_API_BIND_INTENT", "public")
+    monkeypatch.setenv("PALINODE_API_ALLOW_UNAUTH", "1")
+    import palinode.api.server  # noqa: F401
+
+    with pytest.raises(SystemExit) as excinfo:
+        importlib.reload(palinode.api.server)
+    assert "PALINODE_API_BIND_INTENT=public requires" in str(excinfo.value)
+
+
+def test_bind_gate_fires_under_uvicorn_direct_import():
+    """Real startup path: a fresh interpreter importing ``palinode.api.server:app``
+    (what uvicorn does) with PALINODE_API_HOST=0.0.0.0 and no token exits
+    non-zero with the refusal; the same env plus PALINODE_API_ALLOW_UNAUTH=1
+    imports cleanly."""
+    refused = _import_app_in_subprocess({"PALINODE_API_HOST": "0.0.0.0"})
+    assert refused.returncode != 0, (
+        f"Import should fail under 0.0.0.0+no-token, but exit was 0.\n"
+        f"stderr: {refused.stderr}"
+    )
+    combined = (refused.stderr or "") + (refused.stdout or "")
+    assert "REFUSING TO START" in combined, combined
+    assert "PALINODE_API_ALLOW_UNAUTH=1" in combined
+
+    allowed = _import_app_in_subprocess(
+        {"PALINODE_API_HOST": "0.0.0.0", "PALINODE_API_ALLOW_UNAUTH": "1"}
+    )
+    assert allowed.returncode == 0, (
+        f"Import should succeed with the explicit opt-out.\nstderr: {allowed.stderr}"
+    )
+    assert "REFUSING TO START" not in (allowed.stderr or "") + (allowed.stdout or "")
 
 
 # ---------------------------------------------------------------------------
@@ -346,3 +497,134 @@ def test_bearer_middleware_registered_on_app(monkeypatch: pytest.MonkeyPatch):
     server = _reload_server(monkeypatch, PALINODE_API_TOKEN="t-secret")
     classes = [mw.cls for mw in server.app.user_middleware]
     assert server._BearerAuthMiddleware in classes
+
+
+# ---------------------------------------------------------------------------
+# Own clients send the bearer
+#
+# ``BearerAuthMiddleware`` has no loopback exemption, so the moment an
+# operator sets ``PALINODE_API_TOKEN`` per the docs, the MCP server and the
+# CLI — Palinode's own two API clients — must present the token or every
+# call 401s. Both are driven here against the real FastAPI app with the
+# middleware armed: MCP over ``httpx.ASGITransport``, the CLI over a transport
+# that hands each request to ``TestClient``. The negative half of each pair
+# (token server-side only) proves the header is what fixes it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _own_client_memory(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """A one-file memory dir so ``GET /list`` has something to return."""
+    from palinode.core.config import config  # noqa: PLC0415
+
+    (tmp_path / "decisions").mkdir()
+    (tmp_path / "decisions" / "own-client.md").write_text(
+        "---\ncategory: decisions\ntype: Decision\ndescription: own client\n"
+        "last_updated: 2026-08-16\n---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    return tmp_path
+
+
+def _testclient_transport(tc: TestClient):
+    """Sync ``httpx`` transport that dispatches to an in-process ``TestClient``."""
+    import httpx  # noqa: PLC0415
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        tc_response = tc.request(
+            request.method,
+            request.url.raw_path.decode("ascii"),
+            content=request.content,
+            headers=dict(request.headers),
+        )
+        return httpx.Response(
+            status_code=tc_response.status_code,
+            headers=tc_response.headers.multi_items(),
+            content=tc_response.content,
+            request=request,
+        )
+
+    return httpx.MockTransport(_handler)
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_sends_bearer_when_token_configured(
+    monkeypatch: pytest.MonkeyPatch, _own_client_memory
+):
+    import httpx  # noqa: PLC0415
+
+    from palinode import mcp  # noqa: PLC0415
+
+    server = _reload_server(monkeypatch, PALINODE_API_TOKEN="t-own-client")
+    monkeypatch.setattr(mcp, "_http_transport", httpx.ASGITransport(app=server.app))
+    monkeypatch.setattr(mcp, "_http_client", None)
+
+    # Token set server-side AND client-side (same env var, same loader).
+    result = await mcp.call_tool("palinode_list", {})
+    text = result[0].text
+    assert not text.startswith(mcp.DISPATCH_ERROR_PREFIXES), text
+    assert "own-client.md" in text
+
+    # Same server, token withdrawn from the client's environment only: the
+    # request must now be refused, proving the bearer is what let it through.
+    monkeypatch.delenv("PALINODE_API_TOKEN")
+    await mcp._close_http()
+    result = await mcp.call_tool("palinode_list", {})
+    text = result[0].text
+    assert text.startswith("API Error:"), text
+    assert "Unauthorized" in text
+
+
+@pytest.mark.asyncio
+async def test_mcp_reuses_one_client_across_calls(
+    monkeypatch: pytest.MonkeyPatch, _own_client_memory
+):
+    """One lazily-created ``httpx.AsyncClient`` per process, closed on shutdown."""
+    import httpx  # noqa: PLC0415
+
+    from palinode import mcp  # noqa: PLC0415
+
+    server = _reload_server(monkeypatch)
+    monkeypatch.setattr(mcp, "_http_transport", httpx.ASGITransport(app=server.app))
+    monkeypatch.setattr(mcp, "_http_client", None)
+
+    await mcp.call_tool("palinode_list", {})
+    first = mcp._http_client
+    assert isinstance(first, httpx.AsyncClient)
+    await mcp.call_tool("palinode_list", {})
+    assert mcp._http_client is first
+
+    await mcp._close_http()
+    assert first.is_closed
+    assert mcp._http_client is None
+
+
+def test_cli_client_sends_bearer_when_token_configured(
+    monkeypatch: pytest.MonkeyPatch, _own_client_memory
+):
+    from click.testing import CliRunner  # noqa: PLC0415
+
+    from palinode.cli import main as cli  # noqa: PLC0415
+    from palinode.cli import _api  # noqa: PLC0415
+
+    server = _reload_server(monkeypatch, PALINODE_API_TOKEN="t-own-client")
+    tc = TestClient(server.app, raise_server_exceptions=False)
+
+    # Default constructor path: headers come from PalinodeAPI itself.
+    api = _api.PalinodeAPI(transport=_testclient_transport(tc))
+    assert api.client.headers["authorization"] == "Bearer t-own-client"
+    assert api.list_files()[0]["file"] == "decisions/own-client.md"
+
+    monkeypatch.setattr(_api.api_client, "client", api.client)
+    out = CliRunner().invoke(cli, ["list", "--format", "json"]).output
+    assert "own-client.md" in out
+    assert "401" not in out
+
+    # Token withdrawn from the CLI's environment only → 401 from the same app.
+    monkeypatch.delenv("PALINODE_API_TOKEN")
+    unauth = _api.PalinodeAPI(transport=_testclient_transport(tc))
+    assert "authorization" not in unauth.client.headers
+    with pytest.raises(_api.HTTPStatusError) as exc:
+        unauth.list_files()
+    assert exc.value.response.status_code == 401

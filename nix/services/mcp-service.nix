@@ -37,6 +37,20 @@ in
   options.services.palinode-mcp = {
     enable = lib.mkEnableOption "Palinode MCP HTTP server";
 
+    host = lib.mkOption {
+      type = lib.types.str;
+      default = "0.0.0.0";
+      description = ''
+        Bind address for the palinode MCP HTTP server (PALINODE_MCP_HTTP_HOST).
+        Defaults to "0.0.0.0" so remote MCP clients can reach it (the app's own
+        default is 127.0.0.1). A non-loopback host REFUSES TO START without
+        PALINODE_API_TOKEN in the service environment unless
+        services.palinode.allowUnauth is true — the one opt-out, shared with
+        the API. The transport has no token of its own: PALINODE_API_TOKEN
+        both gates /mcp/ and protects the API it proxies to.
+      '';
+    };
+
     port = lib.mkOption {
       type = lib.types.port;
       default = 6341;
@@ -69,6 +83,10 @@ in
         PALINODE_DIR = palinodeCfg.dataDir;
         PALINODE_API_HOST = "127.0.0.1";
         PALINODE_API_PORT = toString palinodeCfg.apiPort;
+        PALINODE_MCP_HTTP_HOST = cfg.host;
+        PALINODE_MCP_HTTP_PORT = toString cfg.port;
+      } // lib.optionalAttrs palinodeCfg.allowUnauth {
+        PALINODE_API_ALLOW_UNAUTH = "1";
       };
 
       serviceConfig = {
@@ -76,9 +94,8 @@ in
         User = palinodeCfg.user;
         Group = palinodeCfg.group;
         WorkingDirectory = palinodeCfg.dataDir;
-        # palinode-mcp-sse is the historical alias for the streamable-HTTP entry point.
-        # See pyproject.toml: palinode-mcp-sse = "palinode.mcp:main_sse"
-        ExecStart = "${palinodeCfg.package}/bin/palinode-mcp-sse --port ${toString cfg.port}";
+        # Host/port are read from PALINODE_MCP_HTTP_HOST/_PORT (set above); --host/--port would override them.
+        ExecStart = "${palinodeCfg.package}/bin/palinode-mcp-http";
         Restart = "always";
         RestartSec = "5s";
         StandardOutput = "journal";

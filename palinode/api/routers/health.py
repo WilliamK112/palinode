@@ -72,6 +72,7 @@ def status_api() -> dict[str, Any]:
         unpushed = subprocess.run(
             ["git", "rev-list", "--count", "origin/main..HEAD"],
             cwd=config.palinode_dir, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
         )
         stats["unpushed_commits"] = int(unpushed.stdout.strip()) if unpushed.stdout.strip() else 0
     except (subprocess.SubprocessError, OSError, ValueError):
@@ -227,7 +228,7 @@ def watcher_health_api() -> dict[str, Any]:
 
     try:
         # Write canary file
-        with open(canary_path, "w") as f:
+        with open(canary_path, "w", encoding="utf-8") as f:
             f.write(canary_content)
 
         # Wait for watcher to pick it up (check every 0.5s, up to 8s)
@@ -249,6 +250,7 @@ def watcher_health_api() -> dict[str, Any]:
                 ["journalctl", "--user", "-u", "palinode-watcher",
                  "--since", "1 hour ago", "--no-pager", "-p", "err"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             errors = [
                 line
@@ -334,9 +336,9 @@ def auto_summary_health_api() -> dict[str, Any]:
             if pending >= 1000 and pending_descriptions >= 1000:
                 break
             try:
-                with open(filepath) as f:
+                with open(filepath, encoding="utf-8") as f:
                     content = f.read()
-                metadata, body = parser.parse_markdown(content)
+                metadata, body = parser.parse_frontmatter(content)
                 # description backlog — not core-gated, no length gate.
                 # only count files that can actually persist a description
                 # (the same eligibility predicate the backfill worklist uses), so

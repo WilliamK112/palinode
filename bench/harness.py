@@ -58,8 +58,7 @@ def point_config_at(palinode_dir: str) -> None:
 class Counters:
     """Model calls observed during an operation."""
 
-    embed_calls: int = 0          # document/section embeds (ingest path)
-    embed_query_calls: int = 0    # query embeds (recall path)
+    embed_calls: int = 0          # every embed (ingest sections + query vectors)
     embed_input_chars: int = 0
     chat_llm_calls: int = 0
 
@@ -68,14 +67,11 @@ class Counters:
 def _count_model_calls() -> Iterator[Counters]:
     """Wrap the embed + chat entry points to count calls during a block.
 
-    ``index_file`` reaches the embedder through ``embedder.embed`` and the
-    query path through ``embedder.embed_query`` — two distinct module
-    attributes, both looked up at call time. **Both** are wrapped:
-    ``embed_query`` delegates to the private ``_embed_local``, not to
-    ``embed``, so wrapping only ``embed`` would silently under-count every
-    query-time embedding as zero. Chat/completions are wrapped on the shared
-    Ollama client to *prove* the ingest and recall paths make zero chat-LLM
-    calls — the headline cost claim.
+    Both ``index_file`` and the query path reach the embedder through the
+    single module attribute ``embedder.embed``, looked up at call time.
+    Generate/completions are wrapped on the shared Ollama client to *prove*
+    the ingest and recall paths make zero chat-LLM calls — the headline cost
+    claim.
     """
     from palinode.core import embedder as embedder_mod
     from palinode.core.ollama_client import get_ollama_client
@@ -83,26 +79,15 @@ def _count_model_calls() -> Iterator[Counters]:
     counters = Counters()
 
     orig_embed = embedder_mod.embed
-    orig_embed_query = embedder_mod.embed_query
 
-    def counting_embed(text: str, backend: str = "local") -> list[float]:
+    def counting_embed(text: str) -> list[float]:
         counters.embed_calls += 1
         counters.embed_input_chars += len(text)
-        return orig_embed(text, backend)
-
-    def counting_embed_query(text: str, backend: str = "local") -> list[float]:
-        counters.embed_query_calls += 1
-        counters.embed_input_chars += len(text)
-        return orig_embed_query(text, backend)
+        return orig_embed(text)
 
     client = get_ollama_client()
-    orig_chat = client.chat
     orig_generate = client.generate
     orig_completions = client.chat_completions
-
-    def counting_chat(*args: Any, **kwargs: Any) -> Any:
-        counters.chat_llm_calls += 1
-        return orig_chat(*args, **kwargs)
 
     def counting_generate(*args: Any, **kwargs: Any) -> Any:
         counters.chat_llm_calls += 1
@@ -113,16 +98,12 @@ def _count_model_calls() -> Iterator[Counters]:
         return orig_completions(*args, **kwargs)
 
     embedder_mod.embed = counting_embed  # type: ignore[assignment]
-    embedder_mod.embed_query = counting_embed_query  # type: ignore[assignment]
-    client.chat = counting_chat  # type: ignore[method-assign]
     client.generate = counting_generate  # type: ignore[method-assign]
     client.chat_completions = counting_completions  # type: ignore[method-assign]
     try:
         yield counters
     finally:
         embedder_mod.embed = orig_embed  # type: ignore[assignment]
-        embedder_mod.embed_query = orig_embed_query  # type: ignore[assignment]
-        client.chat = orig_chat  # type: ignore[method-assign]
         client.generate = orig_generate  # type: ignore[method-assign]
         client.chat_completions = orig_completions  # type: ignore[method-assign]
 
@@ -383,17 +364,14 @@ def embedder_disabled() -> Iterator[None]:
 
     client = get_ollama_client()
     orig_embed = embedder_mod.embed
-    orig_embed_query = embedder_mod.embed_query
     orig_probe = client.probe_embed
 
-    embedder_mod.embed = lambda text, backend="local": []  # type: ignore[assignment]
-    embedder_mod.embed_query = lambda text, backend="local": []  # type: ignore[assignment]
+    embedder_mod.embed = lambda text: []  # type: ignore[assignment]
     client.probe_embed = lambda **kwargs: False  # type: ignore[method-assign]
     try:
         yield
     finally:
         embedder_mod.embed = orig_embed  # type: ignore[assignment]
-        embedder_mod.embed_query = orig_embed_query  # type: ignore[assignment]
         client.probe_embed = orig_probe  # type: ignore[method-assign]
 
 
@@ -424,7 +402,7 @@ def measure_recall_keyword(
     return RecallResult(
         mode="keyword",
         query_time_chat_llm_calls=counters.chat_llm_calls,
-        query_time_embed_calls=counters.embed_calls + counters.embed_query_calls,
+        query_time_embed_calls=counters.embed_calls,
         n_queries=len(queries),
         cold_p50_ms=_percentile(cold, 50),
         cold_p95_ms=_percentile(cold, 95),
@@ -456,7 +434,7 @@ def measure_recall_hybrid(queries: tuple[str, ...], *, iters: int = 20, top_k: i
 
     with _count_model_calls() as counters:
         def run(q: str) -> int:
-            vec = embedder.embed_query(q)
+            vec = embedder.embed(q)
             return len(store.search_hybrid(q, vec, top_k=top_k))
 
         cold, _ = _time_queries(run, queries, iters=1)
@@ -465,7 +443,7 @@ def measure_recall_hybrid(queries: tuple[str, ...], *, iters: int = 20, top_k: i
     return RecallResult(
         mode="hybrid",
         query_time_chat_llm_calls=counters.chat_llm_calls,
-        query_time_embed_calls=counters.embed_calls + counters.embed_query_calls,
+        query_time_embed_calls=counters.embed_calls,
         n_queries=len(queries),
         cold_p50_ms=_percentile(cold, 50),
         cold_p95_ms=_percentile(cold, 95),

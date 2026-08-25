@@ -49,6 +49,7 @@ knobs, every harness:
 |----------|---------|---------|
 | `PALINODE_API_URL` | `http://localhost:6340` | Where the API lives |
 | `PALINODE_API_TOKEN` | *(unset)* | Bearer token for token-protected deployments |
+| `PALINODE_HOOK_RECALL_PROFILE` | `coding` | Recall profile: `coding` (priming + triggers + search), `monitoring` (triggers only), `investigation` (search only, wider), `writing` (priming only), `conversation` (priming + triggers), `minimal` / `off`. Explicit knobs below win over the profile |
 | `PALINODE_HOOK_RECALL_MAX_RESULTS` | `3` | Search hits injected per prompt; `0` disables the search channel |
 | `PALINODE_HOOK_RECALL_THRESHOLD` | `0.5` | Similarity floor for per-turn search (raw cosine — the same scale as the `%` shown on each injected hit). `0.4` = recall everything plausibly relevant, `0.5` = calibrated default, `0.6` = strict (drops ~1 in 4 relevant memories), `0.7+` = near-silent |
 | `PALINODE_HOOK_RECALL_TRIGGERS` | `1` | `0` disables the trigger channel |
@@ -73,6 +74,8 @@ npm test        # vitest — runs without a Pi install
 npm run build   # tsc → dist/
 ```
 
-The core logic (`src/core.ts`) is pure functions over an injected `fetch`;
-the Pi binding (`src/index.ts`) is structural-typed against the slice of Pi's
+All Palinode logic lives in the shared core (`plugins/core` — pure functions
+over an injected `fetch`, compiled into this package's `dist/` alongside the
+binding, so the installed extension has no runtime dependencies). The Pi
+binding (`src/index.ts`) is structural-typed against the slice of Pi's
 extension API it uses, so nothing here depends on Pi's own packages.

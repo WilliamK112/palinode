@@ -38,7 +38,34 @@ free and **required** when binding the API to a non-loopback address.
 |------------|---------------------|-------|
 | Local dev (single user, loopback) | No token | Default. The middleware is a no-op when `PALINODE_API_TOKEN` is unset. |
 | Multi-user / homelab / Tailscale | Set `PALINODE_API_TOKEN` | Every request must carry `Authorization: Bearer <token>` except `/health` and `/health/watcher`. |
-| Public exposure (`PALINODE_API_BIND_INTENT=public`) | **Token required** | The server refuses to start without `PALINODE_API_TOKEN` (or `PALINODE_API_TOKEN_FILE`). |
+| Any non-loopback bind (`PALINODE_API_HOST` other than `127.0.0.1` / `localhost` / `::1`) | **Token required** | The server refuses to start without `PALINODE_API_TOKEN` (or `PALINODE_API_TOKEN_FILE`). Set `PALINODE_API_ALLOW_UNAUTH=1` to opt out for a deliberately token-less, network-isolated host (e.g. Tailscale-only); it then starts and logs a warning on every start. |
+| `PALINODE_API_BIND_INTENT=public` | **Token required** | Declares intentional public exposure and suppresses the bind warning. Refuses to start without a token even if `PALINODE_API_ALLOW_UNAUTH=1` is set. |
+
+The startup gate keys on the **resolved bind host** (`PALINODE_API_HOST` /
+`services.api.host`), not on any stated intent. The shipped systemd template
+sets `PALINODE_API_HOST` alongside uvicorn's `--host` so the gate sees the real
+bind; if you launch uvicorn by hand with `--host 0.0.0.0`, set
+`PALINODE_API_HOST=0.0.0.0` too — the app cannot see uvicorn's CLI flags.
+
+### The MCP HTTP transport
+
+`palinode-mcp-http` (default port 6341) is under the **same gate with the same
+single opt-out**. Its bind host resolves as `--host` flag > `PALINODE_MCP_HTTP_HOST`
+> `127.0.0.1` (the default is loopback). A non-loopback bind with no
+`PALINODE_API_TOKEN` refuses to start with the same `REFUSING TO START` message
+unless `PALINODE_API_ALLOW_UNAUTH=1` is set — there is no MCP-specific opt-out;
+one knob per deployment. `PALINODE_MCP_BIND_INTENT=public` keeps meaning "token
+required".
+
+The MCP HTTP transport has **no token of its own**. It reads the same
+`PALINODE_API_TOKEN` / `PALINODE_API_TOKEN_FILE` as the API: when set, every
+request to `/mcp/` must carry `Authorization: Bearer <token>` (`/healthz` is
+exempt) and the transport sends that same token on its own calls to the API. So the
+gate's question is really "is the API this transport proxies to protected?" — a
+token-less MCP HTTP bind on the network would serve every Palinode tool
+(save/search/read/…) to anyone who can reach the port. The shipped systemd and
+Nix MCP units bind `0.0.0.0` explicitly (they exist for remote clients) and so
+require the token — or the opt-out — exactly like the API unit.
 
 ### Generating a token
 
@@ -64,6 +91,11 @@ curl -H "Authorization: Bearer $PALINODE_API_TOKEN" \
      http://localhost:6340/list
 ```
 
+Palinode's own clients — the `palinode` CLI, the stdio MCP server
+(`palinode-mcp`), and the shell hooks written by `palinode init` — read the
+same `PALINODE_API_TOKEN` / `PALINODE_API_TOKEN_FILE` and send the bearer
+automatically; export it in their environment and nothing else is needed.
+
 For MCP clients (Claude Code, Zed, Cursor, etc.) over Streamable HTTP, see
 [`docs/INSTALL-CLAUDE-CODE.md`](docs/INSTALL-CLAUDE-CODE.md) for the
 `headers` block to add to your MCP config.
@@ -76,12 +108,11 @@ Unauthorized` and clients reconnect with the new token.
 
 ### What this does NOT cover
 
-- The MCP HTTP server (`palinode-mcp-http` / `palinode-mcp-sse` on port 6341)
-  currently has no auth layer — that is tracked separately and has different
-  transport semantics (SSE/Streamable HTTP) than the REST API. If you need
-  to expose the MCP endpoint beyond loopback today, front it with a reverse
-  proxy that enforces auth, or restrict access at the network layer (VPN,
-  Tailscale ACLs, firewall).
+- Anything beyond the bearer check: there is no per-user identity, no scopes,
+  and no rate limiting keyed on the token. For multi-tenant or internet-facing
+  exposure, front the API and the MCP HTTP transport with a reverse proxy that
+  enforces auth, or restrict access at the network layer (VPN, Tailscale ACLs,
+  firewall).
 
 The token comparison is constant-time (`hmac.compare_digest`) and the
 expected header is pre-encoded at startup, so the hot path is a single

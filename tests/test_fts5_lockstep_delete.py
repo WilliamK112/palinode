@@ -27,6 +27,7 @@ from palinode.core import store
 from palinode.core.config import config
 from palinode.indexer import index_file as index_file_mod
 from palinode.indexer.index_file import index_file
+from tests._store_helpers import upsert_chunks
 
 
 _FAKE_EMBEDDING = [0.01] * 1024
@@ -76,7 +77,7 @@ class TestDeleteFileChunksLockstep:
     def test_delete_keeps_fts_in_lockstep(self, store_db):
         f_del = str(store_db / "insights" / "doomed.md")
         f_keep = str(store_db / "insights" / "kept.md")
-        store.upsert_chunks(
+        upsert_chunks(
             [
                 _make_chunk("d1", f_del, "zebradelete alpha content", "s1"),
                 _make_chunk("d2", f_del, "zebradelete beta content", "s2"),

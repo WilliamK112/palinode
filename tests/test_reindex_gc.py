@@ -7,6 +7,7 @@ import pytest
 
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +51,7 @@ def test_gc_orphaned_chunks_deletes_removed_file_index_rows(tmp_path: Path, monk
 
     existing_path = str(existing_file)
     orphan_path = str(orphan_file)
-    store.upsert_chunks(
+    upsert_chunks(
         [
             _chunk("existing-1", existing_path, "kept alpha"),
             _chunk("orphan-1", orphan_path, "removed alpha"),

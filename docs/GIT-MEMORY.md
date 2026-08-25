@@ -54,11 +54,10 @@ palinode history projects/my-app.md
 If an agent mistakenly consolidates or overwrites data, you can revert the file. Palinode's rollback is safe: it creates a *new* commit that restores the file, preserving the erroneous history just in case.
 
 ```bash
-palinode rollback projects/my-app.md --commit a1b2c3d
+palinode rollback projects/my-app.md a1b2c3d
 ```
 
 > **Note:** Rollback defaults to a dry run. To actually apply the change, pass `--no-dry-run`.
-> (`--execute` is a deprecated alias for the same thing — it still works, but warns.)
 
 ### 5. Push (Admin Only)
 

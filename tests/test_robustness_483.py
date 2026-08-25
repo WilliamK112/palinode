@@ -15,6 +15,7 @@ import pytest
 from palinode.consolidation.executor import _is_replace_policy, apply_operations
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ def _embedding(seed: int) -> list[float]:
 def _index_chunk(*, chunk_id: str, file_path: str, content: str, seed: int) -> None:
     import datetime as _dt
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
-    store.upsert_chunks([{
+    upsert_chunks([{
         "id": chunk_id,
         "file_path": file_path,
         "section_id": None,

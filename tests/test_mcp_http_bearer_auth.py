@@ -255,7 +255,7 @@ def test_401_response_includes_www_authenticate_header():
 
 
 # ---------------------------------------------------------------------------
-# 0.0.0.0 exposure warning — parity with the API server
+# Non-loopback exposure warning — parity with the API server
 # ---------------------------------------------------------------------------
 
 
@@ -270,17 +270,19 @@ def _run_main_http(monkeypatch: pytest.MonkeyPatch) -> None:
     import palinode.mcp as mcp_mod
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
-    mcp_mod.main_http()
+    mcp_mod.main_http([])
 
 
-def test_default_bind_0000_no_token_warns(
+def test_default_bind_is_loopback_and_does_not_warn(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
-    """The DEFAULT MCP HTTP bind (0.0.0.0, no token, no public intent) must
-    emit a loud exposure warning — not silently serve the tool surface."""
+    """The DEFAULT MCP HTTP bind (no host set, no token, no public intent) is
+    loopback — it neither refuses nor warns about exposure. The explicit
+    0.0.0.0 + no-token case refuses to start (see test_mcp_http_bind_gate)."""
     monkeypatch.delenv("PALINODE_MCP_HTTP_HOST", raising=False)
     monkeypatch.delenv("PALINODE_MCP_SSE_HOST", raising=False)
     monkeypatch.delenv("PALINODE_MCP_BIND_INTENT", raising=False)
+    monkeypatch.delenv("PALINODE_API_ALLOW_UNAUTH", raising=False)
     monkeypatch.delenv("PALINODE_API_TOKEN", raising=False)
     monkeypatch.delenv("PALINODE_API_TOKEN_FILE", raising=False)
 
@@ -288,9 +290,9 @@ def test_default_bind_0000_no_token_warns(
         _run_main_http(monkeypatch)
 
     msgs = [r.getMessage() for r in caplog.records]
-    assert any(
-        "0.0.0.0" in m and "accessible from any network" in m for m in msgs
-    ), f"expected a 0.0.0.0 exposure warning, got: {msgs}"
+    assert not any(
+        "accessible from any network" in m for m in msgs
+    ), f"loopback default must not warn about exposure, got: {msgs}"
 
 
 def test_loopback_bind_does_not_warn(

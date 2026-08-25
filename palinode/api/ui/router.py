@@ -14,8 +14,9 @@ client of existing capabilities:
 
 No mutations, no new business logic. Loopback-only: ``_loopback_guard``
 refuses to render when the API host resolves to a non-loopback address,
-reusing the same bind-intent signal the API/MCP startup gates use
-(``PALINODE_API_BIND_INTENT``).
+reusing the same resolved bind host the API startup gate keys on
+(``PALINODE_API_HOST``); neither ``PALINODE_API_BIND_INTENT=public`` nor
+``PALINODE_API_ALLOW_UNAUTH=1`` lifts it.
 """
 from __future__ import annotations
 
@@ -101,11 +102,13 @@ def _loopback_guard() -> None:
 
     Reuses the API's bind-intent signal: the host comes from
     ``PALINODE_API_HOST`` (falling back to ``config.services.api.host``), the
-    same resolution ``server.py`` uses for its unsafe-bind warning. Unlike the
-    API (which warns and serves), the UI *hard-refuses* on a public bind — it
-    is an unauthenticated, read-everything audit surface and must never be
-    network-exposed in P0. ``PALINODE_API_BIND_INTENT=public`` does NOT lift
-    this refusal; the UI has no auth, so there is no safe public path yet.
+    same resolution ``server.py`` uses for its startup bind gate. Unlike the
+    API (which serves a non-loopback bind with a token, or token-less under
+    ``PALINODE_API_ALLOW_UNAUTH=1``), the UI *hard-refuses* on a public bind —
+    it is an unauthenticated, read-everything audit surface and must never be
+    network-exposed in P0. Neither ``PALINODE_API_BIND_INTENT=public`` nor
+    ``PALINODE_API_ALLOW_UNAUTH=1`` lifts this refusal; the UI has no auth, so
+    there is no safe public path yet.
     """
     host = os.environ.get("PALINODE_API_HOST", config.services.api.host)
     if not _host_is_loopback(host):

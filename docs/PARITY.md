@@ -38,7 +38,6 @@ These operations are **not** required to appear on every surface. They are inten
 | `split-layers`         | CLI + API               | One-shot core-layer migration       |
 | `bootstrap-fact-ids`   | CLI + API               | Backfill fact IDs                   |
 | `migrate-openclaw`     | CLI + API               | One-off importer                    |
-| `migrate-mem0`         | CLI + API               | One-off importer                    |
 | `doctor`               | CLI                     | Local diagnostics                   |
 | `start`, `stop`        | CLI                     | systemd unit control                |
 | `config`, `banner`     | CLI                     | Local UI                            |
@@ -63,6 +62,16 @@ These are the spellings the registry agreed on. Forbidden aliases are flagged in
 | Human recall priority           | `priority` (1–5)     | `importance` frontmatter/API field      |
 | Minimum recall priority filter  | `min_priority`       | `min_importance`                        |
 | Source-surface attribution      | `X-Palinode-Source` header (preferred) or `source` field | per-surface `source` literals |
+
+**`--execute` means one thing: apply mode on a CLI-only maintenance command.**
+`repair-status`, `worktree-reconcile`, and `migrate frontmatter` are dry-run by
+default and take `--execute` to write; they are admin-exempt and have no
+`dry_run` parameter on any other surface, so there is nothing for the flag to
+alias. A registered memory operation that previews (`rollback`, `consolidate`,
+`archive_expired`) spells the switch `dry_run` on every surface (`--dry-run`,
+or the `--dry-run/--no-dry-run` pair where the default is a preview, on the
+CLI); `--execute` as its negation is the forbidden alias above, and the last
+one (`rollback --execute`) has been removed.
 
 ### Categories — exact set
 
@@ -137,7 +146,7 @@ Identifier form per surface: MCP = tool name (`palinode_search`); API = `METHOD 
 
 These memory-semantic operations ship on all of MCP/API/CLI today but are not yet promoted into `REGISTRY` with canonical params. They are tracked under #170 (admin/framework surface is in `INVENTORY_INFRA`, not here):
 
-`dedup_suggest`, `diff`, `entities`, `history` (including the deprecated MCP `palinode_timeline`, CLI `timeline`, and API `GET /timeline/{file_path:path}` aliases), `ingest`/`ingest-url`, `lint`, `orphan_repair`, `prompt` (list/show/activate), `push`, `session_end`, and the trigger `list`/`remove` + `check-triggers` + `search-associative` API endpoints. `depends/_unblocked` is tracked under #97.
+`dedup_suggest`, `diff`, `entities`, `history`, `ingest`/`ingest-url`, `lint`, `orphan_repair`, `prompt` (list/show/activate), `push`, `session_end`, and the trigger `list`/`remove` + `check-triggers` + `search-associative` API endpoints. `depends/_unblocked` is tracked under #97.
 
 Promoting each (registry `Operation` + canonical params + removing its backlog entry) is the per-op work the issue tracks; this contract makes the gap explicit and prevents *new* unregistered ops from slipping in alongside them.
 

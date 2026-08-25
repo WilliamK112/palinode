@@ -34,8 +34,11 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
     ports:
       # Loopback-only by default. Set PALINODE_BIND=0.0.0.0 to expose on the
-      # network — the API will warn, and a public bind wants PALINODE_API_TOKEN
-      # (see deploy/systemd/palinode-api.service.template for the contract).
+      # network — and set PALINODE_API_TOKEN when you do. The container always
+      # binds 0.0.0.0 internally; the app's non-loopback bind gate keys on
+      # PALINODE_API_HOST (unset in the image) and cannot see this host-side
+      # port mapping, so this line is the boundary and the token is on you.
+      # See SECURITY.md#api-authentication for the contract.
       - "${PALINODE_BIND:-127.0.0.1}:${PALINODE_API_PORT:-6340}:6340"
     volumes:
       - ${PALINODE_DATA_DIR:-${HOME}/.palinode}:/data

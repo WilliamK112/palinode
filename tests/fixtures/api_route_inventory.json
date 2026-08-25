@@ -164,12 +164,6 @@
     ]
   ],
   [
-    "/migrate/mem0",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/migrate/openclaw",
     [
       "POST"
@@ -281,12 +275,6 @@
   ],
   [
     "/status",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/timeline/{file_path:path}",
     [
       "GET"
     ]

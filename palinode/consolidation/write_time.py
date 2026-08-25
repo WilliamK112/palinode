@@ -145,7 +145,7 @@ def sweep_pending_markers() -> int:
 
     for marker_path in markers:
         try:
-            with open(marker_path) as f:
+            with open(marker_path, encoding="utf-8") as f:
                 job = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             logger.error(
@@ -277,7 +277,7 @@ def _write_marker(file_path: str, item: dict[str, Any]) -> str:
         "enqueued_at": datetime.now(UTC).isoformat(),
     }
 
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(job, f)
     os.rename(tmp_path, marker_path)
     return marker_path

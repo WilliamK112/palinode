@@ -611,33 +611,22 @@ def test_inventory_buckets_are_disjoint(surface: Surface) -> None:
     )
 
 
-def test_inventory_alias_does_not_add_a_capability_row() -> None:
-    """An alternate name annotates its canonical row instead of inflating inventory."""
-    history = INVENTORY_BACKLOG["mcp"]["palinode_history"]
+def test_inventory_alias_does_not_add_a_capability_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An alternate name annotates its canonical row instead of inflating inventory.
 
-    assert history == InventoryBacklogEntry(170, aliases=("palinode_timeline",))
-    assert "palinode_timeline" not in INVENTORY_BACKLOG["mcp"]
-    assert "palinode_timeline" in inventory_backlog_capabilities("mcp")
-    assert len(inventory_backlog_capabilities("mcp")) == len(INVENTORY_BACKLOG["mcp"]) + 1
-
-
-def test_cli_inventory_alias_does_not_add_a_capability_row() -> None:
-    """The deprecated CLI alias annotates history instead of inflating inventory."""
-    history = INVENTORY_BACKLOG["cli"]["history"]
-
-    assert history == InventoryBacklogEntry(170, aliases=("timeline",))
-    assert "timeline" not in INVENTORY_BACKLOG["cli"]
-    assert "timeline" in inventory_backlog_capabilities("cli")
-    assert len(inventory_backlog_capabilities("cli")) == len(INVENTORY_BACKLOG["cli"]) + 1
-
-
-def test_api_inventory_alias_does_not_add_a_capability_row() -> None:
-    """The deprecated API alias annotates history instead of inflating inventory."""
-    history = INVENTORY_BACKLOG["api"]["GET /history/{file_path:path}"]
-
-    assert history == InventoryBacklogEntry(
-        170, aliases=("GET /timeline/{file_path:path}",)
+    ADR-010 rule: an alias is not a capability. No live alias exists since the
+    deprecated ``timeline`` surfaces were removed; the mechanism stays for the
+    next one, so it is exercised on a synthetic row.
+    """
+    monkeypatch.setitem(
+        INVENTORY_BACKLOG,
+        "mcp",
+        {"palinode_canonical": InventoryBacklogEntry(170, aliases=("palinode_alias",))},
     )
-    assert "GET /timeline/{file_path:path}" not in INVENTORY_BACKLOG["api"]
-    assert "GET /timeline/{file_path:path}" in inventory_backlog_capabilities("api")
-    assert len(inventory_backlog_capabilities("api")) == len(INVENTORY_BACKLOG["api"]) + 1
+
+    assert "palinode_alias" not in INVENTORY_BACKLOG["mcp"]
+    assert inventory_backlog_capabilities("mcp") == frozenset(
+        {"palinode_canonical", "palinode_alias"}
+    )

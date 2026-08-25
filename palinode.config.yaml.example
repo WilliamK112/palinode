@@ -54,25 +54,14 @@ ingestion:
 # Embeddings
 # -----------------------------------------------------------------------------
 embeddings:
-  # Primary embedding backend (used for all core memory)
+  # Embedding backend (Ollama)
   primary:
-    provider: "ollama"
     model: "bge-m3"
     url: "http://localhost:11434"
     dimensions: 1024
     # Timeout for first call (model loading)
     timeout_seconds: 120
     connect_timeout_seconds: 10
-
-  # Secondary embedding backend (used for research ingestion)
-  # Set enabled: false to use primary for everything
-  research:
-    enabled: false
-    provider: "gemini"
-    model: "gemini-embedding-2-preview"
-    dimensions: 768
-    # API key from environment: GEMINI_API_KEY
-    timeout_seconds: 30
 
 # -----------------------------------------------------------------------------
 # Auto-Summary
@@ -170,8 +159,6 @@ consolidation:
   schedule: "0 11 * * 0"  # Sunday 4am PT (11:00 UTC)
   # How many days of daily notes to process (weekly full pass)
   lookback_days: 7
-  # Maximum daily files to process per run
-  max_files: 30
 
   # LLM API for consolidation (any OpenAI-compatible endpoint)
   llm_url: "http://localhost:8000"  # vLLM, Ollama, etc.
@@ -310,7 +297,6 @@ git:
 # Logging
 # -----------------------------------------------------------------------------
 logging:
-  level: "INFO"
   # JSONL operation log (relative to memory_dir)
   operations_log: "logs/operations.jsonl"
   # Log to stdout as well

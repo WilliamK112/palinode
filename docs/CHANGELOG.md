@@ -10,17 +10,197 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+### Removed
+
+### Security
+
+## [0.14.0] — 2026-08-25
+
+**Compatibility:** this release removes three deprecated aliases. The `timeline`
+surface — MCP `palinode_timeline`, CLI `palinode timeline`, and API
+`GET /timeline/{file_path}` — is gone; use `history` with `detail=full`
+(`palinode history --detail full`, `GET /history/{file_path}?detail=full`).
+`palinode rollback --execute` is gone; pass `--no-dry-run` to apply a rollback.
+The MCP `file` argument alias on `palinode_blame` and `palinode_rollback` is
+gone; pass `file_path`, which is now required by the tool schema. Callers still
+using any of these get an unknown-tool, unknown-option, or missing-argument
+error rather than a deprecation warning. The one-off Mem0/Qdrant importer is
+also gone — `palinode migrate-mem0` and `POST /migrate/mem0` no longer exist;
+if you still need to import a Mem0 corpus, run it from the v0.13.0 tag.
+The MCP HTTP transport (`palinode-mcp-http`) now binds `127.0.0.1` by default
+(was `0.0.0.0`) and refuses to start on a non-loopback bind without
+`PALINODE_API_TOKEN` unless `PALINODE_API_ALLOW_UNAUTH=1` — a remote-client
+deployment that relied on the old default must set `PALINODE_MCP_HTTP_HOST`
+(or `--host`) and a token.
+
+### Added
+
+- Cline plugin (`plugins/cline/`), the third supported harness: an `AgentPlugin` whose
+  `beforeModel` hook primes the session with core memories and injects per-turn
+  recall (prospective triggers + strict-threshold search) as a message right
+  after the prompt — never the system prompt, and replayed byte-identical on
+  every later request so the provider's cached prefix survives — and whose
+  `afterRun` hook posts a progressive capture floor to `/session-end`. Fail-open
+  throughout (Palinode down ⇒ no recall this turn, never a blocked turn), with a
+  whole-hook deadline inside Cline's 3 s sandbox limit. Config: `PALINODE_API_URL`,
+  `PALINODE_API_TOKEN` (sent as `Authorization: Bearer`), the shared
+  `PALINODE_HOOK_*` knobs, and `recallProfile`. Docs: `plugins/cline/README.md`,
+  `docs/HARNESSES.md`.
+- Shared TypeScript plugin core (`plugins/core/`): the fail-open REST client,
+  env/profile config resolution, recall→injection formatting, session-start
+  digest and capture-floor payload that the Pi and Cline plugins both consume,
+  compiled into each plugin's `dist/`. Adds `PALINODE_HOOK_RECALL_PROFILE`
+  (`coding` default, `monitoring`, `investigation`, `writing`, `conversation`,
+  `minimal`, `off`) to the Pi extension as well.
+- `palinode doctor` gains `git_commit_ready` (fast, read-only): warns when
+  `git.auto_commit` is on but `memory_dir` is not a git repository or no
+  committer identity resolves there (`git var GIT_COMMITTER_IDENT`).
+- **Release preparation now verifies declared compatibility warnings.** The
+  v0.10.0 runbook asserted the mixed-version `quote_hash` warning was in the
+  changelog section; the pinned section did not have it, and only a late human
+  read of the payload caught it. A breaking change now declares the warning its
+  release must carry, and the cut is refused unless the
+  pinned `## [x.y.z]` section carries a `**Compatibility:**` paragraph
+  containing every declared phrase. A bullet under `### Removed` mentioning the
+  break does not count — that is exactly what v0.10.0 had instead of a warning.
+  The `[0.10.0]` section below now carries the paragraph that shipped publicly.
+
+### Changed
+
+- **Whole-tree frontmatter readers no longer re-parse every memory on every
+  call.** The cross-refs registry the watcher rebuilds after each index
+  now caches per file on `(mtime_ns, size)` and re-reads only what changed, so a
+  reindex of N files costs N parses instead of N²; its per-candidate match
+  patterns are compiled once instead of on every scan. `/list`, the session-init
+  digest, `/generate-summaries`, `/health/auto-summary` and the search
+  visibility gate share one bounded frontmatter cache keyed on the frontmatter
+  block text (`parser.parse_frontmatter`) — a body-only edit is a hit, a
+  frontmatter edit is a miss, no mtime granularity to trust. Results and
+  ordering are byte-identical to before; the files stay the source of truth.
+  On a 1k-file corpus: cross-refs pass 376 → 17 ms/file, `/list` 221 → 115 ms,
+  session digest scan 140 → 46 ms.
+- **SQLite store runs in WAL mode with an explicit busy timeout and two new
+  indexes.** `init_db()` sets `PRAGMA journal_mode=WAL` (persistent —
+  existing databases migrate on the next start) so a long vector read no longer
+  blocks the watcher's write and vice-versa; `get_db()` opens with a 10s busy
+  timeout and `synchronous=NORMAL`. `CREATE INDEX IF NOT EXISTS` adds
+  `chunks(file_path)` (reconcile / delete / recall-stat path) and
+  `chunks(created_at)` (`list_recent` behind every empty-query search).
+  WAL leaves `.db-wal` / `.db-shm` sidecars next to the database while a
+  connection is open; both were already gitignored. A Python built without
+  loadable-extension support now fails with a `RuntimeError` naming the fix
+  instead of an `AttributeError` deep in the first query.
+- Rewrote the generated watcher docstrings in plain language while preserving
+  the existing behavior and human-written lifecycle documentation ([#139](https://github.com/phasespace-labs/palinode/pull/139),
+  thanks [@mercael91](https://github.com/mercael91)).
+- Rewrote the generated ingestion-pipeline docstrings and inline comments in
+  plain language ([#140](https://github.com/phasespace-labs/palinode/pull/140),
+  thanks [@JodVarun](https://github.com/JodVarun)).
+- **Deploy assets and docs now name `palinode-mcp-http`, not the deprecated
+  `palinode-mcp-sse` alias.** The systemd and NixOS MCP units,
+  `server.json` (MCP Registry manifest), README, SECURITY, MCP-SETUP,
+  MCP-INSTALL-RECIPES, and INSTALL-CLAUDE-CODE all pointed new installs at the
+  alias, and the env-var tables documented only `PALINODE_MCP_SSE_HOST/PORT` —
+  so the deprecation could never be executed. All of them now use
+  `palinode-mcp-http` and `PALINODE_MCP_HTTP_HOST/PORT`. The alias and the
+  `_SSE_` env vars still work but log a deprecation warning at startup
+  (canonical names win when both are set); the one-place migration note lives
+  in `docs/MCP-SETUP.md`. Removal is a follow-up release. The systemd/nix units
+  also stopped passing `--port`, which `main_http()` never parsed — the port now
+  reaches the server via `PALINODE_MCP_HTTP_PORT`, so `MCP_PORT` /
+  `services.palinode-mcp.port` take effect for non-default values. New
+  `tests/test_mcp_sse_alias_deprecation.py` guards the shipping tree against
+  reintroducing the alias.
+
+### Fixed
+
+- `palinode-mcp-http` (and the deprecated `palinode-mcp-sse` alias) now honour
+  `--host` / `--port` instead of silently ignoring every command-line argument.
+  Precedence is flag > `PALINODE_MCP_HTTP_HOST` / `_PORT` env var >
+  default, so a unit that passes `--port 6350` binds 6350 rather than 6341;
+  unknown flags or positionals exit non-zero with a usage message. The shipped
+  systemd/Nix units already pass the port via env and are unaffected.
+- **Derived-slug collisions preserve every memory ([#132](https://github.com/phasespace-labs/palinode/pull/132)).** Saves whose
+  opening lines derive the same slug now choose a free suffix, while repeated
+  identical saves reuse their existing path and explicit slugs retain update
+  semantics.
+
+- Every text-mode file read/write in `palinode/` now names `encoding="utf-8"`
+  ([#93](https://github.com/phasespace-labs/palinode/issues/93)). Memory files
+  are written as UTF-8, but ~50 read sites (indexer, store freshness/associative
+  recall, consolidation executor/runner/layer-split, enrichment, `palinode init`
+  scaffolding, config load, ingest) used the locale default — cp1252 on native
+  Windows — so the first em dash or emoji raised `UnicodeDecodeError`. Git and
+  other subprocess output is decoded as UTF-8 with `errors="replace"` so a
+  stray byte in a commit message or log line degrades to U+FFFD instead of
+  crashing the tool. An AST guard test now fails the build on any new
+  encoding-less text I/O in `palinode/`, and a round-trip test proves a
+  non-ASCII memory survives under an ASCII locale.
+- `git_committed` is now truthful. `commit_memory_files` returned True
+  whenever `git add`/`git commit` merely spawned, so a memory dir that was never
+  `git init`-ed reported `git_committed=true` on every save while
+  `fatal: not a git repository` was swallowed; the same swallow hid a missing
+  git identity and `index.lock` contention. The choke point now checks exit
+  codes (a genuine "nothing to commit" is still success), `/save` returns
+  `git_committed: false` plus a new `git_error` reason, the save log line and
+  the MCP `palinode_save` warning carry that reason, and
+  `git_tools.try_commit_memory_files` exposes the outcome to callers.
+- **Watcher debounce coalesces a write burst instead of dropping its tail.**
+  An event inside `debounce_seconds` of the last one for the same path used to be
+  ignored outright, so `save` → `cross_refs` rewrite (well inside 1 s) left the
+  pre-rewrite body in the index until the file was touched again; the same for any
+  editor that writes twice (atomic-save-then-chmod, Obsidian, `git checkout`). Each
+  path now arms a trailing-edge `threading.Timer` that re-reads the file when it
+  fires and is cancelled-and-re-armed by a new event, so the *final* content is what
+  gets indexed, and one burst costs one embed pass. The unbounded `last_processed`
+  dict is gone — the per-path timer table is evicted on fire, and `shutdown()`
+  cancels any still armed. Passes on `/reindex` are unaffected (they call the
+  synchronous primitive directly).
+- **MCP tool failures now set `is_error` on the `CallToolResult`**, derived from the
+  same `DISPATCH_ERROR_PREFIXES` classification the audit log already used, so hosts
+  can tell "the tool failed" from "this is the answer". Required arguments are
+  validated against each tool's own `inputSchema` before dispatch — a missing one now
+  reads `Error: file_path is required` instead of the raw `KeyError` text
+  `Error: 'file_path'` — and non-numeric values for integer/number arguments (a bad
+  `limit`) are named the same way.
+- **The `palinode` CLI and the stdio MCP server now send `Authorization: Bearer`**
+  when `PALINODE_API_TOKEN` / `PALINODE_API_TOKEN_FILE` is set, using the same
+  loader the API's auth middleware reads. The middleware has no loopback
+  exemption, so following the docs and setting the token had made every own-client
+  call 401. The MCP server also now holds one lazily-created
+  `httpx.AsyncClient` (closed on shutdown) instead of opening a fresh client per
+  tool call.
 - **Reindexing no longer blocks the API event loop.** The `/reindex` handler
   now runs in FastAPI's threadpool and uses an atomic non-blocking process-wide
   lock, preserving immediate 409 responses for concurrent requests while
   `/health` and other endpoints stay responsive.
-- **CLI startup no longer imports the FastAPI application (#143).** The
+- **CLI startup no longer imports the FastAPI application ([#143](https://github.com/phasespace-labs/palinode/issues/143)).** The
   Obsidian sync and frontmatter migration commands now use their core-layer
   helpers directly, avoiding the API router and provenance-UI dependency tree
   (and its configuration-log side effects) for ordinary CLI invocations.
 - Preserve the embedding-backend 503 response for `/triggers` and
-  `/check-triggers` instead of converting outages into generic 500 errors.
-- **Complete text output for `palinode lint` (#113).** The human-readable report
+  `/check-triggers` instead of converting outages into generic 500 errors
+  ([#141](https://github.com/phasespace-labs/palinode/pull/141), thanks
+  [@JulianZJN](https://github.com/JulianZJN)).
+- **`EmbeddingUnavailable` is now mapped to a typed 503 by one app-level
+  exception handler.** Any API route that lets an embedder outage
+  escape — including routes with no `try/except` of their own — now returns
+  `503` with the typed operator-facing message (backend, model, `palinode
+  doctor` recovery hint) and one WARNING line, instead of a generic
+  `500 Internal Server Error` plus a 30-frame traceback in the API log. The
+  per-route `_embedding_unavailable_503` helper is gone; the search and
+  trigger routes keep a bare `except EmbeddingUnavailable: raise` so the
+  outage escapes their broad `except Exception -> 500` wrapper and reaches
+  the handler. Verified against the real ASGI app with a real `OllamaClient`
+  pointed at a dead loopback port.
+- Consolidation no longer archives every daily note when any one project group
+  compacts. Notes belonging to a group whose LLM call or executor step failed,
+  or that had no project document to compact into, stay in `daily/` for the
+  next run instead of being retired unconsolidated. The run result now carries
+  `projects_failed`, `projects_skipped`, `notes_archived`, `notes_left_in_place`
+  (plus `failed_projects` when non-empty), and `status` is `partial` rather than
+  `success` when a group failed — for both the weekly and nightly passes.
+- **Complete text output for `palinode lint` ([#113](https://github.com/phasespace-labs/palinode/issues/113)).** The human-readable report
   now includes wiki-contract drift and missing human priority findings, including
   explicit clean-state lines, instead of exposing those checks only through JSON.
   It also reports the scanned-file total and has a coverage guard that fails when
@@ -28,12 +208,92 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Removed
 
+- **Three deprecated aliases, all well past their stated grace.** The
+  `timeline` alias of `history --detail full` was deprecated in 0.8.6 "for one
+  release cycle" and survived twenty-two; it is removed from all three surfaces
+  (MCP `palinode_timeline`, CLI `timeline`, API `GET /timeline/{file_path}`),
+  along with the parity-inventory annotations that existed only to stop
+  counting it. `rollback --execute` (an alias for `--no-dry-run`) is
+  removed, so `--execute` now means one thing across the CLI — apply mode on
+  the dry-run-by-default maintenance commands (`repair-status`,
+  `worktree-reconcile`, `migrate frontmatter`), documented in `docs/PARITY.md`.
+  The MCP `file` argument alias for `file_path` on `palinode_blame` and
+  `palinode_rollback` is removed and `file_path` is now declared required in
+  both schemas. See the compatibility note at the top of this section for the
+  replacements.
+- **Verified-dead code pruned.**
+  Removed the never-wired Gemini "research" embedding backend
+  (`embedder.embed_query`, the `backend=` parameter on `embedder.embed`, the
+  `embeddings.research` config section, and the `GEMINI_API_KEY` env hook —
+  future Gemini work is tracked in [#4](https://github.com/phasespace-labs/palinode/issues/4), and this abandoned scaffold made it
+  look half-built), the one-off Mem0/Qdrant importer (`palinode/migration/mem0_*`,
+  `run_mem0_backfill.py`, `palinode migrate-mem0`, `POST /migrate/mem0` — see
+  the compatibility note above), the store-level `upsert_chunks` /
+  `upsert_entities` wrappers that production indexing no longer used
+  (`index_file → reconcile → write_chunk_row / replace_entities`; the tests
+  that seeded rows through them now use a test-only helper on the same
+  primitives), the KU-compat *reader* `parser.parse_ku_fields` (nothing read
+  it back — the write side under `ku_compat.enabled` stays, and PROGRAM.md now
+  says the fields are write-only interop), and a handful of unread config
+  keys — `logging.level` (services read `services.api.log_level`),
+  `consolidation.max_files`, `embeddings.primary.provider`, and the deprecated
+  `decay.importance_nudge` — from the dataclasses and
+  `palinode.config.yaml.example`. The loader ignores unknown keys, so an
+  existing config that still sets any of these keeps loading unchanged. Also
+  dropped the dead CLI-client methods `migrate_openclaw` / `health_check`,
+  `OllamaClient.chat` (`/api/chat` — only `generate` and `chat_completions`
+  are used), the `TYPED_LINK_FIELDS` constant, the `_cosine_similarity` alias,
+  the ignored `check_model_context(url=)` and `get_entity_graph(depth=)`
+  parameters, and their tests. Zero behaviour change.
+
 ### Security
 
+- **Breaking for the MCP HTTP transport: loopback default + bind gate.**
+  `palinode-mcp-http` (and the deprecated `palinode-mcp-sse` alias) used to bind
+  `0.0.0.0` by default and only refuse to start when `PALINODE_MCP_BIND_INTENT=
+  public` was also set — the old intent-keyed shape removed from the API. It
+  now mirrors the API exactly: the bind host resolves as `--host` >
+  `PALINODE_MCP_HTTP_HOST` > **`127.0.0.1`** (new default), and any non-loopback
+  bind with no `PALINODE_API_TOKEN` / `PALINODE_API_TOKEN_FILE` **refuses to
+  start** with the same `REFUSING TO START` message unless the one shared opt-out
+  `PALINODE_API_ALLOW_UNAUTH=1` is set (no MCP-specific twin — one knob per
+  deployment; it then warns on every start). `PALINODE_MCP_BIND_INTENT=public`
+  keeps meaning "token required". The transport has no token of its own:
+  `PALINODE_API_TOKEN` both gates `/mcp/` and protects the API it proxies to, so
+  the check is "is the API this transport proxies to protected". **Affected
+  configuration:** any deployment that relied on the old `0.0.0.0` default for
+  remote MCP clients, and any explicit non-loopback `PALINODE_MCP_HTTP_HOST`
+  with no token. **What to set:** `PALINODE_MCP_HTTP_HOST=0.0.0.0` (or
+  `--host`) plus `PALINODE_API_TOKEN` — or `PALINODE_API_ALLOW_UNAUTH=1` on a
+  network-isolated host. The shipped systemd MCP unit and Nix module now set the
+  bind explicitly (`PALINODE_MCP_HTTP_HOST=0.0.0.0`; Nix `services.palinode-mcp.host`)
+  and pass the same opt-out through (`PALINODE_API_ALLOW_UNAUTH` installer
+  variable; Nix reuses `services.palinode.allowUnauth`), so they require the
+  token — via `systemctl edit palinode-mcp` — exactly like the API unit.
+  `SECURITY.md` now documents the MCP transport's auth story (it had said the
+  transport had no auth layer, which has been untrue since the shared bearer
+  middleware landed).
+- **Breaking for token-less network binds.** The API startup gate now keys on the
+  resolved bind host, not on `PALINODE_API_BIND_INTENT`: any non-loopback
+  `PALINODE_API_HOST` (anything other than `127.0.0.1` / `localhost` / `::1`, e.g.
+  `0.0.0.0` or a LAN/Tailscale address) with no `PALINODE_API_TOKEN` /
+  `PALINODE_API_TOKEN_FILE` now **refuses to start** instead of warning and serving
+  unauthenticated. **Affected configuration:** `PALINODE_API_HOST=<non-loopback>`
+  with no token — including the shipped systemd unit and Nix module, which now pass
+  the bind host through to the app. **What to set:** `PALINODE_API_TOKEN` (or, for a
+  deliberately token-less, network-isolated host such as Tailscale-only, the new
+  explicit opt-out `PALINODE_API_ALLOW_UNAUTH=1`; the API then warns on every start).
+  `PALINODE_API_BIND_INTENT=public` keeps its meaning — token required, bind warning
+  suppressed — and is no longer what the safety check depends on. Loopback binds and
+  token-bearing binds are unaffected; the Docker image binds `0.0.0.0` inside the
+  container with `PALINODE_API_HOST` unset, so `docker-compose.yml`'s host-side
+  loopback port mapping remains the boundary there. New systemd installer variable
+  `PALINODE_API_ALLOW_UNAUTH` and Nix option `services.palinode.allowUnauth`.
 - **Injection scanning blocks five additional `you are now` jailbreak shapes
-  (#126).** The enumerated matcher now covers uncensored, DAN-mode, evil or
+  ([#126](https://github.com/phasespace-labs/palinode/issues/126)).** The enumerated matcher now covers uncensored, DAN-mode, evil or
   administrator identities, and claims of bypassing safety rules without
-  widening the ordinary technical-prose cases fixed in #74.
+  widening the ordinary technical-prose cases fixed in [#74](https://github.com/phasespace-labs/palinode/issues/74).
+
 
 ## [0.13.0] — 2026-08-14
 

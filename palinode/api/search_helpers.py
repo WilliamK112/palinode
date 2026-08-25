@@ -201,12 +201,6 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
-# Back-compat alias: ``_cosine_similarity`` and ``_cosine`` were two
-# byte-identical implementations in the old _shared.py. Collapsed to one;
-# the alias keeps the historical name importable for any caller/re-export.
-_cosine_similarity = _cosine
-
-
 def _read_memory_body(file_path: str) -> str | None:
     """Read a memory file's full body for re-embedding.  Returns None on miss.
 
@@ -339,7 +333,7 @@ def _check_session_end_dedup(
     best_slug: str | None = None
     best_sim = 0.0
     for slug, emb in recent:
-        sim = _cosine_similarity(new_emb, emb)
+        sim = _cosine(new_emb, emb)
         if sim > best_sim:
             best_sim = sim
             best_slug = slug

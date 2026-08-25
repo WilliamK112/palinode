@@ -60,7 +60,7 @@
           #   palinode-api        → palinode.api.server:main
           #   palinode-mcp        → palinode.mcp:main
           #   palinode-mcp-http   → palinode.mcp:main_http
-          #   palinode-mcp-sse    → palinode.mcp:main_sse  (deprecated alias)
+          #   palinode-mcp-sse    → palinode.mcp:main_sse  (deprecated alias of palinode-mcp-http; removal planned)
           #   palinode-watcher    → palinode.indexer.watcher:main
 
           # Skip the default check phase until sqlite-vec and mcp are in nixpkgs

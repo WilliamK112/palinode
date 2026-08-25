@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +181,6 @@ def test_search_returns_results(client, tmp_path):
     fp = resp.json()["file_path"]
 
     # 2. Manually index the file into the DB (watcher isn't running)
-    from palinode.core import store
     chunks = [{
         "id": "search-target-1",
         "file_path": fp,
@@ -192,7 +192,7 @@ def test_search_returns_results(client, tmp_path):
         "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "embedding": _fake_embed("x"),
     }]
-    store.upsert_chunks(chunks)
+    upsert_chunks(chunks)
 
     # 3. Search
     resp = client.post("/search", json={
@@ -568,8 +568,7 @@ def test_full_save_search_roundtrip(client, tmp_path):
     assert os.path.exists(fp)
 
     # Step 2: manually index (watcher not running)
-    from palinode.core import store
-    store.upsert_chunks([{
+    upsert_chunks([{
         "id": "roundtrip-anchor-1",
         "file_path": fp,
         "section_id": None,

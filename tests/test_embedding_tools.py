@@ -30,7 +30,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from palinode.api.server import app
-from palinode.core import store
 from palinode.core.config import config
 from palinode.core.embedding_preprocess import (
     AUTO_FOOTER_MARKER,
@@ -38,6 +37,7 @@ from palinode.core.embedding_preprocess import (
     strip_auto_footer,
     strip_wikilinks,
 )
+from tests._store_helpers import upsert_chunks
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def _ingest(tmp_path, rel_path: str, content: str) -> None:
     """
     _write_memory(tmp_path, rel_path, content)
     chunk_id = hashlib.sha256(rel_path.encode()).hexdigest()[:32]
-    store.upsert_chunks(
+    upsert_chunks(
         [
             {
                 "id": chunk_id,

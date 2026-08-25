@@ -18,7 +18,7 @@ snippet, restart sequence, verification step, and troubleshooting table for that
 ## Prerequisites
 
 - Palinode API running (`palinode-api` on port 6340)
-- For HTTP transport: `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/` — name is historical)* running on port 6341
+- For HTTP transport: `palinode-mcp-http` *(serves streamable-HTTP at `/mcp/`)* running on port 6341 — `palinode-mcp-http --host 0.0.0.0 --port 6341` for remote clients; flags override `PALINODE_MCP_HTTP_HOST` / `PALINODE_MCP_HTTP_PORT`, which override the defaults (`127.0.0.1`, `6341`). A non-loopback bind requires `PALINODE_API_TOKEN` (or the explicit opt-out `PALINODE_API_ALLOW_UNAUTH=1`) — see [SECURITY.md](../SECURITY.md#the-mcp-http-transport)
 - For stdio transport: `pip install -e .` so `palinode-mcp` is on PATH
 
 ---
@@ -88,7 +88,7 @@ Edit `claude_desktop_config.json`:
 }
 ```
 
-> `palinode-mcp-sse` serves **streamable-HTTP** at `/mcp/` — the binary name is historical. Configure clients with `"type": "http"` (not `"type": "sse"`). Always include the trailing slash in the URL.
+> `palinode-mcp-http` serves **streamable-HTTP** at `/mcp/`. Configure clients with `"type": "http"` (not `"type": "sse"`). Always include the trailing slash in the URL.
 
 **stdio (local):**
 ```json
@@ -164,11 +164,15 @@ The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive acr
 | `PALINODE_DIR` | `~/.palinode` | Memory file directory |
 | `PALINODE_API_HOST` | `127.0.0.1` | API server host (MCP connects here) |
 | `PALINODE_API_PORT` | `6340` | API server port |
-| `PALINODE_MCP_SSE_HOST` | `0.0.0.0` | Bind address for HTTP MCP server |
-| `PALINODE_MCP_SSE_PORT` | `6341` | Port for HTTP MCP server |
+| `PALINODE_MCP_HTTP_HOST` | `127.0.0.1` | Bind address for HTTP MCP server (`palinode-mcp-http --host …` overrides it). Non-loopback requires `PALINODE_API_TOKEN` or `PALINODE_API_ALLOW_UNAUTH=1` — the transport refuses to start otherwise. |
+| `PALINODE_MCP_HTTP_PORT` | `6341` | Port for HTTP MCP server (`palinode-mcp-http --port …` overrides it) |
 | `PALINODE_MCP_SURFACE` | `full` | MCP tool advertisement surface: `full` advertises every tool; `core` advertises the hot-path subset while keeping dispatch capability unchanged |
 | `PALINODE_PROJECT` | _(auto-detect from CWD)_ | Project context for ambient search |
-| `PALINODE_API_BIND_INTENT` | _(unset)_ | Set to `public` to suppress the 0.0.0.0 binding warning for intentional network-exposed deployments (e.g., Tailscale). The warning still fires when this is unset and the API binds to `0.0.0.0`. |
+| `PALINODE_API_TOKEN` | _(unset)_ | Bearer token for the API **and** the HTTP MCP server (which has no token of its own — it gates `/mcp/` with this and sends the same token on its own calls to the API). **Required** when `PALINODE_API_HOST` or `PALINODE_MCP_HTTP_HOST` is non-loopback — the server refuses to start otherwise (see [SECURITY.md](../SECURITY.md#api-authentication)). |
+| `PALINODE_API_ALLOW_UNAUTH` | _(unset)_ | Set to `1` to let the API and the HTTP MCP server start token-less on a non-loopback bind (network-isolated hosts only). One knob for both; each warns on every start. |
+| `PALINODE_API_BIND_INTENT` | _(unset)_ | Set to `public` to confirm intentional public exposure and suppress the non-loopback bind warning. Requires `PALINODE_API_TOKEN`. |
+
+> **Deprecated names.** `palinode-mcp-sse` (console script) and `PALINODE_MCP_SSE_HOST` / `PALINODE_MCP_SSE_PORT` (env vars) are accepted as aliases for `palinode-mcp-http` and `PALINODE_MCP_HTTP_HOST` / `PALINODE_MCP_HTTP_PORT`, log a deprecation warning at startup, and will be removed in a future release. When both names are set, the `_HTTP_` name wins. Migrate systemd/nix units by editing `ExecStart`, then `systemctl daemon-reload`.
 
 ---
 
@@ -185,7 +189,6 @@ The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive acr
 | `palinode_read` | Read a specific memory file |
 | `palinode_entities` | Entity graph traversal |
 | `palinode_history` | Git history of a memory file; `detail="full"` adds per-commit diffs |
-| `palinode_timeline` | **Deprecated** — alias for `palinode_history` with `detail="full"`; will be removed in v0.9 |
 | `palinode_blame` | Per-line provenance for a memory file |
 | `palinode_trace` | Composed provenance lineage for a memory file: sources, saved/changed commits, supersession, typed links, recall |
 | `palinode_diff` | What changed across memory in the last N days |
@@ -229,7 +232,7 @@ Search palinode for "recent project decisions"
 
 If the status check fails, verify:
 1. `palinode-api` is running and reachable (`curl http://your-server:6340/status`)
-2. For HTTP transport: `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/`)* is running (`curl http://your-server:6341/mcp/`)
+2. For HTTP transport: `palinode-mcp-http` *(serves streamable-HTTP at `/mcp/`)* is running (`curl http://your-server:6341/mcp/`)
 3. For stdio: `palinode-mcp` is on PATH (`which palinode-mcp`)
 4. `PALINODE_DIR` exists and contains at least one `.md` file
 

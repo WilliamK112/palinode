@@ -444,7 +444,7 @@ def _prompts_dir() -> str:
 def _read_prompt_file(file_path: str) -> dict[str, Any]:
     """Read a prompt file and return its metadata + content."""
     from palinode.core import parser
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         raw = f.read()
     metadata, sections = parser.parse_markdown(raw)
     # Reconstruct body from sections
@@ -539,7 +539,7 @@ def activate_prompt_api(name: str) -> dict[str, Any]:
     changed_files: list[str] = []
 
     def _set_active(file_path: str, active: bool) -> None:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
         # Replace active: field in frontmatter
         new_text = re.sub(

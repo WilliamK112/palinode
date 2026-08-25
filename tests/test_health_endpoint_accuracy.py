@@ -9,8 +9,8 @@ store.get_stats() — the same code path used by /status — so both endpoints
 stay in sync.
 
 Test strategy:
-- Populate a real tmp_path-backed SQLite DB via store.upsert_chunks() and
-  store.upsert_entities() (no mocks; project standard is real DBs in tmp_path)
+- Populate a real tmp_path-backed SQLite DB via upsert_chunks() and
+  upsert_entities() (no mocks; project standard is real DBs in tmp_path)
 - Hit GET /health via FastAPI TestClient used as a context manager so the
   lifespan startup runs and store.init_db() creates the schema before inserts
 - Assert counts match exactly
@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from palinode.api.server import app
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_entities
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ def client(tmp_path, monkeypatch):
 def _insert_chunks(n: int) -> None:
     """Insert *n* minimal rows directly into the `chunks` table.
 
-    We bypass store.upsert_chunks() because that function also inserts into
+    We bypass upsert_chunks() because that function also inserts into
     chunks_vec, which requires a valid float-array embedding.  For counting
     tests we only need rows in `chunks`; a direct INSERT is faster and avoids
     the Ollama dependency.
@@ -92,9 +93,9 @@ def _insert_chunks(n: int) -> None:
 
 
 def _insert_entities(entity_refs: list[str]) -> None:
-    """Insert entity rows directly via store.upsert_entities()."""
+    """Insert entity rows directly via upsert_entities()."""
     metadata = {"entities": entity_refs, "category": "insights"}
-    store.upsert_entities("tests/fixture-entities.md", metadata)
+    upsert_entities("tests/fixture-entities.md", metadata)
 
 
 # ---------------------------------------------------------------------------

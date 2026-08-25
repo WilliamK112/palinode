@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 
 from palinode.api._util import _retrieval_logger
 from palinode.core import git_tools
@@ -39,7 +39,7 @@ def history_api(
     Uses --follow to track renames and includes diff stats per commit.
 
     ``detail="full"`` additionally includes the unified diff body per commit
-    (commit-level evolution view, formerly the /timeline endpoint).
+    (commit-level evolution view).
     """
     if detail not in ("summary", "full"):
         raise HTTPException(status_code=422, detail="detail must be 'summary' or 'full'")
@@ -61,38 +61,6 @@ def history_api(
         mode="explicit",
     )
     return {"file": file_path, "history": commits}
-
-
-@router.get("/timeline/{file_path:path}")
-def timeline_api(
-    request: Request,
-    file_path: str,
-    limit: int = 20,
-) -> dict[str, Any]:
-    """Deprecated: use GET /history/{file_path}?detail=full instead.
-
-    Kept for one release cycle for backward compatibility.  Returns the same
-    response as /history?detail=full with a ``Deprecation`` response header.
-    """
-    from fastapi.responses import JSONResponse as _JSONResponse
-    import logging as _logging
-    _logging.getLogger("palinode.api").warning(
-        "GET /timeline is deprecated — use GET /history/%s?detail=full", file_path
-    )
-    try:
-        commits = git_tools.history(file_path, limit, detail="full")
-    except PathTraversalError as exc:
-        raise _http_path_error(exc)
-    if not commits:
-        import os as _os
-        full_path = _os.path.join(config.memory_dir, file_path)
-        if not _os.path.exists(full_path):
-            raise HTTPException(status_code=404, detail="File not found")
-    body = {"file": file_path, "history": commits}
-    return _JSONResponse(
-        content=body,
-        headers={"Deprecation": "true", "Link": f'</history/{file_path}?detail=full>; rel="successor-version"'},
-    )
 
 
 @router.get("/diff")

@@ -1,6 +1,6 @@
 # Installing Palinode with Claude Code
 
-Palinode gives Claude Code persistent memory via MCP — 28 tools for searching, saving, diagnosing, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
+Palinode gives Claude Code persistent memory via MCP — 29 tools for searching, saving, diagnosing, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
 
 ## Prerequisites
 
@@ -126,8 +126,9 @@ Best for remote setups. Works with **any** MCP client — no SSH pipes, no local
 On your server, start the Streamable HTTP MCP server:
 
 ```bash
-PALINODE_DIR=~/.palinode palinode-mcp-sse
-# Listens on 0.0.0.0:6341
+PALINODE_DIR=~/.palinode PALINODE_API_TOKEN=<your-token> palinode-mcp-http --host 0.0.0.0
+# Listens on 0.0.0.0:6341 (the default bind is 127.0.0.1; a non-loopback bind
+# requires PALINODE_API_TOKEN, or PALINODE_API_ALLOW_UNAUTH=1 to opt out)
 ```
 
 Or use systemd (recommended):
@@ -144,7 +145,10 @@ WorkingDirectory=/path/to/palinode
 Environment="PALINODE_DIR=/path/to/memory-data"
 Environment="PALINODE_API_HOST=127.0.0.1"
 Environment="PALINODE_API_PORT=6340"
-ExecStart=/path/to/palinode/venv/bin/palinode-mcp-sse
+Environment="PALINODE_MCP_HTTP_HOST=0.0.0.0"
+# Non-loopback bind: add PALINODE_API_TOKEN via `systemctl edit` (or set
+# PALINODE_API_ALLOW_UNAUTH=1 on a network-isolated host).
+ExecStart=/path/to/palinode/venv/bin/palinode-mcp-http
 Restart=always
 RestartSec=5
 
@@ -235,28 +239,33 @@ In your MCP client config, attach the token via the `headers` block:
 }
 ```
 
-> **Scope today:** the auth check is enforced on the **API server** (port
-> 6340), which the MCP server proxies to. The **MCP server itself** (port
-> 6341) does not yet enforce auth at the HTTP transport — that's a
-> follow-up. If you expose port 6341 directly to the network, front it
-> with a reverse proxy or restrict access via Tailscale ACLs / a firewall
-> until the MCP-side auth lands.
+> **Scope:** the same `PALINODE_API_TOKEN` protects both the **API server**
+> (port 6340) and the **MCP HTTP server** (port 6341), which has no token of
+> its own — it requires the bearer on `/mcp/` and sends the same token to the API it
+> proxies to. Both refuse to start on a non-loopback bind without the token
+> unless `PALINODE_API_ALLOW_UNAUTH=1` (one opt-out for both).
 
-If you set `PALINODE_API_BIND_INTENT=public` (the explicit public-exposure
-flag) without also setting `PALINODE_API_TOKEN`, the API server refuses to
-start with a clear error message. Generate the token first, then set both.
+If the API's bind host (`PALINODE_API_HOST`) is anything other than loopback
+(`127.0.0.1`, `localhost`, `::1`) and no `PALINODE_API_TOKEN` is set, the API
+server refuses to start with a clear error message — generate the token
+first, then set both. For a deliberately token-less host that is already
+network-isolated (Tailscale-only, firewalled), set
+`PALINODE_API_ALLOW_UNAUTH=1` to opt out; the server then starts and warns on
+every start. `PALINODE_API_BIND_INTENT=public` still means "token required"
+and additionally suppresses that warning.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PALINODE_MCP_SSE_HOST` | `0.0.0.0` | Bind address for MCP HTTP server |
-| `PALINODE_MCP_SSE_PORT` | `6341` | Port for MCP HTTP server |
-| `PALINODE_API_HOST` | `127.0.0.1` | Where MCP server sends API requests |
+| `PALINODE_MCP_HTTP_HOST` | `127.0.0.1` | Bind address for MCP HTTP server (`--host` overrides). Non-loopback requires `PALINODE_API_TOKEN` (or `PALINODE_API_ALLOW_UNAUTH=1`) |
+| `PALINODE_MCP_HTTP_PORT` | `6341` | Port for MCP HTTP server |
+| `PALINODE_API_HOST` | `127.0.0.1` | Where MCP server sends API requests; also the API server's bind host — non-loopback requires `PALINODE_API_TOKEN` (or `PALINODE_API_ALLOW_UNAUTH=1`) |
 | `PALINODE_API_PORT` | `6340` | API server port |
 | `PALINODE_API_TOKEN` | (unset) | If set, every API request must carry `Authorization: Bearer <value>` (`/health` excepted). |
 | `PALINODE_API_TOKEN_FILE` | (unset) | Path to a file containing the token. Used when `PALINODE_API_TOKEN` is unset. Whitespace stripped. |
-| `PALINODE_API_BIND_INTENT` | (unset) | Set to `public` to confirm intentional non-loopback bind. Requires `PALINODE_API_TOKEN`; the API refuses to start otherwise. |
+| `PALINODE_API_ALLOW_UNAUTH` | (unset) | Set to `1` to let the API and the MCP HTTP server start token-less on a non-loopback bind (network-isolated hosts only). One knob for both; each warns on every start. |
+| `PALINODE_API_BIND_INTENT` | (unset) | Set to `public` to confirm intentional public exposure and suppress the non-loopback bind warning. Requires `PALINODE_API_TOKEN`; the API refuses to start otherwise. |
 
 ---
 
@@ -344,7 +353,6 @@ If something doesn't look right, run `palinode doctor` from your terminal for a 
 | `palinode_cluster_neighbors` | Surface implicit related-file relationships not yet captured by `[[wikilinks]]` |
 | `palinode_topic_coverage` | Before-ingest check: is this topic phrase already covered by a wiki page? |
 | `palinode_depends` | Dependency tree for milestones/tasks; `unblocked=true` lists items ready to work on |
-| `palinode_timeline` | Deprecated alias — use `palinode_history` with `detail="full"` instead |
 
 ---
 

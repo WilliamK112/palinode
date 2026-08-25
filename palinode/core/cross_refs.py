@@ -25,6 +25,7 @@ layout and the ``/ui/memory/<path>`` route), e.g. ``decisions/drop-legacy``.
 """
 from __future__ import annotations
 
+import functools
 import glob
 import logging
 import os
@@ -34,6 +35,7 @@ from typing import Any
 import frontmatter
 
 from palinode.core import git_tools
+from palinode.core import parser as _parser
 from palinode.core.config import config
 
 logger = logging.getLogger("palinode.cross_refs")
@@ -65,6 +67,14 @@ def _is_distinctive_title(title: str, min_token_len: int) -> bool:
     return len(t.split()) >= 2 or len(t) >= min_token_len
 
 
+@functools.lru_cache(maxsize=16384)
+def _candidate_pattern(candidate: str) -> re.Pattern[str]:
+    """Compiled whole-token pattern for one candidate. Cached across calls: a
+    registry of N memories yields up to 3N patterns, past the ``re`` module's
+    own 512-entry cache, so without this every scan recompiled all of them."""
+    return re.compile(r"(?<![\w-])" + re.escape(candidate) + r"(?![\w-])")
+
+
 def _whole_match(candidate: str, text_lower: str) -> bool:
     """Whole-token / whole-phrase, case-insensitive match.
 
@@ -72,14 +82,37 @@ def _whole_match(candidate: str, text_lower: str) -> bool:
     match inside ``rapidly`` and ``drop-legacy`` matches as a unit. ``candidate``
     is already lowercased; ``text_lower`` is the lowercased body.
     """
-    pattern = r"(?<![\w-])" + re.escape(candidate) + r"(?![\w-])"
-    return re.search(pattern, text_lower) is not None
+    # A regex hit implies a plain substring hit, so the fast C substring scan
+    # gates the regex — most candidates are absent from most bodies.
+    if candidate not in text_lower:
+        return False
+    return _candidate_pattern(candidate).search(text_lower) is not None
 
 
 def path_to_ref(rel_path: str) -> str:
     """``decisions/drop-legacy.md`` → ``decisions/drop-legacy`` (OS-agnostic)."""
     stem = rel_path[:-3] if rel_path.endswith(".md") else rel_path
     return stem.replace(os.sep, "/")
+
+
+#: Per-``memory_dir`` registry cache: ``{ref: ((mtime_ns, size), slug, title)}``.
+#: A file's entry is reused while its stat stamp is unchanged and re-read
+#: otherwise, so a rebuild costs one ``stat`` per memory plus one parse per
+#: *changed* memory — instead of one parse per memory per call, which made a
+#: reindex of N files O(N²) parses. Whole-dict replacement per call, so a
+#: concurrent caller sees either the previous or the new snapshot.
+_registry_cache: dict[str, dict[str, tuple[tuple[int, int] | None, str, str]]] = {}
+
+
+def _read_title(filepath: str) -> str:
+    """The memory's ``title`` (or ``name``) from its frontmatter, ``""`` when
+    unreadable or unparseable — a bad file still cross-links by ref/slug."""
+    try:
+        with open(filepath, encoding="utf-8") as fh:
+            meta, _ = _parser.parse_frontmatter(fh.read())
+        return str(meta.get("title") or meta.get("name") or "").strip()
+    except Exception:
+        return ""
 
 
 def build_registry(
@@ -91,11 +124,12 @@ def build_registry(
     are excluded. ``exclude_ref`` (the scanned file's own ref) is omitted so a
     memory never cross-links to itself.
 
-    O(N) file reads per call. For the current store sizes this is fine on the
-    watcher's event-driven path; a cached registry is a possible later
-    optimization if it shows up in profiles.
+    O(N) ``stat`` calls per call; frontmatter is parsed only for files whose
+    ``(mtime_ns, size)`` changed since the last call in this process (see
+    :data:`_registry_cache`). Returns a fresh dict each time.
     """
-    registry: dict[str, dict[str, str]] = {}
+    previous = _registry_cache.get(memory_dir, {})
+    current: dict[str, tuple[tuple[int, int] | None, str, str]] = {}
     pattern = os.path.join(memory_dir, "**", "*.md")
     for filepath in glob.glob(pattern, recursive=True):
         rel = os.path.relpath(filepath, memory_dir)
@@ -103,19 +137,24 @@ def build_registry(
         if parts[0] in SKIP_DIRS:
             continue
         ref = path_to_ref(rel)
-        if exclude_ref is not None and ref == exclude_ref:
-            continue
         slug = parts[-1][:-3] if parts[-1].endswith(".md") else parts[-1]
-        title = ""
         try:
-            meta = frontmatter.load(filepath).metadata
-            title = str(meta.get("title") or meta.get("name") or "").strip()
-        except Exception:
-            # An unparseable target still cross-links by ref/slug; its title is
-            # simply unavailable. Don't let one bad file abort the whole scan.
-            pass
-        registry[ref] = {"slug": slug, "title": title}
-    return registry
+            st = os.stat(filepath)
+            stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = None
+        cached = previous.get(ref)
+        if stamp is not None and cached is not None and cached[0] == stamp:
+            title = cached[2]
+        else:
+            title = _read_title(filepath)
+        current[ref] = (stamp, slug, title)
+    _registry_cache[memory_dir] = current
+    return {
+        ref: {"slug": slug, "title": title}
+        for ref, (_stamp, slug, title) in current.items()
+        if ref != exclude_ref
+    }
 
 
 def detect_refs(

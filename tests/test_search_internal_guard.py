@@ -31,6 +31,7 @@ import pytest
 
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 # ---------------------------------------------------------------------------
 # Helpers shared with test_recall_feedback.py
@@ -53,7 +54,7 @@ def _embedding(seed: int) -> list[float]:
 
 def _index_chunk(*, chunk_id: str, file_path: str, content: str, seed: int) -> None:
     now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    store.upsert_chunks([{
+    upsert_chunks([{
         "id": chunk_id,
         "file_path": file_path,
         "section_id": None,

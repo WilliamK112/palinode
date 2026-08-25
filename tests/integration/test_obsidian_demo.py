@@ -36,6 +36,7 @@ from fastapi.testclient import TestClient
 from palinode.cli import main as cli_main
 from palinode.core import store
 from palinode.core.config import config
+from tests._store_helpers import upsert_chunks
 
 # ---------------------------------------------------------------------------
 # Fake embedder — deterministic, token-overlap-aware (same pattern as
@@ -168,7 +169,7 @@ def _index_chunk(chunk_id: str, file_path: str, content: str) -> None:
         "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "embedding": _fake_embed(content),
     }]
-    store.upsert_chunks(chunks)
+    upsert_chunks(chunks)
 
 
 # ---------------------------------------------------------------------------
