@@ -10,6 +10,10 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- **Reindexing no longer blocks the API event loop.** The `/reindex` handler
+  now runs in FastAPI's threadpool and uses an atomic non-blocking process-wide
+  lock, preserving immediate 409 responses for concurrent requests while
+  `/health` and other endpoints stay responsive.
 - **CLI startup no longer imports the FastAPI application (#143).** The
   Obsidian sync and frontmatter migration commands now use their core-layer
   helpers directly, avoiding the API router and provenance-UI dependency tree

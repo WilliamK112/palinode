@@ -84,7 +84,7 @@ def rebuild_fts_api() -> dict[str, Any]:
 
 
 @router.post("/reindex")
-async def reindex_api(since: str | None = None) -> dict[str, Any]:
+def reindex_api(since: str | None = None) -> dict[str, Any]:
     """Reindex memory files.  Idempotent — unchanged files are skipped.
 
     Query params:
@@ -96,30 +96,30 @@ async def reindex_api(since: str | None = None) -> dict[str, Any]:
     Returns 409 if a reindex is already in progress — check /status for
     progress.
     """
-    if _reindex_lock.locked():
+    if not _reindex_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail="reindex already running — check /status for progress",
         )
 
-    from palinode.indexer.watcher import PalinodeHandler
-    handler = PalinodeHandler()
+    try:
+        from palinode.indexer.watcher import PalinodeHandler
+        handler = PalinodeHandler()
 
-    since_ts: float | None = None
-    if since:
-        try:
-            dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            since_ts = dt.timestamp()
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid ISO timestamp: {since}")
+        since_ts: float | None = None
+        if since:
+            try:
+                dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                since_ts = dt.timestamp()
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid ISO timestamp: {since}")
 
-    files = [
-        fp
-        for fp in glob.glob(os.path.join(config.palinode_dir, "**/*.md"), recursive=True)
-        if handler.is_valid_file(fp)
-    ]
+        files = [
+            fp
+            for fp in glob.glob(os.path.join(config.palinode_dir, "**/*.md"), recursive=True)
+            if handler.is_valid_file(fp)
+        ]
 
-    async with _reindex_lock:
         _reindex_state["running"] = True
         _reindex_state["started_at"] = _utc_now().isoformat().replace("+00:00", "Z")
         _reindex_state["files_processed"] = 0
@@ -157,15 +157,17 @@ async def reindex_api(since: str | None = None) -> dict[str, Any]:
         finally:
             _reindex_state["running"] = False
 
-    return {
-        "status": "success",
-        "files_reindexed": count,
-        "skipped_not_modified": skipped_mtime,
-        "errors": errors,
-        "gc_paths_removed": gc_paths_removed,
-        "gc_chunks_removed": gc_chunks_removed,
-        "fts_chunks": fts_count,
-    }
+        return {
+            "status": "success",
+            "files_reindexed": count,
+            "skipped_not_modified": skipped_mtime,
+            "errors": errors,
+            "gc_paths_removed": gc_paths_removed,
+            "gc_chunks_removed": gc_chunks_removed,
+            "fts_chunks": fts_count,
+        }
+    finally:
+        _reindex_lock.release()
 
 
 @router.get("/entities/{entity_ref:path}")

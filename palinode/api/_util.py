@@ -10,10 +10,10 @@ reindex / auto-summary observability state dicts.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import re
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -74,10 +74,10 @@ def _project_from_cwd(cwd: str | None) -> str | None:
 
 
 # ── Reindex concurrency guard ─────────────────────────────────────────
-# asyncio.Lock is safe because FastAPI runs on a single event loop.  The
-# reindex work itself is synchronous (file I/O + Ollama HTTP) but the lock
-# acquisition is async so concurrent HTTP callers fail fast rather than queue.
-_reindex_lock = asyncio.Lock()
+# The synchronous reindex handler runs in FastAPI's threadpool.  A process-wide
+# threading lock provides mutual exclusion across worker threads; callers use a
+# non-blocking acquire so a concurrent request fails fast instead of queueing.
+_reindex_lock = threading.Lock()
 _reindex_state: dict[str, Any] = {
     "running": False,
     "started_at": None,
