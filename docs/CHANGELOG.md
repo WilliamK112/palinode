@@ -6,6 +6,12 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+- Standalone `bench.abstention` evaluation for search abstention: a real
+  SQLite-vec + FTS5 threshold sweep across multiple seeded corpora, with
+  no-answer false-positive rates, answer-present controls, and both fused and
+  raw top scores. The evolving protocol remains separate from the stable
+  benchmark runner and does not change production search defaults.
+
 ### Changed
 
 ### Fixed

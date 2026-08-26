@@ -35,6 +35,26 @@ If a `bge-m3` embedder is reachable (e.g. the Docker Compose stack), the harness
 embedded/hybrid path. If not, it **degrades gracefully to keyword-only** and reports those numbers
 honestly — which is itself axis 4.
 
+## Standalone abstention evaluation
+
+The abstention evaluation is intentionally separate from the four-axis runner while its protocol
+is still evolving. It requires a real configured embedding endpoint and runs the real SQLite-vec,
+FTS5, and hybrid-ranking paths against a throwaway store. It sweeps the per-arm relevance floor
+across three corpus seeds, measuring query-level false positives for 26 no-answer queries alongside
+20 answer-present controls per seed. It does not change production search defaults.
+
+```bash
+# complete observations + aggregate summaries
+python -m bench.abstention --out abstention.json
+
+# reviewable aggregate table
+python -m bench.abstention --format markdown --out abstention.md
+```
+
+The pinned query shapes are natural-language questions, short keywords, absent identifiers/codes,
+exact-topic controls, and natural-language paraphrase controls. Each false-positive observation
+records both the fused score exposed to callers and the underlying raw cosine when available.
+
 ## Layout
 
 | File | Purpose |
@@ -43,9 +63,11 @@ honestly — which is itself axis 4.
 | `harness.py` | Ingest, state-fingerprint, and recall-latency measurement primitives. |
 | `run.py` | End-to-end orchestrator (the four axes) + CLI. |
 | `report.py` | Renders a results JSON object as a Markdown report. |
+| `abstention.py` | Standalone no-answer/control threshold sweep + JSON/Markdown output. |
 
 ## Tests
 
 ```bash
 python -m pytest tests/test_bench_harness.py -q
+python -m pytest tests/test_bench_abstention.py -q
 ```
