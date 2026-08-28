@@ -153,6 +153,7 @@ def test_evaluate_runs_real_store_and_preserves_controls(monkeypatch):
     assert vector_summaries[0.5]["controls"]["paraphrase"]["true_hits"] == 1
 
     report = abstention.render_markdown(results)
+    report.encode("ascii")
     assert "# Palinode abstention evaluation" in report
     assert "No-answer queries returning a hit" in report
     assert "Production defaults changed: **no**" in report

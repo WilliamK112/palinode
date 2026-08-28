@@ -10,6 +10,14 @@ The evaluation asks two questions together:
 It deliberately uses the real index, SQLite-vec, FTS5, ranking pipeline, and
 configured embedding endpoint. Production search defaults are never changed.
 
+Protocol provenance: this pinned query set supersedes the exploratory run at
+https://github.com/phasespace-labs/palinode/issues/73#issuecomment-5421219548.
+Packaging the experiment replaced all 26 no-answer strings and reworded all
+10 paraphrase controls; corpus seeds, size, exact controls, top-k, and thresholds
+stayed the same. The 2026-08-26 14:24 UTC BGE-M3 run reported in
+https://github.com/phasespace-labs/palinode/pull/151 uses this pinned set: at 0.45
+it returned hits for 25/78 no-answer queries, not the exploratory set's 3/78.
+
 Run JSON and Markdown forms independently of the stable benchmark runner::
 
     python -m bench.abstention --out abstention.json
@@ -434,7 +442,7 @@ def _control_ratio(row: dict[str, Any]) -> str:
 
 def _format_score_stats(stats: dict[str, float] | None) -> str:
     if stats is None:
-        return "—"
+        return "n/a"
     return f"{stats['min']:.3f} / {stats['median']:.3f} / {stats['max']:.3f}"
 
 
