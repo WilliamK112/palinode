@@ -304,6 +304,16 @@ async function palinodeFetch(
   return res.json();
 }
 
+/** Keep aligned with palinode/core/scoring.py; OpenClaw has not migrated to the shared core yet. */
+function describeMatch(result: { score?: number; raw_score?: number | null }): string {
+  const rank = (result.score ?? 0).toFixed(2);
+  if (result.raw_score === null) return `keyword match, rank ${rank}`;
+  if (typeof result.raw_score === "number") {
+    return `${Math.round(result.raw_score * 100)}% match`;
+  }
+  return `rank ${rank}`;
+}
+
 // ============================================================================
 // Plugin
 // ============================================================================
@@ -414,7 +424,7 @@ const palinodePlugin = {
             const text = results
               .map(
                 (r: any, i: number) =>
-                  `${i + 1}. [${r.category || "?"}] ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""} (score: ${(r.score * 100).toFixed(0)}%, file: ${path.basename(r.file_path)})`,
+                  `${i + 1}. [${r.category || "?"}] ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""} (${describeMatch(r)}, file: ${path.basename(r.file_path)})`,
               )
               .join("\n\n");
 
