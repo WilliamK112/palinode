@@ -178,9 +178,19 @@ interface SearchHit {
   /** Post-fusion rank value — ~1.0 for any query's top hit. Display fallback only. */
   score?: number;
   /** Raw cosine — the scale the threshold knob filters on. Preferred for display. */
-  raw_score?: number;
+  raw_score?: number | null;
   snippet?: string;
   content?: string;
+}
+
+/** Keep aligned with palinode/core/scoring.py; the packages remain independently deployable. */
+function describeMatch(result: SearchHit): string {
+  const rank = (result.score ?? 0).toFixed(2);
+  if (result.raw_score === null) return `keyword match, rank ${rank}`;
+  if (typeof result.raw_score === "number") {
+    return `${Math.round(result.raw_score * 100)}% match`;
+  }
+  return `rank ${rank}`;
 }
 
 interface FiredTrigger {
@@ -238,12 +248,8 @@ export async function buildRecallContext(
     const lines = results
       .map((r) => {
         const path = r.rel_path ?? r.file_path ?? "?";
-        // raw_score, not score: the fused rank value reads ~100% for the
-        // top hit of ANY query; raw cosine is the threshold knob's scale,
-        // so showing it makes the lever tunable from what the user sees.
-        const pct = Math.floor((r.raw_score ?? r.score ?? 0) * 100);
         const body = (r.snippet ?? r.content ?? "").replace(/\n/g, " ");
-        return `- [${path}] (${pct}%) ${body}`;
+        return `- [${path}] (${describeMatch(r)}) ${body}`;
       })
       .join("\n");
     return `\n### Related memories\n${lines}\n`;

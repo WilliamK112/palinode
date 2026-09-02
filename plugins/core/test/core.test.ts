@@ -64,7 +64,7 @@ describe("the invariant the core owns", () => {
 });
 
 describe("buildRecallContext", () => {
-  it("renders search hits as bounded snippet lines", async () => {
+  it("describes cosine, keyword-only, and legacy search hits without treating rank as similarity", async () => {
     const fetchFn = stubFetch({
       "/check-triggers": [],
       "/search": {
@@ -73,12 +73,18 @@ describe("buildRecallContext", () => {
           // is the cosine the threshold knob filters on. Display must use
           // raw_score so the on-screen number matches the tunable scale.
           { rel_path: "decisions/deploy-rollback.md", score: 1.0, raw_score: 0.62, snippet: "git revert + reindex" },
+          { rel_path: "notes/keyword.md", score: 0.98, raw_score: null, snippet: "literal term" },
+          { rel_path: "notes/legacy.md", score: 0.75, snippet: "old server" },
         ],
       },
     });
     const ctx = await buildRecallContext(PROMPT, CFG, fetchFn);
-    expect(ctx).toContain("[decisions/deploy-rollback.md] (62%) git revert + reindex");
+    expect(ctx).toContain("[decisions/deploy-rollback.md] (62% match) git revert + reindex");
+    expect(ctx).toContain("[notes/keyword.md] (keyword match, rank 0.98) literal term");
+    expect(ctx).toContain("[notes/legacy.md] (rank 0.75) old server");
     expect(ctx).not.toContain("(100%)");
+    expect(ctx).not.toContain("(98%)");
+    expect(ctx).not.toContain("(75%)");
     expect(ctx).toContain("Related memories");
     expect(ctx).toContain("may be stale");
   });
