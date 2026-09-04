@@ -28,8 +28,23 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Changed
 
+- File reconciliation now sends every section awaiting an embedding in one ordered
+  Ollama `/api/embed` batch, validates the complete response before writing, and
+  preserves per-input FTS-only degradation and whole-file outage rollback
+  ([#159](https://github.com/phasespace-labs/palinode/issues/159)).
+
 ### Fixed
 
+- `git_tools.history()` now reports diff stats and, under `detail="full"`, diffs for commits
+  older than a rename, and for the repository's root commit. Both were computed by a
+  per-commit `git diff --stat` / `git show`. For commits older than a rename those passed the
+  file's current path without `--follow`, so git was asked about a path that did not exist yet
+  and returned a misleading figure or nothing; the root commit was blank for a separate
+  reason, that `{sha}^..{sha}` has no parent to resolve. A single
+  `git log --follow --shortstat` walk now produces both, dropping the subprocess count for a
+  20-commit history from 21 (41 under `detail="full"`) to 1. The `diff` string under
+  `detail="full"` now starts at `diff --git` rather than at the `git show` commit header
+  ([#158](https://github.com/phasespace-labs/palinode/issues/158)).
 - `lint`'s two staleness checks no longer wrap their whole date-parse-and-compare
   block in `except Exception: pass`. Only the `datetime.fromisoformat` call is
   guarded now (against `ValueError`), and a non-date frontmatter value is handled
