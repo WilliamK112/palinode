@@ -10,6 +10,7 @@ from palinode.cli import main
 from palinode.cli._api import HTTPStatusError, RequestError
 
 # importlib: cli/__init__.py re-exports Commands that shadow same-named modules.
+archive_expired_mod = importlib.import_module("palinode.cli.archive_expired")
 depends_mod = importlib.import_module("palinode.cli.depends")
 git_mod = importlib.import_module("palinode.cli.git")
 ingest_mod = importlib.import_module("palinode.cli.ingest")
@@ -17,7 +18,9 @@ lint_mod = importlib.import_module("palinode.cli.lint")
 manage_mod = importlib.import_module("palinode.cli.manage")
 prime_mod = importlib.import_module("palinode.cli.prime")
 query_mod = importlib.import_module("palinode.cli.query")
+search_mod = importlib.import_module("palinode.cli.search")
 trace_mod = importlib.import_module("palinode.cli.trace")
+trigger_mod = importlib.import_module("palinode.cli.trigger")
 
 
 def _http_status_error(status_code: int = 500) -> HTTPStatusError:
@@ -147,3 +150,35 @@ def test_config_edit_missing_file_exits_nonzero(monkeypatch, tmp_path):
     result = CliRunner().invoke(main, ["config", "edit"])
     assert result.exit_code != 0
     assert "Config file not found" in result.output
+
+
+def test_archive_expired_error_exits_nonzero():
+    with patch.object(
+        archive_expired_mod.api_client,
+        "archive_expired",
+        side_effect=RuntimeError("boom"),
+    ):
+        result = CliRunner().invoke(main, ["archive-expired"])
+    assert result.exit_code != 0
+    assert "Error archiving expired memories" in result.output
+
+
+def test_search_http_error_exits_nonzero():
+    with patch.object(
+        search_mod.api_client, "search", side_effect=_http_status_error(503)
+    ):
+        result = CliRunner().invoke(main, ["search", "query"])
+    assert result.exit_code != 0
+    assert "Error searching memory" in result.output
+
+
+def test_trigger_add_error_exits_nonzero():
+    with patch.object(
+        trigger_mod.api_client, "trigger_add", side_effect=RuntimeError("boom")
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["trigger", "add", "remember this", "--file", "projects/example.md"],
+        )
+    assert result.exit_code != 0
+    assert "Error adding trigger" in result.output

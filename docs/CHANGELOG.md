@@ -25,6 +25,9 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- CLI archive, consolidation, diff, list, search, status, and trigger failures now
+  exit non-zero after printing their error instead of constructing and discarding
+  `click.Abort` ([#162](https://github.com/phasespace-labs/palinode/issues/162)).
 - `lint`'s two staleness checks no longer wrap their whole date-parse-and-compare
   block in `except Exception: pass`. Only the `datetime.fromisoformat` call is
   guarded now (against `ValueError`), and a non-date frontmatter value is handled
