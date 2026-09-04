@@ -23,6 +23,11 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Changed
 
+- File reconciliation now sends every section awaiting an embedding in one ordered
+  Ollama `/api/embed` batch, validates the complete response before writing, and
+  preserves per-input FTS-only degradation and whole-file outage rollback
+  ([#159](https://github.com/phasespace-labs/palinode/issues/159)).
+
 ### Fixed
 
 - `git_tools.history()` now reports diff stats and, under `detail="full"`, diffs for commits
